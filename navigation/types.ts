@@ -1,0 +1,24 @@
+export type RootStackParamList = {
+  Login: undefined;
+  Register: undefined;
+  RegisterDetails: { email: string; password: string };
+  ForgotPassword: undefined;
+  LocationSetup: undefined;
+  Home: { tab?: "ontdekken" | "connecties" } | undefined;
+  Match: { matchedName: string; matchedPhoto: string };
+  Filter: undefined;
+  SporterProfile: { sporterId: string };
+  Profile: undefined;
+  EditProfile: undefined;
+  Menu: undefined;
+  ChatList: undefined;
+  ChatDetail: { chatId: string; name: string; photo: string };
+  NewPost: undefined;
+  Settings: undefined;
+  Pricing: undefined;
+  Payment: { plan: "premium" | "elite" };
+  Helpdesk: undefined;
+  Faq: undefined;
+  Support: undefined;
+  ChangeEmail: undefined;
+};

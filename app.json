@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "Sportfrend",
+    "slug": "sportfrend-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFFFFF"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.sportfrend.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Sportfrend gebruikt je locatie om sportmaatjes in de buurt te vinden."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "package": "com.sportfrend.app",
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Sportfrend gebruikt je locatie om sportmaatjes in de buurt te vinden."
+        }
+      ]
+    ]
+  }
+}
