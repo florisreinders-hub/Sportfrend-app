@@ -42,8 +42,7 @@
           "locationAlwaysAndWhenInUsePermission": "Sportfrend gebruikt je locatie om sportmaatjes in de buurt te vinden."
         }
       ],
-      "expo-font",
-      "expo-status-bar"
+      "expo-font"
     ],
     "extra": {
       "eas": {
