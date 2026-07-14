@@ -10,6 +10,8 @@ import { getAuthErrorMessage, sendPasswordReset } from "@/lib/auth";
 
 const logoFull = require("@/assets/logo-full.png");
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 type Props = NativeStackScreenProps<RootStackParamList, "ForgotPassword">;
 
 export default function ForgotPasswordScreen({ navigation }: Props) {
@@ -20,8 +22,15 @@ export default function ForgotPasswordScreen({ navigation }: Props) {
 
   const onSubmit = async () => {
     setError(null);
+
+    const trimmedEmail = email.trim();
+    if (!EMAIL_PATTERN.test(trimmedEmail)) {
+      setError("Dit is geen geldig e-mailadres.");
+      return;
+    }
+
     setLoading(true);
-    const { error: resetError } = await sendPasswordReset(email.trim());
+    const { error: resetError } = await sendPasswordReset(trimmedEmail);
     setLoading(false);
     if (resetError) {
       setError(getAuthErrorMessage(resetError));
@@ -37,29 +46,52 @@ export default function ForgotPasswordScreen({ navigation }: Props) {
       </View>
       <View style={styles.form}>
         {sent ? (
-          <Text style={styles.info}>
-            We hebben een e-mail gestuurd naar {email} met instructies om je wachtwoord te resetten.
-          </Text>
+          <>
+            <Text style={styles.info}>
+              Als {email.trim()} bij ons bekend is, ontvang je een e-mail met een link om je wachtwoord opnieuw in te
+              stellen.
+            </Text>
+            <Button label="Naar inloggen" onPress={() => navigation.navigate("Login")} style={styles.cta} />
+            <Text
+              style={styles.link}
+              onPress={() => {
+                setSent(false);
+                setError(null);
+              }}
+            >
+              Ander e-mailadres proberen
+            </Text>
+          </>
         ) : (
-          <Input
-            placeholder="E-mail"
-            autoCapitalize="none"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={(text) => {
-              setEmail(text);
-              if (error) setError(null);
-            }}
-          />
+          <>
+            <Input
+              placeholder="E-mail"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              textContentType="emailAddress"
+              autoComplete="email"
+              returnKeyType="done"
+              value={email}
+              onChangeText={(text) => {
+                setEmail(text);
+                if (error) setError(null);
+              }}
+              onSubmitEditing={onSubmit}
+            />
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+            <Button
+              label="Volgende"
+              onPress={onSubmit}
+              loading={loading}
+              disabled={!email.trim() || loading}
+              style={styles.cta}
+            />
+            <Text style={styles.link} onPress={() => navigation.navigate("Login")}>
+              Terug naar inloggen
+            </Text>
+          </>
         )}
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-        <Button
-          label="Volgende"
-          onPress={sent ? () => navigation.navigate("Login") : onSubmit}
-          loading={loading}
-          disabled={!sent && !email}
-          style={styles.cta}
-        />
       </View>
     </ScreenContainer>
   );
@@ -89,6 +121,13 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     width: 160,
     marginTop: spacing.sm,
+  },
+  link: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.md,
+    color: colors.black,
+    textAlign: "center",
+    marginTop: spacing.md,
   },
   error: {
     fontFamily: fonts.body,
