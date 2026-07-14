@@ -16,14 +16,64 @@ export type Profile = {
   photo_url: string | null;
 };
 
-export async function fetchDiscoverProfiles(excludeId: string): Promise<Profile[]> {
-  const { data, error } = await supabase
+function haversineDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/**
+ * Discover feed: same sport as the current user (when set) and within their
+ * search radius (when they have a location set), excluding the user and
+ * anyone they've already swiped on. Both filters degrade gracefully - a
+ * user who skipped location setup or hasn't picked a sport yet still sees
+ * a feed, just without that particular narrowing.
+ */
+export async function fetchDiscoverProfiles(currentUserId: string): Promise<Profile[]> {
+  const { data: ownProfile, error: ownProfileError } = await supabase
+    .from("profiles")
+    .select("sport, latitude, longitude, search_radius_km")
+    .eq("id", currentUserId)
+    .maybeSingle();
+  if (ownProfileError) throw ownProfileError;
+
+  const { data: swiped, error: swipedError } = await supabase
+    .from("swipes")
+    .select("swiped_id")
+    .eq("swiper_id", currentUserId);
+  if (swipedError) throw swipedError;
+
+  const excludedIds = [currentUserId, ...(swiped ?? []).map((s) => s.swiped_id)];
+
+  let query = supabase
     .from("profiles")
     .select("*")
-    .neq("id", excludeId)
-    .limit(20);
+    .not("id", "in", `(${excludedIds.join(",")})`);
+  if (ownProfile?.sport) {
+    query = query.eq("sport", ownProfile.sport);
+  }
+
+  const { data, error } = await query.limit(50);
   if (error) throw error;
-  return data ?? [];
+  let results = (data ?? []) as Profile[];
+
+  if (ownProfile?.latitude != null && ownProfile?.longitude != null) {
+    const radiusKm = ownProfile.search_radius_km ?? 25;
+    const ownLat = ownProfile.latitude;
+    const ownLng = ownProfile.longitude;
+    results = results
+      .filter((p) => p.latitude != null && p.longitude != null)
+      .map((p) => ({ profile: p, distanceKm: haversineDistanceKm(ownLat, ownLng, p.latitude!, p.longitude!) }))
+      .filter(({ distanceKm }) => distanceKm <= radiusKm)
+      .sort((a, b) => a.distanceKm - b.distanceKm)
+      .map(({ profile }) => profile);
+  }
+
+  return results.slice(0, 20);
 }
 
 export async function recordSwipe(swiperId: string, swipedId: string, direction: "like" | "skip") {
