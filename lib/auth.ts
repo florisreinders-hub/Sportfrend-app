@@ -20,6 +20,14 @@ export async function sendPasswordReset(email: string) {
   });
 }
 
+export async function resendConfirmationEmail(email: string) {
+  return supabase.auth.resend({
+    type: "signup",
+    email,
+    options: { emailRedirectTo: getAuthRedirectUrl() },
+  });
+}
+
 export async function signOut() {
   return supabase.auth.signOut();
 }

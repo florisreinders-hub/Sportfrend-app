@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "@/navigation/types";
@@ -6,8 +6,10 @@ import { ScreenContainer } from "@/components/ScreenContainer";
 import { Input } from "@/components/Input";
 import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
-import { getAuthErrorMessage, signUpWithEmail } from "@/lib/auth";
+import { getAuthErrorMessage, resendConfirmationEmail, signUpWithEmail } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
+
+const RESEND_COOLDOWN_SECONDS = 60;
 
 type Props = NativeStackScreenProps<RootStackParamList, "RegisterDetails">;
 
@@ -35,9 +37,39 @@ export default function RegisterDetailsScreen({ navigation }: Props) {
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const [resending, setResending] = useState(false);
+  const [resendMessage, setResendMessage] = useState<string | null>(null);
+  const [resendError, setResendError] = useState<string | null>(null);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
   const passwordRef = useRef<TextInput>(null);
   const repeatPasswordRef = useRef<TextInput>(null);
   const birthdateRef = useRef<TextInput>(null);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setTimeout(() => setResendCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendCooldown]);
+
+  const onResend = async () => {
+    setResendError(null);
+    setResendMessage(null);
+    setResending(true);
+    try {
+      const { error: resendCallError } = await resendConfirmationEmail(email.trim());
+      if (resendCallError) {
+        setResendError(getAuthErrorMessage(resendCallError));
+        return;
+      }
+      setResendMessage("Nieuwe bevestigingsmail verstuurd.");
+      setResendCooldown(RESEND_COOLDOWN_SECONDS);
+    } catch (e) {
+      setResendError(getAuthErrorMessage(e));
+    } finally {
+      setResending(false);
+    }
+  };
 
   const canSubmit = email.trim().length > 0 && password.length > 0 && repeatPassword.length > 0 && !loading;
 
@@ -116,6 +148,18 @@ export default function RegisterDetailsScreen({ navigation }: Props) {
       <ScreenContainer>
         <View style={styles.form}>
           <Text style={styles.info}>{info}</Text>
+
+          {resendMessage ? <Text style={styles.resendSuccess}>{resendMessage}</Text> : null}
+          {resendError ? <Text style={styles.error}>{resendError}</Text> : null}
+
+          <Button
+            label={resendCooldown > 0 ? `Opnieuw versturen (${resendCooldown}s)` : "Bevestigingsmail opnieuw versturen"}
+            onPress={onResend}
+            loading={resending}
+            disabled={resendCooldown > 0}
+            variant="outline"
+            style={styles.cta}
+          />
           <Button label="Naar inloggen" onPress={() => navigation.navigate("Login")} style={styles.cta} />
         </View>
       </ScreenContainer>
@@ -258,5 +302,12 @@ const styles = StyleSheet.create({
     color: colors.black,
     textAlign: "center",
     marginBottom: spacing.lg,
+  },
+  resendSuccess: {
+    fontFamily: fonts.bodyMedium,
+    fontSize: fontSizes.sm,
+    color: colors.primaryDark,
+    textAlign: "center",
+    marginBottom: spacing.sm,
   },
 });
