@@ -1,17 +1,37 @@
 import React, { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Slider from "@react-native-community/slider";
+import { Ionicons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { Button } from "@/components/Button";
+import { SelectModal, SelectOption } from "@/components/SelectModal";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { DEFAULT_FILTERS, useDiscoverFilters } from "@/lib/FilterContext";
 
-// null = "Alle sporten" / "Alle niveaus", i.e. no filter on that field.
-const SPORTS: (string | null)[] = [null, "Padel", "Tennis", "Golf", "Hardlopen", "Fitness"];
+// value: null = "Alle sporten", i.e. no sport filter.
+const SPORT_OPTIONS: SelectOption[] = [
+  { label: "Alle sporten", value: null },
+  { label: "Padel", value: "Padel" },
+  { label: "Tennis", value: "Tennis" },
+  { label: "Golf", value: "Golf" },
+  { label: "Hardlopen", value: "Hardlopen" },
+  { label: "Fitness", value: "Fitness" },
+  { label: "Voetbal", value: "Voetbal" },
+  { label: "Basketbal", value: "Basketbal" },
+  { label: "Volleybal", value: "Volleybal" },
+  { label: "Badminton", value: "Badminton" },
+  { label: "Squash", value: "Squash" },
+  { label: "Wielrennen", value: "Wielrennen" },
+  { label: "Zwemmen", value: "Zwemmen" },
+  { label: "Klimmen", value: "Klimmen" },
+  { label: "Yoga", value: "Yoga" },
+  { label: "Crossfit", value: "Crossfit" },
+];
+
 const LEVELS: (string | null)[] = [null, "beginner", "gevorderd", "competitief"];
 const LEVEL_LABELS: Record<string, string> = {
   beginner: "Beginner",
@@ -25,11 +45,14 @@ export default function FilterScreen({ navigation }: Props) {
   const { filters, setFilters, resetFilters } = useDiscoverFilters();
   const [maxAge, setMaxAge] = useState(filters.maxAge);
   const [distanceKm, setDistanceKm] = useState(filters.distanceKm);
-  const [sportIndex, setSportIndex] = useState(Math.max(0, SPORTS.indexOf(filters.sport)));
+  const [sport, setSport] = useState<string | null>(filters.sport);
   const [levelIndex, setLevelIndex] = useState(Math.max(0, LEVELS.indexOf(filters.level)));
+  const [sportPickerVisible, setSportPickerVisible] = useState(false);
+
+  const sportLabel = SPORT_OPTIONS.find((o) => o.value === sport)?.label ?? "Alle sporten";
 
   const apply = () => {
-    setFilters({ maxAge, distanceKm, sport: SPORTS[sportIndex], level: LEVELS[levelIndex] });
+    setFilters({ maxAge, distanceKm, sport, level: LEVELS[levelIndex] });
     navigation.navigate("Home", { tab: "ontdekken" });
   };
 
@@ -37,7 +60,7 @@ export default function FilterScreen({ navigation }: Props) {
     resetFilters();
     setMaxAge(DEFAULT_FILTERS.maxAge);
     setDistanceKm(DEFAULT_FILTERS.distanceKm);
-    setSportIndex(0);
+    setSport(DEFAULT_FILTERS.sport);
     setLevelIndex(0);
   };
 
@@ -62,11 +85,9 @@ export default function FilterScreen({ navigation }: Props) {
 
         <View style={styles.row}>
           <Text style={styles.label}>SPORT</Text>
-          <Pressable
-            style={styles.pill}
-            onPress={() => setSportIndex((sportIndex + 1) % SPORTS.length)}
-          >
-            <Text style={styles.pillText}>{(SPORTS[sportIndex] ?? "Alle sporten").toUpperCase()}</Text>
+          <Pressable style={styles.pill} onPress={() => setSportPickerVisible(true)}>
+            <Text style={styles.pillText}>{sportLabel.toUpperCase()}</Text>
+            <Ionicons name="chevron-down" size={16} color={colors.black} />
           </Pressable>
         </View>
 
@@ -90,6 +111,15 @@ export default function FilterScreen({ navigation }: Props) {
         <Button label="Toepassen" onPress={apply} style={styles.apply} />
         <Button label="Reset filter" onPress={reset} variant="outline" style={styles.reset} />
       </View>
+
+      <SelectModal
+        visible={sportPickerVisible}
+        title="Kies een sport"
+        options={SPORT_OPTIONS}
+        selectedValue={sport}
+        onSelect={setSport}
+        onClose={() => setSportPickerVisible(false)}
+      />
 
       <BottomNav active="filter" />
     </ScreenContainer>
@@ -158,6 +188,9 @@ const styles = StyleSheet.create({
     height: 32,
   },
   pill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
     backgroundColor: colors.surface,
     borderRadius: radii.sm,
     paddingVertical: spacing.xs,
