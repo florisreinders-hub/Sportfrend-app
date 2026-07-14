@@ -1,12 +1,13 @@
 import React, { useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Image, StyleSheet, Text, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { Input } from "@/components/Input";
 import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
+
+const logoFull = require("@/assets/logo-full.png");
 
 type Props = NativeStackScreenProps<RootStackParamList, "Register">;
 
@@ -17,8 +18,7 @@ export default function RegisterScreen({ navigation }: Props) {
   return (
     <ScreenContainer withBottomPadding={false}>
       <View style={styles.hero}>
-        <Ionicons name="leaf" size={90} color={colors.primary} />
-        <Text style={styles.brand}>Sportmaatje</Text>
+        <Image source={logoFull} style={styles.logo} resizeMode="contain" />
       </View>
       <View style={styles.form}>
         <Input placeholder="E-mail" autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
@@ -42,11 +42,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: spacing.xxl,
   },
-  brand: {
-    fontFamily: fonts.bodyBold,
-    fontSize: fontSizes.xxl,
-    color: colors.black,
-    marginTop: spacing.sm,
+  logo: {
+    width: 220,
+    height: 194,
   },
   form: {
     paddingHorizontal: spacing.lg,

@@ -1,13 +1,14 @@
 import React, { useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Image, StyleSheet, Text, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { Input } from "@/components/Input";
 import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { sendPasswordReset } from "@/lib/auth";
+
+const logoFull = require("@/assets/logo-full.png");
 
 type Props = NativeStackScreenProps<RootStackParamList, "ForgotPassword">;
 
@@ -26,9 +27,7 @@ export default function ForgotPasswordScreen({ navigation }: Props) {
   return (
     <ScreenContainer withBottomPadding={false}>
       <View style={styles.hero}>
-        <Ionicons name="leaf" size={72} color={colors.primary} />
-        <Text style={styles.brand}>Sportfrend</Text>
-        <Text style={styles.tagline}>Altijd iemand om mee te sporten</Text>
+        <Image source={logoFull} style={styles.logo} resizeMode="contain" />
       </View>
       <View style={styles.form}>
         {sent ? (
@@ -61,17 +60,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: spacing.xxl,
   },
-  brand: {
-    fontFamily: fonts.display,
-    fontSize: fontSizes.xxl,
-    color: colors.black,
-    marginTop: spacing.sm,
-  },
-  tagline: {
-    fontFamily: fonts.bodyBold,
-    fontSize: fontSizes.sm,
-    color: colors.black,
-    marginTop: spacing.xs,
+  logo: {
+    width: 220,
+    height: 194,
   },
   form: {
     paddingHorizontal: spacing.lg,

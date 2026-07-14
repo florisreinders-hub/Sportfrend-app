@@ -1,10 +1,12 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { RootStackParamList } from "@/navigation/types";
+
+const logoMark = require("@/assets/logo-mark.png");
 
 export function TopBar() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -12,7 +14,7 @@ export function TopBar() {
   return (
     <View style={styles.container}>
       <View style={styles.brand}>
-        <Ionicons name="leaf" size={30} color={colors.primary} />
+        <Image source={logoMark} style={styles.logo} resizeMode="contain" />
         <Text style={styles.title}>SPORTFREND</Text>
       </View>
       <View style={styles.actions}>
@@ -39,6 +41,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xs,
+  },
+  logo: {
+    width: 26,
+    height: 30,
   },
   title: {
     fontFamily: fonts.display,

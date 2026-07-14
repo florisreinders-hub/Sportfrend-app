@@ -10,6 +10,8 @@ import { supabase } from "@/lib/supabase";
 import { Profile } from "@/lib/api";
 import { avatarPlaceholder, sportPhotoPlaceholder } from "@/constants/placeholders";
 
+const logoMark = require("@/assets/logo-mark.png");
+
 type Props = NativeStackScreenProps<RootStackParamList, "SporterProfile">;
 
 export default function SporterProfileScreen({ route, navigation }: Props) {
@@ -35,7 +37,7 @@ export default function SporterProfileScreen({ route, navigation }: Props) {
         <Pressable onPress={() => navigation.goBack()} hitSlop={8}>
           <Ionicons name="arrow-back" size={24} color={colors.black} />
         </Pressable>
-        <Ionicons name="leaf" size={22} color={colors.primary} />
+        <Image source={logoMark} style={styles.logo} resizeMode="contain" />
         <Text style={styles.brand}>SPORTFREND</Text>
         <View style={{ flex: 1 }} />
         <Pressable style={styles.removeButton}>
@@ -92,6 +94,10 @@ const styles = StyleSheet.create({
     fontFamily: fonts.display,
     fontSize: fontSizes.md,
     color: colors.black,
+  },
+  logo: {
+    width: 19,
+    height: 22,
   },
   removeButton: {
     backgroundColor: colors.primary,
