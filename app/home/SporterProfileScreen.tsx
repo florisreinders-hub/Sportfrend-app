@@ -7,7 +7,7 @@ import { ScreenContainer } from "@/components/ScreenContainer";
 import { BottomNav } from "@/components/BottomNav";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
-import { Profile } from "@/lib/api";
+import { getDataErrorMessage, Profile } from "@/lib/api";
 import { avatarPlaceholder, sportPhotoPlaceholder } from "@/constants/placeholders";
 
 const logoMark = require("@/assets/logo-mark.png");
@@ -18,6 +18,7 @@ export default function SporterProfileScreen({ route, navigation }: Props) {
   const { sporterId } = route.params;
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     supabase
@@ -25,8 +26,12 @@ export default function SporterProfileScreen({ route, navigation }: Props) {
       .select("*")
       .eq("id", sporterId)
       .maybeSingle()
-      .then(({ data }) => {
-        setProfile(data as Profile | null);
+      .then(({ data, error: fetchError }) => {
+        if (fetchError) {
+          setError(getDataErrorMessage(fetchError));
+        } else {
+          setProfile(data as Profile | null);
+        }
         setLoading(false);
       });
   }, [sporterId]);
@@ -47,6 +52,8 @@ export default function SporterProfileScreen({ route, navigation }: Props) {
 
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: spacing.xl }} />
+      ) : error ? (
+        <Text style={styles.errorText}>{error}</Text>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           <View style={styles.headerRow}>
@@ -112,6 +119,14 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: spacing.md,
+  },
+  errorText: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.danger,
+    textAlign: "center",
+    marginTop: spacing.xl,
+    paddingHorizontal: spacing.lg,
   },
   headerRow: {
     flexDirection: "row",

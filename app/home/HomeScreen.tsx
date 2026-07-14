@@ -10,7 +10,7 @@ import { SwipeCard } from "@/components/SwipeCard";
 import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
-import { fetchConnections, fetchDiscoverProfiles, recordSwipe, Profile } from "@/lib/api";
+import { fetchConnections, fetchDiscoverProfiles, getDataErrorMessage, recordSwipe, Profile } from "@/lib/api";
 import { avatarPlaceholder } from "@/constants/placeholders";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Home">;
@@ -21,13 +21,17 @@ export default function HomeScreen({ navigation, route }: Props) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [connections, setConnections] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const loadDiscover = useCallback(async () => {
     if (!session?.user) return;
     setLoading(true);
+    setError(null);
     try {
       const data = await fetchDiscoverProfiles(session.user.id);
       setProfiles(data);
+    } catch (e) {
+      setError(getDataErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -36,9 +40,12 @@ export default function HomeScreen({ navigation, route }: Props) {
   const loadConnections = useCallback(async () => {
     if (!session?.user) return;
     setLoading(true);
+    setError(null);
     try {
       const data = await fetchConnections(session.user.id);
       setConnections(data);
+    } catch (e) {
+      setError(getDataErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -87,6 +94,8 @@ export default function HomeScreen({ navigation, route }: Props) {
         <View style={styles.deckArea}>
           {loading ? (
             <ActivityIndicator color={colors.primary} size="large" />
+          ) : error ? (
+            <Text style={styles.empty}>{error}</Text>
           ) : profiles.length === 0 ? (
             <Text style={styles.empty}>Geen sporters gevonden. Pas je filters aan of kom later terug.</Text>
           ) : (
@@ -129,6 +138,8 @@ export default function HomeScreen({ navigation, route }: Props) {
           ListEmptyComponent={
             loading ? (
               <ActivityIndicator color={colors.primary} size="large" />
+            ) : error ? (
+              <Text style={styles.empty}>{error}</Text>
             ) : (
               <Text style={styles.empty}>Nog geen connecties. Swipe rechts om te connecten!</Text>
             )

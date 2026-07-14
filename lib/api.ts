@@ -1,4 +1,32 @@
+import { PostgrestError } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
+
+/**
+ * Translates Postgrest/Postgres error codes into clear Dutch messages.
+ * PGRST205/42P01 ("Could not find the table ... in the schema cache") means
+ * the SQL migration (supabase/migrations/0001_init.sql) was never actually
+ * run against this Supabase project - surface that explicitly instead of
+ * the raw schema-cache error or a silent empty list.
+ */
+export function getDataErrorMessage(error: unknown): string {
+  if (!error) return "Er is iets misgegaan. Probeer het opnieuw.";
+
+  if (error instanceof PostgrestError) {
+    switch (error.code) {
+      case "PGRST205":
+      case "42P01":
+        return "De database is nog niet volledig ingericht: de benodigde tabel bestaat niet. Voer de SQL-migratie (supabase/migrations/0001_init.sql) uit via de Supabase SQL editor of CLI.";
+      case "42501":
+      case "PGRST301":
+        return "Je hebt geen toegang tot deze gegevens. Log opnieuw in en probeer het nogmaals.";
+      default:
+        return error.message;
+    }
+  }
+
+  if (error instanceof Error) return error.message;
+  return "Er is iets misgegaan. Probeer het opnieuw.";
+}
 
 export type Profile = {
   id: string;

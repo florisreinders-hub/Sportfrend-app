@@ -10,7 +10,7 @@ import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { Profile } from "@/lib/api";
+import { getDataErrorMessage, Profile } from "@/lib/api";
 import { sportPhotoPlaceholder } from "@/constants/placeholders";
 
 type Props = NativeStackScreenProps<RootStackParamList, "EditProfile">;
@@ -19,6 +19,8 @@ export default function EditProfileScreen({ navigation }: Props) {
   const { session } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [fullName, setFullName] = useState("");
   const [sport, setSport] = useState("");
   const [level, setLevel] = useState("");
@@ -32,7 +34,12 @@ export default function EditProfileScreen({ navigation }: Props) {
       .select("*")
       .eq("id", session.user.id)
       .maybeSingle()
-      .then(({ data }) => {
+      .then(({ data, error: fetchError }) => {
+        if (fetchError) {
+          setLoadError(getDataErrorMessage(fetchError));
+          setLoading(false);
+          return;
+        }
         const profile = data as Profile | null;
         if (profile) {
           setFullName(profile.full_name ?? "");
@@ -48,11 +55,16 @@ export default function EditProfileScreen({ navigation }: Props) {
   const onSave = async () => {
     if (!session?.user) return;
     setSaving(true);
-    await supabase
+    setSaveError(null);
+    const { error } = await supabase
       .from("profiles")
       .update({ full_name: fullName, sport, level, city, bio })
       .eq("id", session.user.id);
     setSaving(false);
+    if (error) {
+      setSaveError(getDataErrorMessage(error));
+      return;
+    }
     navigation.goBack();
   };
 
@@ -62,6 +74,8 @@ export default function EditProfileScreen({ navigation }: Props) {
 
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: spacing.xl }} />
+      ) : loadError ? (
+        <Text style={styles.loadErrorText}>{loadError}</Text>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           <View style={styles.headerRow}>
@@ -71,6 +85,8 @@ export default function EditProfileScreen({ navigation }: Props) {
             />
             <Button label="Opslaan" onPress={onSave} loading={saving} style={styles.saveButton} />
           </View>
+
+          {saveError ? <Text style={styles.saveErrorText}>{saveError}</Text> : null}
 
           <Text style={styles.sectionTitle}>DETAILS</Text>
           <Input label="Naam" value={fullName} onChangeText={setFullName} placeholder="Peter Jansen" />
@@ -96,6 +112,21 @@ export default function EditProfileScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   content: {
     padding: spacing.md,
+  },
+  loadErrorText: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.danger,
+    textAlign: "center",
+    marginTop: spacing.xl,
+    paddingHorizontal: spacing.lg,
+  },
+  saveErrorText: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.danger,
+    textAlign: "center",
+    marginBottom: spacing.md,
   },
   headerRow: {
     flexDirection: "row",
