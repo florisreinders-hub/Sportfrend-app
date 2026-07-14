@@ -6,7 +6,7 @@ import { ScreenContainer } from "@/components/ScreenContainer";
 import { Input } from "@/components/Input";
 import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
-import { signInWithEmail } from "@/lib/auth";
+import { getAuthErrorMessage, signInWithEmail } from "@/lib/auth";
 
 const logoFull = require("@/assets/logo-full.png");
 
@@ -28,12 +28,12 @@ export default function LoginScreen({ navigation }: Props) {
     try {
       const { error: signInError } = await signInWithEmail(email.trim(), password);
       if (signInError) {
-        setError(signInError.message);
+        setError(getAuthErrorMessage(signInError));
       }
       // On success, AuthContext's onAuthStateChange picks up the new session
       // and RootNavigator automatically swaps to the signed-in stack.
-    } catch (e: any) {
-      setError(e?.message ?? "Inloggen is mislukt. Probeer het opnieuw.");
+    } catch (e) {
+      setError(getAuthErrorMessage(e));
     } finally {
       setLoading(false);
     }

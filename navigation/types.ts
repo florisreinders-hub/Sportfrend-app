@@ -1,7 +1,7 @@
 export type RootStackParamList = {
   Login: undefined;
   Register: undefined;
-  RegisterDetails: { email: string; password: string };
+  RegisterDetails: undefined;
   ForgotPassword: undefined;
   LocationSetup: undefined;
   Home: { tab?: "ontdekken" | "connecties" } | undefined;
