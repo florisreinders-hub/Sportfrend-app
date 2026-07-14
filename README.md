@@ -67,17 +67,35 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
 
 4. **Zet de auth-redirect URL op de allowlist**
 
-   De app gebruikt het `sportfrend://` custom scheme zodat de bevestigingslink
-   in registratie-/wachtwoord-reset-e-mails rechtstreeks terug de app in gaat
-   in plaats van naar een browser/localhost (zie `lib/deepLinking.ts`).
-   Supabase accepteert een `emailRedirectTo`/`redirectTo` alleen als die op de
-   allowlist staat:
+   De app gebruikt het `sportfrend://` custom scheme (`app.json` → `"scheme": "sportfrend"`)
+   zodat de bevestigingslink in registratie-/wachtwoord-reset-e-mails rechtstreeks
+   terug de app in gaat in plaats van naar een browser/localhost (zie
+   `lib/deepLinking.ts`). Een bevestigde registratie toont daarna het
+   "E-mailadres bevestigd!"-scherm met een knop naar inloggen.
 
-   - Ga naar **Authentication → URL Configuration → Redirect URLs** in je
-     Supabase dashboard
-   - Voeg `sportfrend://**` toe
-   - Test je lokaal via Expo Go/dev client, voeg dan ook het `exp://` adres
-     toe dat in de terminal verschijnt na `npm start` (bijv. `exp://192.168.1.23:8081/**`)
+   `lib/deepLinking.ts`'s `getAuthRedirectUrl()` bouwt deze URL met
+   `Linking.createURL("auth/callback")`, wat automatisch het juiste schema
+   gebruikt per omgeving:
+
+   | Omgeving                          | Resulterende redirect-URL                |
+   | ---------------------------------- | ----------------------------------------- |
+   | Standalone / EAS Update build      | `sportfrend://auth/callback`              |
+   | Expo Go / dev client (lokaal)      | `exp://<jouw-ip>:8081/--/auth/callback`   |
+
+   Supabase accepteert een `emailRedirectTo`/`redirectTo` **alleen** als die
+   op de allowlist staat — de app-configuratie alleen is niet genoeg, dit moet
+   je zelf in het Supabase dashboard instellen (hier heeft Claude geen
+   toegang toe):
+
+   - Ga naar **Authentication → URL Configuration** in je Supabase dashboard
+   - **Site URL**: mag op de standaardwaarde blijven (`http://localhost:3000`)
+     — deze wordt alleen gebruikt als fallback wanneer een auth-aanroep géén
+     expliciete redirect meegeeft, wat in deze app nergens gebeurt
+   - **Redirect URLs**: voeg toe:
+     - `sportfrend://**` (verplicht, voor gepubliceerde/standalone builds)
+     - `exp://**` (voor lokaal testen via Expo Go/dev client — het IP-adres
+       verandert per netwerk, dus gebruik de wildcard in plaats van het
+       exacte adres uit de terminal)
 
 5. **Start de Expo dev server**
 

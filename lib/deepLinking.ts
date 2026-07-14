@@ -34,7 +34,11 @@ function friendlyLinkError(rawDescription: string): string {
   return rawDescription || "Er ging iets mis bij het verwerken van de link.";
 }
 
-export type AuthLinkResult = { status: "session" } | { status: "error"; message: string } | { status: "ignored" };
+export type AuthLinkResult =
+  | { status: "session" }
+  | { status: "email_confirmed" }
+  | { status: "error"; message: string }
+  | { status: "ignored" };
 
 /** Handles a sportfrend://auth/callback deep link from a Supabase auth email. */
 export async function handleAuthDeepLink(url: string | null): Promise<AuthLinkResult> {
@@ -45,6 +49,16 @@ export async function handleAuthDeepLink(url: string | null): Promise<AuthLinkRe
   if (params.error || params.error_description) {
     const raw = decodeURIComponent(params.error_description ?? params.error ?? "");
     return { status: "error", message: friendlyLinkError(raw) };
+  }
+
+  // Supabase includes `type` on these redirects (signup, recovery, invite,
+  // email_change, ...). For a signup confirmation, the email is already
+  // confirmed server-side by the time Supabase redirects here - the tokens
+  // in the URL are just a convenience for auto-login, which we deliberately
+  // skip so the user lands on a clear "E-mailadres bevestigd!" screen and
+  // signs in explicitly afterward, rather than being silently logged in.
+  if (params.type === "signup") {
+    return { status: "email_confirmed" };
   }
 
   if (params.access_token && params.refresh_token) {

@@ -1,7 +1,7 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { StatusBar } from "expo-status-bar";
 import * as Linking from "expo-linking";
-import { NavigationContainer } from "@react-navigation/native";
+import { NavigationContainer, useNavigationContainerRef } from "@react-navigation/native";
 import { useFonts, RubikMonoOne_400Regular } from "@expo-google-fonts/rubik-mono-one";
 import { Ruluko_400Regular } from "@expo-google-fonts/ruluko";
 import {
@@ -13,6 +13,7 @@ import {
 import { View, ActivityIndicator, Alert, Text, StyleSheet } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { RootNavigator } from "@/navigation/RootNavigator";
+import { RootStackParamList } from "@/navigation/types";
 import { AuthProvider } from "@/lib/AuthContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { isSupabaseConfigured } from "@/lib/supabase";
@@ -29,16 +30,34 @@ export default function App() {
     Inter_700Bold,
   });
 
+  const navigationRef = useNavigationContainerRef<RootStackParamList>();
+  const pendingEmailConfirmedRef = useRef(false);
+
+  const navigateToEmailConfirmed = () => {
+    if (navigationRef.isReady()) {
+      navigationRef.navigate("EmailConfirmed");
+    } else {
+      // The deep link can resolve before NavigationContainer has mounted
+      // (e.g. a cold start while fonts are still loading) - flush this once
+      // onReady fires below instead of dropping it.
+      pendingEmailConfirmedRef.current = true;
+    }
+  };
+
   useEffect(() => {
     // Supabase auth emails (sign-up confirmation, password reset) link back
     // into the app via the sportfrend:// scheme instead of a browser/
     // localhost redirect. setSession()/exchangeCodeForSession() inside
     // handleAuthDeepLink update the session, which AuthContext picks up via
-    // onAuthStateChange and RootNavigator then routes on automatically.
+    // onAuthStateChange and RootNavigator then routes on automatically. A
+    // signup confirmation instead routes to a dedicated confirmation screen
+    // (see handleAuthDeepLink's "email_confirmed" case).
     const processUrl = async (url: string | null) => {
       const result = await handleAuthDeepLink(url);
       if (result.status === "error") {
         Alert.alert("Linkfout", result.message);
+      } else if (result.status === "email_confirmed") {
+        navigateToEmailConfirmed();
       }
     };
 
@@ -73,7 +92,15 @@ export default function App() {
           </View>
         ) : null}
         <AuthProvider>
-          <NavigationContainer>
+          <NavigationContainer
+            ref={navigationRef}
+            onReady={() => {
+              if (pendingEmailConfirmedRef.current) {
+                pendingEmailConfirmedRef.current = false;
+                navigationRef.navigate("EmailConfirmed");
+              }
+            }}
+          >
             <RootNavigator />
           </NavigationContainer>
         </AuthProvider>

@@ -2,6 +2,7 @@ export type RootStackParamList = {
   Login: undefined;
   Register: undefined;
   RegisterDetails: undefined;
+  EmailConfirmed: undefined;
   ForgotPassword: undefined;
   LocationSetup: undefined;
   Home: { tab?: "ontdekken" | "connecties" } | undefined;
