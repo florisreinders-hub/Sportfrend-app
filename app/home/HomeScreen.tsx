@@ -65,6 +65,7 @@ export default function HomeScreen({ navigation, route }: Props) {
       const result = await recordSwipe(session.user.id, profile.id, direction);
       if (result.matched) {
         navigation.navigate("Match", {
+          matchId: result.matchId,
           matchedName: profile.full_name ?? "Sportmaatje",
           matchedPhoto: profile.photo_url ?? avatarPlaceholder(profile.id),
         });

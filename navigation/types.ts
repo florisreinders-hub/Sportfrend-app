@@ -6,7 +6,7 @@ export type RootStackParamList = {
   ForgotPassword: undefined;
   LocationSetup: undefined;
   Home: { tab?: "ontdekken" | "connecties" } | undefined;
-  Match: { matchedName: string; matchedPhoto: string };
+  Match: { matchId: string; matchedName: string; matchedPhoto: string };
   Filter: undefined;
   SporterProfile: { sporterId: string };
   Profile: undefined;

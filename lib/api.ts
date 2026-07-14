@@ -104,7 +104,9 @@ export async function fetchDiscoverProfiles(currentUserId: string): Promise<Prof
   return results.slice(0, 20);
 }
 
-export async function recordSwipe(swiperId: string, swipedId: string, direction: "like" | "skip") {
+export type SwipeResult = { matched: false } | { matched: true; matchId: string };
+
+export async function recordSwipe(swiperId: string, swipedId: string, direction: "like" | "skip"): Promise<SwipeResult> {
   const { error } = await supabase
     .from("swipes")
     .upsert({ swiper_id: swiperId, swiped_id: swipedId, direction }, { onConflict: "swiper_id,swiped_id" });
@@ -123,12 +125,14 @@ export async function recordSwipe(swiperId: string, swipedId: string, direction:
   if (!reciprocal) return { matched: false };
 
   const [userA, userB] = [swiperId, swipedId].sort();
-  const { error: matchError } = await supabase
+  const { data: match, error: matchError } = await supabase
     .from("matches")
-    .upsert({ user_a_id: userA, user_b_id: userB }, { onConflict: "user_a_id,user_b_id" });
+    .upsert({ user_a_id: userA, user_b_id: userB }, { onConflict: "user_a_id,user_b_id" })
+    .select("id")
+    .single();
   if (matchError) throw matchError;
 
-  return { matched: true };
+  return { matched: true, matchId: match.id };
 }
 
 export async function fetchConnections(userId: string) {
