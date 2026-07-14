@@ -32,12 +32,14 @@ const SPORT_OPTIONS: SelectOption[] = [
   { label: "Crossfit", value: "Crossfit" },
 ];
 
-const LEVELS: (string | null)[] = [null, "beginner", "gevorderd", "competitief"];
-const LEVEL_LABELS: Record<string, string> = {
-  beginner: "Beginner",
-  gevorderd: "Gevorderd",
-  competitief: "Competitief",
-};
+// value: null = "Alle niveaus", i.e. no level filter. Values match the
+// profiles table's level check constraint (beginner/gevorderd/competitief).
+const LEVEL_OPTIONS: SelectOption[] = [
+  { label: "Alle niveaus", value: null },
+  { label: "Beginner", value: "beginner" },
+  { label: "Gevorderd", value: "gevorderd" },
+  { label: "Competitief", value: "competitief" },
+];
 
 type Props = NativeStackScreenProps<RootStackParamList, "Filter">;
 
@@ -46,13 +48,15 @@ export default function FilterScreen({ navigation }: Props) {
   const [maxAge, setMaxAge] = useState(filters.maxAge);
   const [distanceKm, setDistanceKm] = useState(filters.distanceKm);
   const [sport, setSport] = useState<string | null>(filters.sport);
-  const [levelIndex, setLevelIndex] = useState(Math.max(0, LEVELS.indexOf(filters.level)));
+  const [level, setLevel] = useState<string | null>(filters.level);
   const [sportPickerVisible, setSportPickerVisible] = useState(false);
+  const [levelPickerVisible, setLevelPickerVisible] = useState(false);
 
   const sportLabel = SPORT_OPTIONS.find((o) => o.value === sport)?.label ?? "Alle sporten";
+  const levelLabel = LEVEL_OPTIONS.find((o) => o.value === level)?.label ?? "Alle niveaus";
 
   const apply = () => {
-    setFilters({ maxAge, distanceKm, sport, level: LEVELS[levelIndex] });
+    setFilters({ maxAge, distanceKm, sport, level });
     navigation.navigate("Home", { tab: "ontdekken" });
   };
 
@@ -61,7 +65,7 @@ export default function FilterScreen({ navigation }: Props) {
     setMaxAge(DEFAULT_FILTERS.maxAge);
     setDistanceKm(DEFAULT_FILTERS.distanceKm);
     setSport(DEFAULT_FILTERS.sport);
-    setLevelIndex(0);
+    setLevel(DEFAULT_FILTERS.level);
   };
 
   return (
@@ -93,13 +97,9 @@ export default function FilterScreen({ navigation }: Props) {
 
         <View style={styles.row}>
           <Text style={styles.label}>NIVEAU</Text>
-          <Pressable
-            style={styles.pill}
-            onPress={() => setLevelIndex((levelIndex + 1) % LEVELS.length)}
-          >
-            <Text style={styles.pillText}>
-              {(LEVELS[levelIndex] ? LEVEL_LABELS[LEVELS[levelIndex]!] : "Alle niveaus").toUpperCase()}
-            </Text>
+          <Pressable style={styles.pill} onPress={() => setLevelPickerVisible(true)}>
+            <Text style={styles.pillText}>{levelLabel.toUpperCase()}</Text>
+            <Ionicons name="chevron-down" size={16} color={colors.black} />
           </Pressable>
         </View>
 
@@ -119,6 +119,14 @@ export default function FilterScreen({ navigation }: Props) {
         selectedValue={sport}
         onSelect={setSport}
         onClose={() => setSportPickerVisible(false)}
+      />
+      <SelectModal
+        visible={levelPickerVisible}
+        title="Kies een niveau"
+        options={LEVEL_OPTIONS}
+        selectedValue={level}
+        onSelect={setLevel}
+        onClose={() => setLevelPickerVisible(false)}
       />
 
       <BottomNav active="filter" />
