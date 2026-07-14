@@ -8,21 +8,35 @@ import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
+import { DEFAULT_FILTERS, useDiscoverFilters } from "@/lib/FilterContext";
 
-const SPORTS = ["Golf", "Tennis", "Padel", "Hardlopen", "Fitness"];
-const LEVELS = ["Beginner", "Gevorderd", "Competitief"];
+// null = "Alle sporten" / "Alle niveaus", i.e. no filter on that field.
+const SPORTS: (string | null)[] = [null, "Padel", "Tennis", "Golf", "Hardlopen", "Fitness"];
+const LEVELS: (string | null)[] = [null, "beginner", "gevorderd", "competitief"];
+const LEVEL_LABELS: Record<string, string> = {
+  beginner: "Beginner",
+  gevorderd: "Gevorderd",
+  competitief: "Competitief",
+};
 
 type Props = NativeStackScreenProps<RootStackParamList, "Filter">;
 
 export default function FilterScreen({ navigation }: Props) {
-  const [age, setAge] = useState(90);
-  const [distance, setDistance] = useState(150);
-  const [sportIndex, setSportIndex] = useState(0);
-  const [levelIndex, setLevelIndex] = useState(0);
+  const { filters, setFilters, resetFilters } = useDiscoverFilters();
+  const [maxAge, setMaxAge] = useState(filters.maxAge);
+  const [distanceKm, setDistanceKm] = useState(filters.distanceKm);
+  const [sportIndex, setSportIndex] = useState(Math.max(0, SPORTS.indexOf(filters.sport)));
+  const [levelIndex, setLevelIndex] = useState(Math.max(0, LEVELS.indexOf(filters.level)));
+
+  const apply = () => {
+    setFilters({ maxAge, distanceKm, sport: SPORTS[sportIndex], level: LEVELS[levelIndex] });
+    navigation.navigate("Home", { tab: "ontdekken" });
+  };
 
   const reset = () => {
-    setAge(90);
-    setDistance(150);
+    resetFilters();
+    setMaxAge(DEFAULT_FILTERS.maxAge);
+    setDistanceKm(DEFAULT_FILTERS.distanceKm);
     setSportIndex(0);
     setLevelIndex(0);
   };
@@ -36,15 +50,15 @@ export default function FilterScreen({ navigation }: Props) {
       <View style={styles.content}>
         <View style={styles.row}>
           <Text style={styles.label}>LEEFTIJD</Text>
-          <Text style={styles.value}>18-{age}</Text>
+          <Text style={styles.value}>18-{maxAge}</Text>
         </View>
-        <SliderControl value={age} minimumValue={18} maximumValue={90} onValueChange={setAge} />
+        <SliderControl value={maxAge} minimumValue={18} maximumValue={90} onValueChange={setMaxAge} />
 
         <View style={styles.row}>
           <Text style={styles.label}>AFSTAND</Text>
-          <Text style={styles.value}>{distance}KM</Text>
+          <Text style={styles.value}>{distanceKm}KM</Text>
         </View>
-        <SliderControl value={distance} minimumValue={1} maximumValue={150} onValueChange={setDistance} />
+        <SliderControl value={distanceKm} minimumValue={1} maximumValue={150} onValueChange={setDistanceKm} />
 
         <View style={styles.row}>
           <Text style={styles.label}>SPORT</Text>
@@ -52,7 +66,7 @@ export default function FilterScreen({ navigation }: Props) {
             style={styles.pill}
             onPress={() => setSportIndex((sportIndex + 1) % SPORTS.length)}
           >
-            <Text style={styles.pillText}>{SPORTS[sportIndex].toUpperCase()}</Text>
+            <Text style={styles.pillText}>{(SPORTS[sportIndex] ?? "Alle sporten").toUpperCase()}</Text>
           </Pressable>
         </View>
 
@@ -62,7 +76,9 @@ export default function FilterScreen({ navigation }: Props) {
             style={styles.pill}
             onPress={() => setLevelIndex((levelIndex + 1) % LEVELS.length)}
           >
-            <Text style={styles.pillText}>{LEVELS[levelIndex].toUpperCase()}</Text>
+            <Text style={styles.pillText}>
+              {(LEVELS[levelIndex] ? LEVEL_LABELS[LEVELS[levelIndex]!] : "Alle niveaus").toUpperCase()}
+            </Text>
           </Pressable>
         </View>
 
@@ -71,8 +87,8 @@ export default function FilterScreen({ navigation }: Props) {
           Kies dagen waarop je beschikbaar bent in je profielinstellingen.
         </Text>
 
-        <Button label="Reset filter" onPress={reset} style={styles.reset} />
-        <Button label="Toepassen" onPress={() => navigation.navigate("Home")} variant="outline" style={styles.apply} />
+        <Button label="Toepassen" onPress={apply} style={styles.apply} />
+        <Button label="Reset filter" onPress={reset} variant="outline" style={styles.reset} />
       </View>
 
       <BottomNav active="filter" />
@@ -161,10 +177,10 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: spacing.xs,
   },
-  reset: {
+  apply: {
     marginTop: spacing.xl,
   },
-  apply: {
+  reset: {
     marginTop: spacing.sm,
   },
 });

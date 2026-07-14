@@ -15,6 +15,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { RootNavigator } from "@/navigation/RootNavigator";
 import { RootStackParamList } from "@/navigation/types";
 import { AuthProvider } from "@/lib/AuthContext";
+import { FilterProvider } from "@/lib/FilterContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { handleAuthDeepLink } from "@/lib/deepLinking";
@@ -92,17 +93,19 @@ export default function App() {
           </View>
         ) : null}
         <AuthProvider>
-          <NavigationContainer
-            ref={navigationRef}
-            onReady={() => {
-              if (pendingEmailConfirmedRef.current) {
-                pendingEmailConfirmedRef.current = false;
-                navigationRef.navigate("EmailConfirmed");
-              }
-            }}
-          >
-            <RootNavigator />
-          </NavigationContainer>
+          <FilterProvider>
+            <NavigationContainer
+              ref={navigationRef}
+              onReady={() => {
+                if (pendingEmailConfirmedRef.current) {
+                  pendingEmailConfirmedRef.current = false;
+                  navigationRef.navigate("EmailConfirmed");
+                }
+              }}
+            >
+              <RootNavigator />
+            </NavigationContainer>
+          </FilterProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </ErrorBoundary>

@@ -1,5 +1,6 @@
 import { PostgrestError } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
+import { DEFAULT_FILTERS, DiscoverFilters } from "./FilterContext";
 
 /**
  * Translates Postgrest/Postgres error codes into clear Dutch messages.
@@ -54,14 +55,32 @@ function haversineDistanceKm(lat1: number, lon1: number, lat2: number, lon2: num
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+/** "DD-MM-JJJJ"-free ISO date for someone who is exactly `age` years old today. */
+function isoDateForAge(age: number): string {
+  const today = new Date();
+  const d = new Date(today.getFullYear() - age, today.getMonth(), today.getDate());
+  return d.toISOString().slice(0, 10);
+}
+
 /**
  * Discover feed: same sport as the current user (when set) and within their
  * search radius (when they have a location set), excluding the user and
  * anyone they've already swiped on. Both filters degrade gracefully - a
  * user who skipped location setup or hasn't picked a sport yet still sees
  * a feed, just without that particular narrowing.
+ *
+ * `filters` (set on the Filter screen, see lib/FilterContext.tsx) layer on
+ * top of / override those profile-based defaults: an explicit sport/level
+ * choice takes precedence over the profile's own sport, a narrowed distance
+ * overrides the profile's search_radius_km, and an age ceiling below the
+ * default (90) adds a birthdate range. Left-at-default filter values are
+ * treated as "not set" so a user who never opens the Filter screen still
+ * gets the same profile-based feed as before.
  */
-export async function fetchDiscoverProfiles(currentUserId: string): Promise<Profile[]> {
+export async function fetchDiscoverProfiles(
+  currentUserId: string,
+  filters: DiscoverFilters = DEFAULT_FILTERS
+): Promise<Profile[]> {
   const { data: ownProfile, error: ownProfileError } = await supabase
     .from("profiles")
     .select("sport, latitude, longitude, search_radius_km")
@@ -81,16 +100,28 @@ export async function fetchDiscoverProfiles(currentUserId: string): Promise<Prof
     .from("profiles")
     .select("*")
     .not("id", "in", `(${excludedIds.join(",")})`);
-  if (ownProfile?.sport) {
-    query = query.eq("sport", ownProfile.sport);
+
+  const sportFilter = filters.sport ?? ownProfile?.sport;
+  if (sportFilter) {
+    query = query.eq("sport", sportFilter);
+  }
+
+  if (filters.level) {
+    query = query.eq("level", filters.level);
+  }
+
+  if (filters.maxAge < DEFAULT_FILTERS.maxAge) {
+    // Youngest allowed (18) sets the upper birthdate bound, oldest allowed
+    // (filters.maxAge) sets the lower one.
+    query = query.gte("birthdate", isoDateForAge(filters.maxAge)).lte("birthdate", isoDateForAge(18));
   }
 
   const { data, error } = await query.limit(50);
   if (error) throw error;
   let results = (data ?? []) as Profile[];
 
-  if (ownProfile?.latitude != null && ownProfile?.longitude != null) {
-    const radiusKm = ownProfile.search_radius_km ?? 25;
+  const radiusKm = filters.distanceKm < DEFAULT_FILTERS.distanceKm ? filters.distanceKm : ownProfile?.search_radius_km;
+  if (ownProfile?.latitude != null && ownProfile?.longitude != null && radiusKm != null) {
     const ownLat = ownProfile.latitude;
     const ownLng = ownProfile.longitude;
     results = results

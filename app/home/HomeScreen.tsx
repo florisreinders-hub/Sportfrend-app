@@ -10,6 +10,7 @@ import { SwipeCard } from "@/components/SwipeCard";
 import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
+import { useDiscoverFilters } from "@/lib/FilterContext";
 import { fetchConnections, fetchDiscoverProfiles, getDataErrorMessage, recordSwipe, Profile } from "@/lib/api";
 import { avatarPlaceholder } from "@/constants/placeholders";
 
@@ -17,6 +18,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Home">;
 
 export default function HomeScreen({ navigation, route }: Props) {
   const { session } = useAuth();
+  const { filters } = useDiscoverFilters();
   const [tab, setTab] = useState<"ontdekken" | "connecties">(route.params?.tab ?? "ontdekken");
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [connections, setConnections] = useState<any[]>([]);
@@ -28,14 +30,14 @@ export default function HomeScreen({ navigation, route }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchDiscoverProfiles(session.user.id);
+      const data = await fetchDiscoverProfiles(session.user.id, filters);
       setProfiles(data);
     } catch (e) {
       setError(getDataErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  }, [session?.user]);
+  }, [session?.user, filters]);
 
   const loadConnections = useCallback(async () => {
     if (!session?.user) return;
