@@ -6,35 +6,103 @@ import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { Button } from "@/components/Button";
+import { Input } from "@/components/Input";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationSetup">;
 
-export default function LocationSetupScreen({ navigation }: Props) {
-  const [status, setStatus] = useState<"idle" | "granted" | "denied">("idle");
-  const [loading, setLoading] = useState(false);
+// "idle": GPS is the primary path. "manual": permission was denied (or the
+// user opted out of GPS), so the fallback text input is shown. "saved":
+// location successfully stored, either way.
+type Step = "idle" | "manual" | "saved";
 
-  const requestLocation = async () => {
-    setLoading(true);
-    const { status: permission } = await Location.requestForegroundPermissionsAsync();
-    if (permission === "granted") {
-      const position = await Location.getCurrentPositionAsync({});
-      const { data: userData } = await supabase.auth.getUser();
-      if (userData.user) {
-        await supabase
-          .from("profiles")
-          .update({
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          })
-          .eq("id", userData.user.id);
-      }
-      setStatus("granted");
-    } else {
-      setStatus("denied");
+export default function LocationSetupScreen({ navigation }: Props) {
+  const [step, setStep] = useState<Step>("idle");
+  const [requesting, setRequesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [resolvedCity, setResolvedCity] = useState<string | null>(null);
+  const [manualCity, setManualCity] = useState("");
+
+  const saveLocation = async (fields: { city: string | null; latitude: number | null; longitude: number | null }) => {
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) {
+      throw new Error("Je bent niet ingelogd.");
     }
-    setLoading(false);
+    const { error: updateError } = await supabase.from("profiles").update(fields).eq("id", userData.user.id);
+    if (updateError) throw updateError;
+  };
+
+  const useCurrentLocation = async () => {
+    setError(null);
+    setRequesting(true);
+    try {
+      const { status: permission } = await Location.requestForegroundPermissionsAsync();
+      if (permission !== "granted") {
+        setStep("manual");
+        return;
+      }
+
+      const position = await Location.getCurrentPositionAsync({});
+      const { latitude, longitude } = position.coords;
+
+      let city: string | null = null;
+      try {
+        const [place] = await Location.reverseGeocodeAsync({ latitude, longitude });
+        city = place?.city ?? place?.subregion ?? place?.region ?? null;
+      } catch {
+        // Reverse geocoding can fail (offline, unsupported region, etc.) - the
+        // coordinates are still useful on their own, so don't block on this.
+      }
+
+      setRequesting(false);
+      setSaving(true);
+      await saveLocation({ city, latitude, longitude });
+      setResolvedCity(city);
+      setStep("saved");
+    } catch (e: any) {
+      setError(e?.message ?? "Locatie ophalen is mislukt. Probeer het opnieuw of vul je plaats handmatig in.");
+      setStep("manual");
+    } finally {
+      setRequesting(false);
+      setSaving(false);
+    }
+  };
+
+  const saveManualCity = async () => {
+    const city = manualCity.trim();
+    if (!city) return;
+    setError(null);
+    setSaving(true);
+    try {
+      // Best-effort: try to resolve the typed place name to coordinates so
+      // distance-based matching still works, but the city name alone is
+      // still saved even if geocoding finds nothing or fails.
+      let latitude: number | null = null;
+      let longitude: number | null = null;
+      try {
+        const [result] = await Location.geocodeAsync(city);
+        if (result) {
+          latitude = result.latitude;
+          longitude = result.longitude;
+        }
+      } catch {
+        // ignore - city name is still saved below
+      }
+
+      await saveLocation({ city, latitude, longitude });
+      setResolvedCity(city);
+      setStep("saved");
+    } catch (e: any) {
+      setError(e?.message ?? "Opslaan is mislukt. Probeer het opnieuw.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const continueToApp = () => {
+    navigation.reset({ index: 0, routes: [{ name: "Home" }] });
   };
 
   return (
@@ -43,26 +111,74 @@ export default function LocationSetupScreen({ navigation }: Props) {
         <Ionicons name="location" size={64} color={colors.primary} />
         <Text style={styles.title}>Bepaal je zoekgebied</Text>
         <Text style={styles.description}>
-          In welke regio wil je mensen ontmoeten? Jouw adres wordt niet gedeeld met andere gebruikers.
+          In welke regio wil je mensen ontmoeten? Jouw exacte adres wordt niet gedeeld met andere gebruikers.
         </Text>
 
-        {status === "granted" ? (
-          <Text style={styles.status}>Locatie ingesteld. We laten je nu sporters in de buurt zien.</Text>
-        ) : status === "denied" ? (
-          <Text style={styles.statusError}>
-            Locatietoegang geweigerd. Je kunt dit later aanpassen in Instellingen.
+        {step === "saved" ? (
+          <>
+            <Text style={styles.status}>
+              {resolvedCity
+                ? `Locatie ingesteld op ${resolvedCity}. We laten je nu sporters in de buurt zien.`
+                : "Locatie ingesteld. We laten je nu sporters in de buurt zien."}
+            </Text>
+            <Button label="Doorgaan" onPress={continueToApp} style={styles.cta} />
+          </>
+        ) : step === "manual" ? (
+          <>
+            <Text style={styles.statusError}>
+              Locatietoegang geweigerd. Geen probleem — vul je plaats hieronder handmatig in.
+            </Text>
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+            <Input
+              placeholder="Bijv. Amsterdam"
+              autoCapitalize="words"
+              autoCorrect={false}
+              returnKeyType="done"
+              value={manualCity}
+              onChangeText={(text) => {
+                setManualCity(text);
+                if (error) setError(null);
+              }}
+              onSubmitEditing={saveManualCity}
+              style={styles.input}
+            />
+            <Button
+              label="Locatie opslaan"
+              onPress={saveManualCity}
+              loading={saving}
+              disabled={!manualCity.trim()}
+              style={styles.cta}
+            />
+            <Text style={styles.link} onPress={useCurrentLocation}>
+              Toch mijn locatie gebruiken
+            </Text>
+          </>
+        ) : (
+          <>
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+            <Button
+              label="Kies dit zoekgebied"
+              onPress={useCurrentLocation}
+              loading={requesting || saving}
+              style={styles.cta}
+            />
+            <Text
+              style={styles.link}
+              onPress={() => {
+                setError(null);
+                setStep("manual");
+              }}
+            >
+              Liever handmatig invullen
+            </Text>
+          </>
+        )}
+
+        {step !== "saved" ? (
+          <Text style={styles.skip} onPress={continueToApp}>
+            Overslaan
           </Text>
         ) : null}
-
-        <Button
-          label="Kies dit zoekgebied"
-          onPress={requestLocation}
-          loading={loading}
-          style={styles.cta}
-        />
-        <Text style={styles.skip} onPress={() => navigation.reset({ index: 0, routes: [{ name: "Home" }] })}>
-          Overslaan
-        </Text>
       </View>
     </ScreenContainer>
   );
@@ -103,10 +219,28 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: spacing.lg,
   },
+  error: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.danger,
+    textAlign: "center",
+    marginTop: spacing.sm,
+  },
+  input: {
+    width: "100%",
+    marginTop: spacing.lg,
+    marginBottom: 0,
+  },
   cta: {
-    marginTop: spacing.xl,
+    marginTop: spacing.lg,
     width: "100%",
     borderRadius: radii.md,
+  },
+  link: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.black,
+    marginTop: spacing.md,
   },
   skip: {
     fontFamily: fonts.body,
