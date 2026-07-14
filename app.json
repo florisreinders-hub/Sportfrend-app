@@ -3,6 +3,7 @@
     "name": "Sportfrend",
     "slug": "sportfrend-app",
     "version": "1.0.0",
+    "scheme": "sportfrend",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",

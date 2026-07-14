@@ -65,7 +65,21 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
    EXPO_PUBLIC_SUPABASE_ANON_KEY=jouw-anon-key
    ```
 
-4. **Start de Expo dev server**
+4. **Zet de auth-redirect URL op de allowlist**
+
+   De app gebruikt het `sportfrend://` custom scheme zodat de bevestigingslink
+   in registratie-/wachtwoord-reset-e-mails rechtstreeks terug de app in gaat
+   in plaats van naar een browser/localhost (zie `lib/deepLinking.ts`).
+   Supabase accepteert een `emailRedirectTo`/`redirectTo` alleen als die op de
+   allowlist staat:
+
+   - Ga naar **Authentication → URL Configuration → Redirect URLs** in je
+     Supabase dashboard
+   - Voeg `sportfrend://**` toe
+   - Test je lokaal via Expo Go/dev client, voeg dan ook het `exp://` adres
+     toe dat in de terminal verschijnt na `npm start` (bijv. `exp://192.168.1.23:8081/**`)
+
+5. **Start de Expo dev server**
 
    ```bash
    npm start

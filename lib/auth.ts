@@ -1,16 +1,23 @@
 import { AuthError, isAuthWeakPasswordError } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
+import { getAuthRedirectUrl } from "./deepLinking";
 
 export async function signInWithEmail(email: string, password: string) {
   return supabase.auth.signInWithPassword({ email, password });
 }
 
 export async function signUpWithEmail(email: string, password: string) {
-  return supabase.auth.signUp({ email, password });
+  return supabase.auth.signUp({
+    email,
+    password,
+    options: { emailRedirectTo: getAuthRedirectUrl() },
+  });
 }
 
 export async function sendPasswordReset(email: string) {
-  return supabase.auth.resetPasswordForEmail(email);
+  return supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: getAuthRedirectUrl(),
+  });
 }
 
 export async function signOut() {

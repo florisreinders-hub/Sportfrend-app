@@ -81,9 +81,11 @@ export default function RegisterDetailsScreen({ navigation }: Props) {
         // Email confirmation is required on this project: there's no
         // authenticated session yet, so we can't write to `profiles` (RLS
         // requires auth.uid() = id). The birthdate/gender get saved once
-        // they confirm and log in - EditProfile lets them fill it in too.
+        // they confirm - EditProfile lets them fill it in too. Tapping the
+        // link opens the app via the sportfrend:// scheme and signs them in
+        // automatically (see lib/deepLinking.ts), no manual login needed.
         setInfo(
-          `We hebben een bevestigingslink gestuurd naar ${email.trim()}. Bevestig je e-mailadres en log daarna in om verder te gaan.`
+          `We hebben een bevestigingslink gestuurd naar ${email.trim()}. Open de link vanaf dit toestel om je e-mailadres te bevestigen - je wordt dan automatisch ingelogd.`
         );
         return;
       }
