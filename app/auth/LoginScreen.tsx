@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from "react-native";
+import React, { useRef, useState } from "react";
+import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "@/navigation/types";
@@ -16,23 +16,31 @@ export default function LoginScreen({ navigation }: Props) {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const passwordRef = useRef<TextInput>(null);
+
+  const canSubmit = email.trim().length > 0 && password.length > 0 && !loading;
 
   const onSubmit = async () => {
+    if (!canSubmit) return;
     setError(null);
     setLoading(true);
-    const { error: signInError } = await signInWithEmail(email.trim(), password);
-    setLoading(false);
-    if (signInError) {
-      setError(signInError.message);
+    try {
+      const { error: signInError } = await signInWithEmail(email.trim(), password);
+      if (signInError) {
+        setError(signInError.message);
+      }
+      // On success, AuthContext's onAuthStateChange picks up the new session
+      // and RootNavigator automatically swaps to the signed-in stack.
+    } catch (e: any) {
+      setError(e?.message ?? "Inloggen is mislukt. Probeer het opnieuw.");
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
     <ScreenContainer withBottomPadding={false}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <View style={styles.hero}>
           <Ionicons name="leaf" size={72} color={colors.primary} />
           <Text style={styles.brand}>Sportfrend</Text>
@@ -41,21 +49,42 @@ export default function LoginScreen({ navigation }: Props) {
 
         <View style={styles.form}>
           <Text style={styles.title}>Sign in</Text>
+
           <Input
             placeholder="E-mail"
             autoCapitalize="none"
+            autoCorrect={false}
             keyboardType="email-address"
+            textContentType="emailAddress"
+            autoComplete="email"
+            returnKeyType="next"
             value={email}
-            onChangeText={setEmail}
+            onChangeText={(text) => {
+              setEmail(text);
+              if (error) setError(null);
+            }}
+            onSubmitEditing={() => passwordRef.current?.focus()}
+            blurOnSubmit={false}
           />
           <Input
+            ref={passwordRef}
             placeholder="Wachtwoord"
             secureTextEntry
+            textContentType="password"
+            autoComplete="password"
+            returnKeyType="done"
             value={password}
-            onChangeText={setPassword}
+            onChangeText={(text) => {
+              setPassword(text);
+              if (error) setError(null);
+            }}
+            onSubmitEditing={onSubmit}
           />
+
           {error ? <Text style={styles.error}>{error}</Text> : null}
-          <Button label="Volgende" onPress={onSubmit} loading={loading} style={styles.cta} />
+
+          <Button label="Volgende" onPress={onSubmit} loading={loading} disabled={!canSubmit} style={styles.cta} />
+
           <Text style={styles.link} onPress={() => navigation.navigate("ForgotPassword")}>
             Wachtwoord vergeten
           </Text>
