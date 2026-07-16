@@ -26,12 +26,30 @@ export default function LocationSetupScreen({ navigation }: Props) {
   const [manualCity, setManualCity] = useState("");
 
   const saveLocation = async (fields: { city: string | null; latitude: number | null; longitude: number | null }) => {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) {
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData.user) {
       throw new Error("Je bent niet ingelogd.");
     }
-    const { error: updateError } = await supabase.from("profiles").update(fields).eq("id", userData.user.id);
-    if (updateError) throw updateError;
+
+    // upsert (not update): if this profile row doesn't exist yet for any
+    // reason - the handle_new_user() trigger didn't fire, this account
+    // predates the trigger/migration, etc. - a plain .update() matches zero
+    // rows and succeeds with no error, silently writing nothing. That
+    // exact failure mode is indistinguishable from a real save without
+    // checking the returned row, which a bare .update() doesn't give you.
+    const { data: saved, error: saveError } = await supabase
+      .from("profiles")
+      .upsert({ id: userData.user.id, ...fields }, { onConflict: "id" })
+      .select("id, latitude, longitude, city")
+      .single();
+
+    if (saveError) throw saveError;
+
+    const actuallySaved = Boolean(saved && (saved.latitude != null || saved.longitude != null || saved.city));
+    console.log("[LocationSetup] Locatie opslaan voor profiel", userData.user.id, "->", saved, "ok:", actuallySaved);
+    if (!actuallySaved) {
+      throw new Error("Locatie opslaan is niet gelukt: de database bevestigt geen opgeslagen locatie.");
+    }
   };
 
   const useCurrentLocation = async () => {

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { isSupabaseConfigured, supabase } from "./supabase";
 
@@ -25,10 +25,12 @@ async function fetchHasLocation(userId: string): Promise<boolean> {
     .eq("id", userId)
     .maybeSingle();
   if (error) {
-    console.warn("Kon locatiestatus niet ophalen:", error);
+    console.warn("[AuthContext] Kon locatiestatus niet ophalen:", error);
     return false;
   }
-  return Boolean(data && (data.latitude != null || data.longitude != null || data.city));
+  const hasLocation = Boolean(data && (data.latitude != null || data.longitude != null || data.city));
+  console.log("[AuthContext] Locatiestatus voor", userId, "->", data, "hasLocation:", hasLocation);
+  return hasLocation;
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -36,6 +38,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [initializing, setInitializing] = useState(true);
   const [hasLocation, setHasLocation] = useState(false);
   const [checkingLocation, setCheckingLocation] = useState(false);
+
+  // Tracks which user's location we've already checked, so a background
+  // token refresh (onAuthStateChange fires for that too, not just a real
+  // sign-in) doesn't re-trigger checkingLocation for the same user - that
+  // would flip RootNavigator's loading gate back on and remount the
+  // navigator mid-session, snapping the user back to its initial route.
+  const checkedUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -50,6 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .then(async ({ data }) => {
         setSession(data.session);
         if (data.session?.user) {
+          checkedUserIdRef.current = data.session.user.id;
           setCheckingLocation(true);
           setHasLocation(await fetchHasLocation(data.session.user.id));
           setCheckingLocation(false);
@@ -62,17 +72,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setInitializing(false);
       });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, newSession) => {
       setSession(newSession);
-      if (newSession?.user) {
-        setCheckingLocation(true);
-        fetchHasLocation(newSession.user.id).then((result) => {
-          setHasLocation(result);
-          setCheckingLocation(false);
-        });
-      } else {
+      const userId = newSession?.user?.id ?? null;
+
+      if (!userId) {
+        checkedUserIdRef.current = null;
         setHasLocation(false);
+        return;
       }
+
+      if (userId === checkedUserIdRef.current) {
+        // Same user we already checked (e.g. TOKEN_REFRESHED) - nothing to do.
+        return;
+      }
+
+      checkedUserIdRef.current = userId;
+      setCheckingLocation(true);
+      fetchHasLocation(userId).then((result) => {
+        setHasLocation(result);
+        setCheckingLocation(false);
+      });
     });
 
     return () => listener.subscription.unsubscribe();
