@@ -135,7 +135,11 @@ export default function RegisterDetailsScreen({ navigation }: Props) {
         }
       }
 
-      navigation.reset({ index: 0, routes: [{ name: "LocationSetup" }] });
+      // No explicit navigation needed: the session is already set at this
+      // point, so AuthContext's onAuthStateChange picks it up and
+      // RootNavigator swaps to the signed-in stack automatically - landing
+      // on LocationSetup since this profile has no location yet (see
+      // RootNavigator's initialRouteName).
     } catch (e) {
       setError(getAuthErrorMessage(e));
     } finally {

@@ -37,9 +37,15 @@ import PaymentScreen from "@/app/premium/PaymentScreen";
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export function RootNavigator() {
-  const { session, initializing } = useAuth();
+  const { session, initializing, hasLocation, checkingLocation } = useAuth();
 
-  if (initializing) {
+  // While signed in, hold the spinner a beat longer to know whether the
+  // profile already has a location before the navigator picks its first
+  // screen - otherwise it would always land on LocationSetup first (it's
+  // simply the first screen registered below) and only redirect afterwards,
+  // showing the location screen on every app open even when it's already
+  // set.
+  if (initializing || (session && checkingLocation)) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background }}>
         <ActivityIndicator color={colors.primary} size="large" />
@@ -47,8 +53,10 @@ export function RootNavigator() {
     );
   }
 
+  const initialRouteName = session ? (hasLocation ? "Home" : "LocationSetup") : "Login";
+
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
+    <Stack.Navigator initialRouteName={initialRouteName} screenOptions={{ headerShown: false }}>
       {!session ? (
         <>
           <Stack.Screen name="Login" component={LoginScreen} />
