@@ -51,7 +51,6 @@ export default function NewPostScreen({ navigation, route }: Props) {
   const [showWhen, setShowWhen] = useState(Boolean(prefilledDate));
   const [dateText, setDateText] = useState(prefilledDate ? isoToDutchDate(prefilledDate) : "");
   const [timeText, setTimeText] = useState("");
-  const [location, setLocation] = useState("");
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,7 +94,6 @@ export default function NewPostScreen({ navigation, route }: Props) {
         sport,
         eventDate,
         eventTime,
-        location: location.trim() || null,
       });
       navigation.goBack();
     } catch (e) {
@@ -157,13 +155,6 @@ export default function NewPostScreen({ navigation, route }: Props) {
           />
         </View>
       ) : null}
-
-      <Input
-        placeholder="Locatie (optioneel)"
-        value={location}
-        onChangeText={setLocation}
-        style={styles.locationInput}
-      />
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -230,10 +221,6 @@ const styles = StyleSheet.create({
   },
   whenInput: {
     flex: 1,
-  },
-  locationInput: {
-    marginHorizontal: spacing.md,
-    marginTop: spacing.md,
   },
   error: {
     fontFamily: fonts.body,

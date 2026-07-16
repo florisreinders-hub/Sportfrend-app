@@ -1,4 +1,3 @@
-import { PostgrestError } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 import { DEFAULT_FILTERS, DiscoverFilters } from "./FilterContext";
 
@@ -8,20 +7,34 @@ import { DEFAULT_FILTERS, DiscoverFilters } from "./FilterContext";
  * the SQL migration (supabase/migrations/0001_init.sql) was never actually
  * run against this Supabase project - surface that explicitly instead of
  * the raw schema-cache error or a silent empty list.
+ *
+ * Note: supabase-js only wraps `error` in an actual `PostgrestError` class
+ * instance when `.throwOnError()` was called on the query - nothing in this
+ * app does that, so every `.insert()`/`.update()`/`.select()` etc. call
+ * resolves `{ data, error }` with `error` as a plain object instead (either
+ * PostgREST's parsed JSON error body, or a constructed
+ * `{ message, details, hint, code }` for a network failure). An
+ * `instanceof PostgrestError` check is therefore never true here and always
+ * fell through to the generic message below, no matter what actually went
+ * wrong - check the object's shape instead of its class.
  */
 export function getDataErrorMessage(error: unknown): string {
+  if (error) console.error("[Supabase data error]", error);
   if (!error) return "Er is iets misgegaan. Probeer het opnieuw.";
 
-  if (error instanceof PostgrestError) {
-    switch (error.code) {
+  if (typeof error === "object" && ("code" in error || "message" in error)) {
+    const code = (error as { code?: string }).code;
+    switch (code) {
       case "PGRST205":
       case "42P01":
         return "De database is nog niet volledig ingericht: de benodigde tabel bestaat niet. Voer de SQL-migratie (supabase/migrations/0001_init.sql) uit via de Supabase SQL editor of CLI.";
       case "42501":
       case "PGRST301":
         return "Je hebt geen toegang tot deze gegevens. Log opnieuw in en probeer het nogmaals.";
-      default:
-        return error.message;
+      default: {
+        const message = (error as { message?: string }).message;
+        if (message) return message;
+      }
     }
   }
 
