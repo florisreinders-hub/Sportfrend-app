@@ -48,7 +48,8 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
 2. **Zet je Supabase project op**
 
    - Maak een nieuw project aan op [supabase.com](https://supabase.com)
-   - Open de SQL editor en plak de inhoud van `supabase/migrations/0001_init.sql`
+   - Open de SQL editor en plak de inhoud van elk bestand in `supabase/migrations/`,
+     in bestandsvolgorde (`0001_init.sql`, dan `0002_posts_sport_time_location.sql`, ...)
      (of gebruik `supabase db push` als je de Supabase CLI gebruikt)
    - Ga naar **Project Settings → API** en kopieer de `Project URL` en `anon public` key
 
