@@ -35,14 +35,21 @@ function parseDutchDate(input: string): string | null {
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
-export default function NewPostScreen({ navigation }: Props) {
+/** ISO "YYYY-MM-DD" -> "DD-MM-JJJJ", for pre-filling the manual date field. */
+function isoToDutchDate(iso: string): string {
+  const [year, month, day] = iso.split("-");
+  return `${day}-${month}-${year}`;
+}
+
+export default function NewPostScreen({ navigation, route }: Props) {
   const { session } = useAuth();
+  const prefilledDate = route.params?.eventDate;
   const [body, setBody] = useState("");
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [sport, setSport] = useState<string | null>(null);
   const [sportPickerVisible, setSportPickerVisible] = useState(false);
-  const [showWhen, setShowWhen] = useState(false);
-  const [dateText, setDateText] = useState("");
+  const [showWhen, setShowWhen] = useState(Boolean(prefilledDate));
+  const [dateText, setDateText] = useState(prefilledDate ? isoToDutchDate(prefilledDate) : "");
   const [timeText, setTimeText] = useState("");
   const [location, setLocation] = useState("");
   const [posting, setPosting] = useState(false);

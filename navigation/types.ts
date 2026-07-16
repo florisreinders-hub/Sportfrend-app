@@ -15,7 +15,7 @@ export type RootStackParamList = {
   ChatList: undefined;
   ChatDetail: { chatId: string; name: string; photo: string };
   PostsFeed: undefined;
-  NewPost: undefined;
+  NewPost: { eventDate?: string } | undefined;
   Settings: undefined;
   Pricing: undefined;
   Payment: { plan: "premium" | "elite" };
