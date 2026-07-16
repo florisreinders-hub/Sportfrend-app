@@ -77,13 +77,13 @@ export default function FilterScreen({ navigation }: Props) {
       <View style={styles.content}>
         <View style={styles.row}>
           <Text style={styles.label}>LEEFTIJD</Text>
-          <Text style={styles.value}>18-{maxAge}</Text>
+          <Text style={styles.value}>18-{Math.round(maxAge)}</Text>
         </View>
         <SliderControl value={maxAge} minimumValue={18} maximumValue={90} onValueChange={setMaxAge} />
 
         <View style={styles.row}>
           <Text style={styles.label}>AFSTAND</Text>
-          <Text style={styles.value}>{distanceKm}KM</Text>
+          <Text style={styles.value}>{Math.round(distanceKm)}KM</Text>
         </View>
         <SliderControl value={distanceKm} minimumValue={1} maximumValue={150} onValueChange={setDistanceKm} />
 
@@ -102,11 +102,6 @@ export default function FilterScreen({ navigation }: Props) {
             <Ionicons name="chevron-down" size={16} color={colors.black} />
           </Pressable>
         </View>
-
-        <Text style={[styles.label, styles.availabilityLabel]}>BESCHIKBAARHEID</Text>
-        <Text style={styles.availabilityHint}>
-          Kies dagen waarop je beschikbaar bent in je profielinstellingen.
-        </Text>
 
         <Button label="Toepassen" onPress={apply} style={styles.apply} />
         <Button label="Reset filter" onPress={reset} variant="outline" style={styles.reset} />
@@ -151,10 +146,11 @@ function SliderControl({
       value={value}
       minimumValue={minimumValue}
       maximumValue={maximumValue}
+      step={1}
       minimumTrackTintColor={colors.primary}
       maximumTrackTintColor={colors.border}
       thumbTintColor={colors.black}
-      onValueChange={onValueChange}
+      onValueChange={(v) => onValueChange(Math.round(v))}
     />
   );
 }
@@ -208,15 +204,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.display,
     fontSize: fontSizes.sm,
     color: colors.black,
-  },
-  availabilityLabel: {
-    marginTop: spacing.lg,
-  },
-  availabilityHint: {
-    fontFamily: fonts.body,
-    fontSize: fontSizes.sm,
-    color: colors.textSecondary,
-    marginTop: spacing.xs,
   },
   apply: {
     marginTop: spacing.xl,
