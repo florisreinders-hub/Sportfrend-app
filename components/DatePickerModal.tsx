@@ -26,8 +26,8 @@ function toIsoDate(date: Date): string {
  * lets someone pick an event date. Picking from a calendar instead of
  * typing a string means there's no format to get wrong and no invalid
  * date to reject - the two platforms need different chrome around it:
- * Android's picker is a self-dismissing native dialog, iOS's inline/
- * spinner picker doesn't self-dismiss so it's wrapped in a bottom-sheet
+ * Android's picker is a self-dismissing native dialog, iOS's inline
+ * calendar card doesn't self-dismiss so it's wrapped in a bottom-sheet
  * Modal with an explicit "Klaar" button.
  */
 export function DatePickerModal({ visible, value, onChange, onClose, minimumDate }: Props) {
@@ -60,13 +60,32 @@ export function DatePickerModal({ visible, value, onChange, onClose, minimumDate
               <Text style={styles.sheetDone}>Klaar</Text>
             </Pressable>
           </View>
-          <DateTimePicker
-            value={value ? new Date(value) : new Date()}
-            mode="date"
-            display="spinner"
-            minimumDate={minimumDate}
-            onChange={onChangeDate}
-          />
+          {/*
+            display="spinner" renders with no opaque backing on iOS + the
+            New Architecture (default since SDK 54) inside a transparent
+            Modal - the wheel itself ends up see-through to whatever is
+            behind the whole window instead of this sheet, which is
+            exactly the "popup opens but the picker is invisible" bug
+            reported. display="inline" uses a different native view
+            (a self-contained calendar card) that doesn't have this
+            problem. themeVariant/textColor pin the picker to a light,
+            dark-on-white render regardless of the device's system
+            appearance, so text never ends up the same colour as its
+            background either.
+          */}
+          <View style={styles.pickerWrapper}>
+            <DateTimePicker
+              value={value ? new Date(value) : new Date()}
+              mode="date"
+              display="inline"
+              themeVariant="light"
+              textColor={colors.black}
+              accentColor={colors.primary}
+              minimumDate={minimumDate}
+              onChange={onChangeDate}
+              style={styles.picker}
+            />
+          </View>
         </Pressable>
       </Pressable>
     </Modal>
@@ -103,5 +122,15 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodySemiBold,
     fontSize: fontSizes.md,
     color: colors.primaryDark,
+  },
+  pickerWrapper: {
+    backgroundColor: colors.white,
+    minHeight: 360,
+    paddingHorizontal: spacing.sm,
+    paddingBottom: spacing.sm,
+  },
+  picker: {
+    backgroundColor: colors.white,
+    height: 360,
   },
 });
