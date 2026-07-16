@@ -79,9 +79,8 @@ create table if not exists public.posts (
 -- sport/event_time/location columns above were added to this file, the
 -- `create table if not exists` above is a no-op and won't add them. The
 -- app itself only writes to sport and event_date - run
--- supabase/migrations/0003_posts_sport_and_event_date.sql to patch those.
--- (0002_posts_sport_time_location.sql also adds event_time/location, but
--- the app no longer uses either column.)
+-- supabase/migrations/0004_posts_sport_column_fix.sql to patch those (it
+-- repeats what 0002/0003 already added, if those never actually got run).
 
 create table if not exists public.post_likes (
   post_id uuid not null references public.posts (id) on delete cascade,
