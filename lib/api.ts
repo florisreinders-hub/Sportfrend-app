@@ -207,7 +207,16 @@ export async function deleteMatch(matchId: string) {
   if (error) throw error;
 }
 
-export async function fetchMessages(matchId: string) {
+export type Message = {
+  id: string;
+  match_id: string;
+  sender_id: string;
+  body: string;
+  created_at: string;
+  read_at: string | null;
+};
+
+export async function fetchMessages(matchId: string): Promise<Message[]> {
   const { data, error } = await supabase
     .from("messages")
     .select("*")
@@ -218,8 +227,75 @@ export async function fetchMessages(matchId: string) {
 }
 
 export async function sendMessage(matchId: string, senderId: string, body: string) {
-  const { error } = await supabase.from("messages").insert({ match_id: matchId, sender_id: senderId, body });
+  const { data, error } = await supabase
+    .from("messages")
+    .insert({ match_id: matchId, sender_id: senderId, body })
+    .select("*")
+    .single();
   if (error) throw error;
+  return data as Message;
+}
+
+export type Conversation = {
+  id: string;
+  created_at: string;
+  otherUser: Profile | null;
+  lastMessage: Message | null;
+};
+
+/**
+ * One row per match, enriched with the other participant's profile and the
+ * most recent message (if any), sorted by that message's timestamp (or the
+ * match's own created_at when nobody has said anything yet) - newest first,
+ * same ordering convention as a normal chat app's conversation list.
+ */
+export async function fetchConversations(userId: string): Promise<Conversation[]> {
+  const matches = await fetchConnections(userId);
+  if (matches.length === 0) return [];
+
+  const matchIds = matches.map((m) => m.id);
+  const { data: recentMessages, error } = await supabase
+    .from("messages")
+    .select("*")
+    .in("match_id", matchIds)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+
+  const lastMessageByMatch = new Map<string, Message>();
+  for (const message of recentMessages ?? []) {
+    if (!lastMessageByMatch.has(message.match_id)) {
+      lastMessageByMatch.set(message.match_id, message as Message);
+    }
+  }
+
+  return matches
+    .map((match) => ({
+      id: match.id,
+      created_at: match.created_at,
+      otherUser: (match.user_a_id === userId ? match.user_b : match.user_a) as unknown as Profile | null,
+      lastMessage: lastMessageByMatch.get(match.id) ?? null,
+    }))
+    .sort((a, b) => {
+      const aTime = a.lastMessage?.created_at ?? a.created_at;
+      const bTime = b.lastMessage?.created_at ?? b.created_at;
+      return new Date(bTime).getTime() - new Date(aTime).getTime();
+    });
+}
+
+const WEEKDAYS_NL = ["zo", "ma", "di", "wo", "do", "vr", "za"];
+
+/** Compact chat-list timestamp: "14:32" today, "Gisteren", weekday within a week, else "DD-MM-JJJJ". */
+export function formatConversationTimestamp(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const dayDiff = Math.round((startOfToday.getTime() - startOfDate.getTime()) / 86400000);
+
+  if (dayDiff === 0) return date.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
+  if (dayDiff === 1) return "Gisteren";
+  if (dayDiff > 1 && dayDiff < 7) return WEEKDAYS_NL[date.getDay()];
+  return date.toLocaleDateString("nl-NL", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
 export async function fetchPosts() {

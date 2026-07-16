@@ -1,33 +1,39 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, FlatList, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
-import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
-import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
+import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthContext";
-import { fetchPosts, toggleLike } from "@/lib/api";
+import { Conversation, fetchConversations, formatConversationTimestamp, getDataErrorMessage } from "@/lib/api";
 import { avatarPlaceholder } from "@/constants/placeholders";
 
 type Props = NativeStackScreenProps<RootStackParamList, "ChatList">;
 
 export default function ChatListScreen({ navigation }: Props) {
   const { session } = useAuth();
-  const [posts, setPosts] = useState<any[]>([]);
+  const userId = session?.user?.id;
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (!userId) return;
     setLoading(true);
+    setError(null);
     try {
-      const data = await fetchPosts();
-      setPosts(data);
+      const data = await fetchConversations(userId);
+      setConversations(data);
+    } catch (e) {
+      setError(getDataErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [userId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -35,78 +41,75 @@ export default function ChatListScreen({ navigation }: Props) {
     }, [load])
   );
 
-  const onLike = async (post: any) => {
-    if (!session?.user) return;
-    const liked = post.post_likes?.some((l: any) => l.user_id === session.user.id);
-    await toggleLike(post.id, session.user.id, liked);
-    load();
+  // Live-refresh the list (last message + ordering) whenever a new message
+  // arrives on any of this user's conversations, so a reply doesn't require
+  // leaving and reopening this screen to show up.
+  useEffect(() => {
+    if (!userId || conversations.length === 0) return;
+
+    const matchIds = conversations.map((c) => c.id);
+    const channel = supabase
+      .channel(`chat-list-${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages", filter: `match_id=in.(${matchIds.join(",")})` },
+        () => {
+          load();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+    // Re-subscribe when the set of conversation ids changes (e.g. a new match).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, conversations.map((c) => c.id).join(",")]);
+
+  const openConversation = (conversation: Conversation) => {
+    navigation.navigate("ChatDetail", {
+      chatId: conversation.id,
+      name: conversation.otherUser?.full_name ?? "Sportmaatje",
+      photo: conversation.otherUser?.photo_url ?? avatarPlaceholder(conversation.otherUser?.id ?? conversation.id),
+    });
   };
 
   return (
     <ScreenContainer withBottomPadding={false}>
       <TopBar />
-
-      <Pressable style={styles.composer} onPress={() => navigation.navigate("NewPost")}>
-        <Image
-          source={{ uri: avatarPlaceholder(session?.user?.id ?? "me") }}
-          style={styles.composerAvatar}
-        />
-        <View style={styles.composerBody}>
-          <Text style={styles.composerPlaceholder}>Bericht plaatsen</Text>
-          <View style={styles.composerIcons}>
-            <Ionicons name="camera-outline" size={18} color={colors.textSecondary} />
-            <Ionicons name="image-outline" size={18} color={colors.textSecondary} />
-            <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
-          </View>
-        </View>
-        <Ionicons name="send-outline" size={22} color={colors.black} />
-      </Pressable>
-
-      <Text style={styles.sectionTitle}>BERICHTEN</Text>
+      <Text style={styles.sectionTitle}>GESPREKKEN</Text>
 
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: spacing.lg }} />
+      ) : error ? (
+        <Text style={styles.error}>{error}</Text>
       ) : (
         <FlatList
-          data={posts}
+          data={conversations}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
-          ListEmptyComponent={<Text style={styles.empty}>Nog geen berichten. Plaats de eerste!</Text>}
+          ListEmptyComponent={
+            <Text style={styles.empty}>
+              Nog geen gesprekken. Connect met een sportmaatje om te beginnen met chatten!
+            </Text>
+          }
           renderItem={({ item }) => {
-            const liked = item.post_likes?.some((l: any) => l.user_id === session?.user?.id);
+            const name = item.otherUser?.full_name ?? "Sportmaatje";
+            const photo = item.otherUser?.photo_url ?? avatarPlaceholder(item.otherUser?.id ?? item.id);
+            const preview = item.lastMessage?.body ?? "Stuur het eerste bericht!";
+            const timestamp = formatConversationTimestamp(item.lastMessage?.created_at ?? item.created_at);
+            const isMine = item.lastMessage?.sender_id === session?.user?.id;
             return (
-              <View style={styles.postCard}>
-                <View style={styles.postHeader}>
-                  <Image
-                    source={{ uri: item.author?.avatar_url ?? avatarPlaceholder(item.author_id) }}
-                    style={styles.avatar}
-                  />
-                  <Text style={styles.postAuthor}>{item.author?.full_name ?? "Sportmaatje"}</Text>
+              <Pressable style={styles.row} onPress={() => openConversation(item)}>
+                <Image source={{ uri: photo }} style={styles.avatar} />
+                <View style={styles.rowBody}>
+                  <Text style={styles.name}>{name}</Text>
+                  <Text style={styles.preview} numberOfLines={1}>
+                    {isMine ? `Jij: ${preview}` : preview}
+                  </Text>
                 </View>
-                <Text style={styles.postBody}>{item.body}</Text>
-                {item.image_url ? <Image source={{ uri: item.image_url }} style={styles.postImage} /> : null}
-                <View style={styles.postActions}>
-                  <Pressable
-                    onPress={() =>
-                      navigation.navigate("ChatDetail", {
-                        chatId: item.id,
-                        name: item.author?.full_name ?? "Sportmaatje",
-                        photo: item.author?.avatar_url ?? avatarPlaceholder(item.author_id),
-                      })
-                    }
-                    hitSlop={8}
-                  >
-                    <Ionicons name="chatbubble-outline" size={20} color={colors.black} />
-                  </Pressable>
-                  <Pressable onPress={() => onLike(item)} hitSlop={8}>
-                    <Ionicons
-                      name={liked ? "thumbs-up" : "thumbs-up-outline"}
-                      size={20}
-                      color={liked ? colors.primary : colors.black}
-                    />
-                  </Pressable>
-                </View>
-              </View>
+                <Text style={styles.timestamp}>{timestamp}</Text>
+              </Pressable>
             );
           }}
         />
@@ -118,34 +121,6 @@ export default function ChatListScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  composer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    marginHorizontal: spacing.md,
-    padding: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.sm,
-  },
-  composerAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-  },
-  composerBody: {
-    flex: 1,
-  },
-  composerPlaceholder: {
-    fontFamily: fonts.body,
-    fontSize: fontSizes.sm,
-    color: colors.textSecondary,
-  },
-  composerIcons: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    marginTop: spacing.xs,
-  },
   sectionTitle: {
     fontFamily: fonts.display,
     fontSize: fontSizes.lg,
@@ -154,10 +129,17 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     marginBottom: spacing.xs,
   },
+  error: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.danger,
+    textAlign: "center",
+    marginTop: spacing.xl,
+    paddingHorizontal: spacing.lg,
+  },
   list: {
     paddingHorizontal: spacing.md,
     paddingBottom: spacing.md,
-    gap: spacing.sm,
   },
   empty: {
     fontFamily: fonts.body,
@@ -165,44 +147,39 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: "center",
     marginTop: spacing.xl,
+    paddingHorizontal: spacing.lg,
   },
-  postCard: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.sm,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
-  },
-  postHeader: {
+  row: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
-    marginBottom: spacing.xs,
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   avatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.surface,
   },
-  postAuthor: {
+  rowBody: {
+    flex: 1,
+  },
+  name: {
     fontFamily: fonts.accent,
     fontSize: fontSizes.md,
     color: colors.black,
   },
-  postBody: {
+  preview: {
     fontFamily: fonts.body,
     fontSize: fontSizes.sm,
-    color: colors.black,
+    color: colors.textSecondary,
+    marginTop: 2,
   },
-  postImage: {
-    width: "100%",
-    height: 180,
-    borderRadius: radii.sm,
-    marginTop: spacing.sm,
-  },
-  postActions: {
-    flexDirection: "row",
-    gap: spacing.md,
-    marginTop: spacing.sm,
+  timestamp: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.xs,
+    color: colors.textSecondary,
   },
 });

@@ -18,7 +18,7 @@ export function TopBar() {
         <Text style={styles.title}>SPORTFREND</Text>
       </View>
       <View style={styles.actions}>
-        <Pressable hitSlop={8} onPress={() => navigation.navigate("ChatList")} style={styles.iconButton}>
+        <Pressable hitSlop={8} onPress={() => navigation.navigate("PostsFeed")} style={styles.iconButton}>
           <Ionicons name="notifications-outline" size={22} color={colors.black} />
         </Pressable>
         <Pressable hitSlop={8} onPress={() => navigation.navigate("ChatList")} style={styles.iconButton}>

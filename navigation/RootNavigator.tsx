@@ -22,6 +22,7 @@ import EditProfileScreen from "@/app/profile/EditProfileScreen";
 
 import ChatListScreen from "@/app/chat/ChatListScreen";
 import ChatDetailScreen from "@/app/chat/ChatDetailScreen";
+import PostsFeedScreen from "@/app/chat/PostsFeedScreen";
 import NewPostScreen from "@/app/chat/NewPostScreen";
 
 import MenuScreen from "@/app/settings/MenuScreen";
@@ -79,6 +80,7 @@ export function RootNavigator() {
           <Stack.Screen name="Menu" component={MenuScreen} />
           <Stack.Screen name="ChatList" component={ChatListScreen} />
           <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
+          <Stack.Screen name="PostsFeed" component={PostsFeedScreen} />
           <Stack.Screen name="NewPost" component={NewPostScreen} />
           <Stack.Screen name="Settings" component={SettingsScreen} />
           <Stack.Screen name="Helpdesk" component={HelpdeskScreen} />
