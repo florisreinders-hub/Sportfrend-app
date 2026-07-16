@@ -8,10 +8,11 @@ import { ScreenContainer } from "@/components/ScreenContainer";
 import { Input } from "@/components/Input";
 import { Button } from "@/components/Button";
 import { SelectModal } from "@/components/SelectModal";
+import { DatePickerModal } from "@/components/DatePickerModal";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { SPORT_OPTIONS } from "@/constants/sports";
 import { useAuth } from "@/lib/AuthContext";
-import { createPost, getDataErrorMessage } from "@/lib/api";
+import { createPost, formatEventDateTime, getDataErrorMessage } from "@/lib/api";
 
 type Props = NativeStackScreenProps<RootStackParamList, "NewPost">;
 
@@ -19,39 +20,21 @@ type Props = NativeStackScreenProps<RootStackParamList, "NewPost">;
 // elsewhere - not meaningful when picking a single sport for a post.
 const POST_SPORT_OPTIONS = SPORT_OPTIONS.filter((o) => o.value !== null);
 
-/** "DD-MM-JJJJ" -> ISO "YYYY-MM-DD", or null if not a real calendar date. */
-function parseDutchDate(input: string): string | null {
-  const match = input.trim().match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
-  if (!match) return null;
-  const [, d, m, y] = match;
-  const day = Number(d);
-  const month = Number(m);
-  const year = Number(y);
-  const date = new Date(year, month - 1, day);
-  const isRealDate = date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
-  if (!isRealDate) return null;
-  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-}
-
-/** ISO "YYYY-MM-DD" -> "DD-MM-JJJJ", for pre-filling the manual date field. */
-function isoToDutchDate(iso: string): string {
-  const [year, month, day] = iso.split("-");
-  return `${day}-${month}-${year}`;
-}
-
 export default function NewPostScreen({ navigation, route }: Props) {
   const { session } = useAuth();
-  const prefilledDate = route.params?.eventDate;
   const [body, setBody] = useState("");
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [sport, setSport] = useState<string | null>(null);
   const [sportPickerVisible, setSportPickerVisible] = useState(false);
-  const [showDate, setShowDate] = useState(Boolean(prefilledDate));
-  const [dateText, setDateText] = useState(prefilledDate ? isoToDutchDate(prefilledDate) : "");
+  // ISO "YYYY-MM-DD" or null - picked via a native calendar, never typed, so
+  // there's no string format to get wrong and nothing to validate here.
+  const [eventDate, setEventDate] = useState<string | null>(route.params?.eventDate ?? null);
+  const [datePickerVisible, setDatePickerVisible] = useState(false);
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const sportLabel = POST_SPORT_OPTIONS.find((o) => o.value === sport)?.label ?? "Sport toevoegen";
+  const dateLabel = eventDate ? formatEventDateTime(eventDate) : null;
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -66,18 +49,6 @@ export default function NewPostScreen({ navigation, route }: Props) {
   const onPost = async () => {
     if (!body.trim() || !session?.user || posting) return;
     setError(null);
-
-    // Datum is fully optional (requirement: a post must succeed with no
-    // date picked at all) - only validate/send it when the user actually
-    // opened the date row and typed something in it.
-    let eventDate: string | null = null;
-    if (showDate && dateText.trim()) {
-      eventDate = parseDutchDate(dateText);
-      if (!eventDate) {
-        setError("Vul een geldige datum in (DD-MM-JJJJ).");
-        return;
-      }
-    }
 
     setPosting(true);
     try {
@@ -122,20 +93,17 @@ export default function NewPostScreen({ navigation, route }: Props) {
           <Ionicons name="basketball-outline" size={22} color={colors.black} />
           <Text style={styles.toolLabel}>{sportLabel}</Text>
         </Pressable>
-        <Pressable style={styles.toolButton} onPress={() => setShowDate((v) => !v)}>
+        <Pressable style={styles.toolButton} onPress={() => setDatePickerVisible(true)}>
           <Ionicons name="calendar-outline" size={22} color={colors.black} />
-          <Text style={styles.toolLabel}>Datum (optioneel)</Text>
+          <Text style={styles.toolLabel}>{dateLabel ?? "Datum (optioneel)"}</Text>
         </Pressable>
       </View>
 
-      {showDate ? (
-        <Input
-          placeholder="DD-MM-JJJJ"
-          value={dateText}
-          onChangeText={setDateText}
-          keyboardType="number-pad"
-          style={styles.dateInput}
-        />
+      {dateLabel ? (
+        <Pressable style={styles.clearDate} onPress={() => setEventDate(null)} hitSlop={8}>
+          <Ionicons name="close-circle" size={16} color={colors.textSecondary} />
+          <Text style={styles.clearDateText}>Datum verwijderen</Text>
+        </Pressable>
       ) : null}
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -149,6 +117,14 @@ export default function NewPostScreen({ navigation, route }: Props) {
         selectedValue={sport}
         onSelect={setSport}
         onClose={() => setSportPickerVisible(false)}
+      />
+
+      <DatePickerModal
+        visible={datePickerVisible}
+        value={eventDate}
+        onChange={setEventDate}
+        onClose={() => setDatePickerVisible(false)}
+        minimumDate={new Date()}
       />
     </ScreenContainer>
   );
@@ -195,9 +171,17 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     color: colors.black,
   },
-  dateInput: {
+  clearDate: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
     marginHorizontal: spacing.md,
-    marginTop: spacing.md,
+    marginTop: spacing.sm,
+  },
+  clearDateText: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.xs,
+    color: colors.textSecondary,
   },
   error: {
     fontFamily: fonts.body,
