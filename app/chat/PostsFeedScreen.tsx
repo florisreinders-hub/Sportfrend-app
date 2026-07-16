@@ -7,6 +7,7 @@ import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
+import { PostComposer } from "@/components/PostComposer";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { fetchPosts, formatEventDateTime, toggleLike } from "@/lib/api";
@@ -14,7 +15,7 @@ import { avatarPlaceholder } from "@/constants/placeholders";
 
 type Props = NativeStackScreenProps<RootStackParamList, "PostsFeed">;
 
-export default function PostsFeedScreen({ navigation }: Props) {
+export default function PostsFeedScreen(_props: Props) {
   const { session } = useAuth();
   const [posts, setPosts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,21 +47,7 @@ export default function PostsFeedScreen({ navigation }: Props) {
     <ScreenContainer withBottomPadding={false}>
       <TopBar />
 
-      <Pressable style={styles.composer} onPress={() => navigation.navigate("NewPost")}>
-        <Image
-          source={{ uri: avatarPlaceholder(session?.user?.id ?? "me") }}
-          style={styles.composerAvatar}
-        />
-        <View style={styles.composerBody}>
-          <Text style={styles.composerPlaceholder}>Bericht plaatsen</Text>
-          <View style={styles.composerIcons}>
-            <Ionicons name="camera-outline" size={18} color={colors.textSecondary} />
-            <Ionicons name="image-outline" size={18} color={colors.textSecondary} />
-            <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
-          </View>
-        </View>
-        <Ionicons name="send-outline" size={22} color={colors.black} />
-      </Pressable>
+      <PostComposer />
 
       <Text style={styles.sectionTitle}>BERICHTEN</Text>
 
@@ -131,34 +118,6 @@ export default function PostsFeedScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  composer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    marginHorizontal: spacing.md,
-    padding: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.sm,
-  },
-  composerAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-  },
-  composerBody: {
-    flex: 1,
-  },
-  composerPlaceholder: {
-    fontFamily: fonts.body,
-    fontSize: fontSizes.sm,
-    color: colors.textSecondary,
-  },
-  composerIcons: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    marginTop: spacing.xs,
-  },
   sectionTitle: {
     fontFamily: fonts.display,
     fontSize: fontSizes.lg,

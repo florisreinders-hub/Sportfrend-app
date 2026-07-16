@@ -8,6 +8,7 @@ import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { SwipeCard } from "@/components/SwipeCard";
 import { Button } from "@/components/Button";
+import { PostComposer } from "@/components/PostComposer";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { useDiscoverFilters } from "@/lib/FilterContext";
@@ -139,6 +140,7 @@ export default function HomeScreen({ navigation, route }: Props) {
           contentContainerStyle={styles.connectionsList}
           data={connections}
           keyExtractor={(item) => item.id}
+          ListHeaderComponent={<PostComposer style={styles.composer} />}
           ListEmptyComponent={
             loading ? (
               <ActivityIndicator color={colors.primary} size="large" />
@@ -237,6 +239,14 @@ const styles = StyleSheet.create({
   connectionsList: {
     padding: spacing.md,
     gap: spacing.sm,
+  },
+  // PostComposer already carries its own marginHorizontal: spacing.md, which
+  // would double up with connectionsList's own horizontal padding above -
+  // zero it out here and add the bottom gap instead, since it sits as this
+  // list's ListHeaderComponent rather than a sibling with its own margins.
+  composer: {
+    marginHorizontal: 0,
+    marginBottom: spacing.sm,
   },
   connectionRow: {
     flexDirection: "row",
