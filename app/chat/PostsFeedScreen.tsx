@@ -9,7 +9,7 @@ import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
-import { fetchPosts, toggleLike } from "@/lib/api";
+import { fetchPosts, formatEventDateTime, toggleLike } from "@/lib/api";
 import { avatarPlaceholder } from "@/constants/placeholders";
 
 type Props = NativeStackScreenProps<RootStackParamList, "PostsFeed">;
@@ -74,6 +74,8 @@ export default function PostsFeedScreen({ navigation }: Props) {
           ListEmptyComponent={<Text style={styles.empty}>Nog geen berichten. Plaats de eerste!</Text>}
           renderItem={({ item }) => {
             const liked = item.post_likes?.some((l: any) => l.user_id === session?.user?.id);
+            const likeCount = item.post_likes?.length ?? 0;
+            const when = formatEventDateTime(item.event_date, item.event_time);
             return (
               <View style={styles.postCard}>
                 <View style={styles.postHeader}>
@@ -85,13 +87,36 @@ export default function PostsFeedScreen({ navigation }: Props) {
                 </View>
                 <Text style={styles.postBody}>{item.body}</Text>
                 {item.image_url ? <Image source={{ uri: item.image_url }} style={styles.postImage} /> : null}
+                {item.sport || when || item.location ? (
+                  <View style={styles.meta}>
+                    {item.sport ? (
+                      <View style={styles.metaItem}>
+                        <Ionicons name="basketball-outline" size={14} color={colors.textSecondary} />
+                        <Text style={styles.metaText}>{item.sport}</Text>
+                      </View>
+                    ) : null}
+                    {when ? (
+                      <View style={styles.metaItem}>
+                        <Ionicons name="calendar-outline" size={14} color={colors.textSecondary} />
+                        <Text style={styles.metaText}>{when}</Text>
+                      </View>
+                    ) : null}
+                    {item.location ? (
+                      <View style={styles.metaItem}>
+                        <Ionicons name="location-outline" size={14} color={colors.textSecondary} />
+                        <Text style={styles.metaText}>{item.location}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
                 <View style={styles.postActions}>
-                  <Pressable onPress={() => onLike(item)} hitSlop={8}>
+                  <Pressable onPress={() => onLike(item)} hitSlop={8} style={styles.likeButton}>
                     <Ionicons
                       name={liked ? "thumbs-up" : "thumbs-up-outline"}
                       size={20}
                       color={liked ? colors.primary : colors.black}
                     />
+                    {likeCount > 0 ? <Text style={styles.likeCount}>{likeCount}</Text> : null}
                   </Pressable>
                 </View>
               </View>
@@ -192,5 +217,31 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.md,
     marginTop: spacing.sm,
+  },
+  meta: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  metaItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  metaText: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.xs,
+    color: colors.textSecondary,
+  },
+  likeButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  likeCount: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.xs,
+    color: colors.textSecondary,
   },
 });

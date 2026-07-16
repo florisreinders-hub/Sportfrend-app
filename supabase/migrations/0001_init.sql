@@ -68,9 +68,19 @@ create table if not exists public.posts (
   author_id uuid not null references public.profiles (id) on delete cascade,
   body text not null,
   image_url text,
+  sport text,
   event_date date,
+  event_time text,
+  location text,
   created_at timestamptz not null default now()
 );
+
+-- Additive columns for the "Bericht plaatsen" screen (sport/datum/tijd/locatie
+-- on an oproep) - idempotent for projects where public.posts already existed
+-- from an earlier version of this migration.
+alter table public.posts add column if not exists sport text;
+alter table public.posts add column if not exists event_time text;
+alter table public.posts add column if not exists location text;
 
 create table if not exists public.post_likes (
   post_id uuid not null references public.posts (id) on delete cascade,

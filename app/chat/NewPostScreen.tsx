@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
@@ -7,17 +7,48 @@ import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { Input } from "@/components/Input";
 import { Button } from "@/components/Button";
+import { SelectModal } from "@/components/SelectModal";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
+import { SPORT_OPTIONS } from "@/constants/sports";
 import { useAuth } from "@/lib/AuthContext";
-import { createPost } from "@/lib/api";
+import { createPost, getDataErrorMessage } from "@/lib/api";
 
 type Props = NativeStackScreenProps<RootStackParamList, "NewPost">;
+
+// The picker also offers "Alle sporten" (value: null) as a filter option
+// elsewhere - not meaningful when picking a single sport for a post.
+const POST_SPORT_OPTIONS = SPORT_OPTIONS.filter((o) => o.value !== null);
+
+/** "DD-MM-JJJJ" -> ISO "YYYY-MM-DD", or null if not a real calendar date. */
+function parseDutchDate(input: string): string | null {
+  const match = input.trim().match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (!match) return null;
+  const [, d, m, y] = match;
+  const day = Number(d);
+  const month = Number(m);
+  const year = Number(y);
+  const date = new Date(year, month - 1, day);
+  const isRealDate = date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
+  if (!isRealDate) return null;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 export default function NewPostScreen({ navigation }: Props) {
   const { session } = useAuth();
   const [body, setBody] = useState("");
   const [imageUri, setImageUri] = useState<string | null>(null);
+  const [sport, setSport] = useState<string | null>(null);
+  const [sportPickerVisible, setSportPickerVisible] = useState(false);
+  const [showWhen, setShowWhen] = useState(false);
+  const [dateText, setDateText] = useState("");
+  const [timeText, setTimeText] = useState("");
+  const [location, setLocation] = useState("");
   const [posting, setPosting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const sportLabel = POST_SPORT_OPTIONS.find((o) => o.value === sport)?.label ?? "Sport toevoegen";
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -30,11 +61,38 @@ export default function NewPostScreen({ navigation }: Props) {
   };
 
   const onPost = async () => {
-    if (!body.trim() || !session?.user) return;
+    if (!body.trim() || !session?.user || posting) return;
+    setError(null);
+
+    let eventDate: string | null = null;
+    if (showWhen && dateText.trim()) {
+      eventDate = parseDutchDate(dateText);
+      if (!eventDate) {
+        setError("Vul een geldige datum in (DD-MM-JJJJ).");
+        return;
+      }
+    }
+    let eventTime: string | null = null;
+    if (showWhen && timeText.trim()) {
+      if (!TIME_PATTERN.test(timeText.trim())) {
+        setError("Vul een geldige tijd in (UU:MM).");
+        return;
+      }
+      eventTime = timeText.trim();
+    }
+
     setPosting(true);
     try {
-      await createPost(session.user.id, body.trim(), imageUri ?? undefined);
+      await createPost(session.user.id, body.trim(), {
+        imageUrl: imageUri ?? undefined,
+        sport,
+        eventDate,
+        eventTime,
+        location: location.trim() || null,
+      });
       navigation.goBack();
+    } catch (e) {
+      setError(getDataErrorMessage(e));
     } finally {
       setPosting(false);
     }
@@ -50,27 +108,68 @@ export default function NewPostScreen({ navigation }: Props) {
       </View>
 
       <Input
-        placeholder="Waar wil je over sporten praten?"
+        placeholder="Wie heeft zin om te padellen dit weekend?"
         value={body}
         onChangeText={setBody}
         multiline
         style={styles.bodyInput}
       />
 
-      {imageUri ? <View style={styles.imagePreview} /> : null}
+      {imageUri ? <Image source={{ uri: imageUri }} style={styles.imagePreview} /> : null}
 
       <View style={styles.toolRow}>
         <Pressable onPress={pickImage} style={styles.toolButton}>
           <Ionicons name="image-outline" size={22} color={colors.black} />
           <Text style={styles.toolLabel}>Foto</Text>
         </Pressable>
-        <Pressable style={styles.toolButton}>
+        <Pressable style={styles.toolButton} onPress={() => setSportPickerVisible(true)}>
+          <Ionicons name="basketball-outline" size={22} color={colors.black} />
+          <Text style={styles.toolLabel}>{sportLabel}</Text>
+        </Pressable>
+        <Pressable style={styles.toolButton} onPress={() => setShowWhen((v) => !v)}>
           <Ionicons name="calendar-outline" size={22} color={colors.black} />
           <Text style={styles.toolLabel}>Datum</Text>
         </Pressable>
       </View>
 
+      {showWhen ? (
+        <View style={styles.whenRow}>
+          <Input
+            placeholder="DD-MM-JJJJ"
+            value={dateText}
+            onChangeText={setDateText}
+            keyboardType="number-pad"
+            style={styles.whenInput}
+          />
+          <Input
+            placeholder="UU:MM"
+            value={timeText}
+            onChangeText={setTimeText}
+            keyboardType="number-pad"
+            style={styles.whenInput}
+          />
+        </View>
+      ) : null}
+
+      <Input
+        placeholder="Locatie (optioneel)"
+        value={location}
+        onChangeText={setLocation}
+        style={styles.locationInput}
+      />
+
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+
       <Button label="Plaatsen" onPress={onPost} loading={posting} disabled={!body.trim()} style={styles.cta} />
+
+      <SelectModal
+        visible={sportPickerVisible}
+        title="Kies een sport"
+        options={POST_SPORT_OPTIONS}
+        selectedValue={sport}
+        onSelect={setSport}
+        onClose={() => setSportPickerVisible(false)}
+      />
     </ScreenContainer>
   );
 }
@@ -90,7 +189,7 @@ const styles = StyleSheet.create({
   },
   bodyInput: {
     marginHorizontal: spacing.md,
-    height: 120,
+    height: 100,
     textAlignVertical: "top",
     paddingTop: spacing.sm,
   },
@@ -116,8 +215,29 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     color: colors.black,
   },
+  whenRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginHorizontal: spacing.md,
+    marginTop: spacing.md,
+  },
+  whenInput: {
+    flex: 1,
+  },
+  locationInput: {
+    marginHorizontal: spacing.md,
+    marginTop: spacing.md,
+  },
+  error: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.danger,
+    textAlign: "center",
+    marginHorizontal: spacing.md,
+    marginTop: spacing.sm,
+  },
   cta: {
     marginHorizontal: spacing.md,
-    marginTop: spacing.xl,
+    marginTop: spacing.lg,
   },
 });

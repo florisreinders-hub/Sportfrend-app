@@ -11,26 +11,7 @@ import { Button } from "@/components/Button";
 import { SelectModal, SelectOption } from "@/components/SelectModal";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { DEFAULT_FILTERS, useDiscoverFilters } from "@/lib/FilterContext";
-
-// value: null = "Alle sporten", i.e. no sport filter.
-const SPORT_OPTIONS: SelectOption[] = [
-  { label: "Alle sporten", value: null },
-  { label: "Padel", value: "Padel" },
-  { label: "Tennis", value: "Tennis" },
-  { label: "Golf", value: "Golf" },
-  { label: "Hardlopen", value: "Hardlopen" },
-  { label: "Fitness", value: "Fitness" },
-  { label: "Voetbal", value: "Voetbal" },
-  { label: "Basketbal", value: "Basketbal" },
-  { label: "Volleybal", value: "Volleybal" },
-  { label: "Badminton", value: "Badminton" },
-  { label: "Squash", value: "Squash" },
-  { label: "Wielrennen", value: "Wielrennen" },
-  { label: "Zwemmen", value: "Zwemmen" },
-  { label: "Klimmen", value: "Klimmen" },
-  { label: "Yoga", value: "Yoga" },
-  { label: "Crossfit", value: "Crossfit" },
-];
+import { SPORT_OPTIONS } from "@/constants/sports";
 
 // value: null = "Alle niveaus", i.e. no level filter. Values match the
 // profiles table's level check constraint (beginner/gevorderd/competitief).

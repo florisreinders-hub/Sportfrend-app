@@ -14,6 +14,7 @@ import {
   deleteMatch,
   findMatchBetween,
   fetchPostsByAuthor,
+  formatEventDateTime,
   getDataErrorMessage,
   toggleLike,
   Profile,
@@ -159,6 +160,8 @@ export default function SporterProfileScreen({ route, navigation }: Props) {
           ) : (
             posts.map((post) => {
               const liked = post.post_likes?.some((l: any) => l.user_id === session?.user?.id);
+              const likeCount = post.post_likes?.length ?? 0;
+              const when = formatEventDateTime(post.event_date, post.event_time);
               return (
                 <View key={post.id} style={styles.postCard}>
                   <View style={styles.postHeader}>
@@ -170,12 +173,35 @@ export default function SporterProfileScreen({ route, navigation }: Props) {
                   </View>
                   <Text style={styles.postBody}>{post.body}</Text>
                   {post.image_url ? <Image source={{ uri: post.image_url }} style={styles.postImage} /> : null}
-                  <Pressable onPress={() => onToggleLike(post)} hitSlop={8} style={{ marginTop: spacing.xs }}>
+                  {post.sport || when || post.location ? (
+                    <View style={styles.meta}>
+                      {post.sport ? (
+                        <View style={styles.metaItem}>
+                          <Ionicons name="basketball-outline" size={14} color={colors.textSecondary} />
+                          <Text style={styles.metaText}>{post.sport}</Text>
+                        </View>
+                      ) : null}
+                      {when ? (
+                        <View style={styles.metaItem}>
+                          <Ionicons name="calendar-outline" size={14} color={colors.textSecondary} />
+                          <Text style={styles.metaText}>{when}</Text>
+                        </View>
+                      ) : null}
+                      {post.location ? (
+                        <View style={styles.metaItem}>
+                          <Ionicons name="location-outline" size={14} color={colors.textSecondary} />
+                          <Text style={styles.metaText}>{post.location}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : null}
+                  <Pressable onPress={() => onToggleLike(post)} hitSlop={8} style={styles.likeButton}>
                     <Ionicons
                       name={liked ? "thumbs-up" : "thumbs-up-outline"}
                       size={20}
                       color={liked ? colors.primary : colors.black}
                     />
+                    {likeCount > 0 ? <Text style={styles.metaText}>{likeCount}</Text> : null}
                   </Pressable>
                 </View>
               );
@@ -305,5 +331,27 @@ const styles = StyleSheet.create({
     height: 180,
     borderRadius: radii.sm,
     marginTop: spacing.sm,
+  },
+  meta: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  metaItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  metaText: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.xs,
+    color: colors.textSecondary,
+  },
+  likeButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: spacing.xs,
   },
 });

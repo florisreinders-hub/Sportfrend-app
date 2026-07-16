@@ -317,11 +317,36 @@ export async function fetchPostsByAuthor(authorId: string) {
   return data ?? [];
 }
 
-export async function createPost(authorId: string, body: string, imageUrl?: string, eventDate?: string) {
-  const { error } = await supabase
-    .from("posts")
-    .insert({ author_id: authorId, body, image_url: imageUrl ?? null, event_date: eventDate ?? null });
+export type NewPostFields = {
+  imageUrl?: string | null;
+  sport?: string | null;
+  eventDate?: string | null;
+  eventTime?: string | null;
+  location?: string | null;
+};
+
+export async function createPost(authorId: string, body: string, fields: NewPostFields = {}) {
+  const { error } = await supabase.from("posts").insert({
+    author_id: authorId,
+    body,
+    image_url: fields.imageUrl ?? null,
+    sport: fields.sport ?? null,
+    event_date: fields.eventDate ?? null,
+    event_time: fields.eventTime ?? null,
+    location: fields.location ?? null,
+  });
   if (error) throw error;
+}
+
+const MONTHS_NL = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
+
+/** "18 jul" or "18 jul, 14:00" for a post's event_date (+ optional event_time), or null if unset. */
+export function formatEventDateTime(eventDate: string | null | undefined, eventTime: string | null | undefined): string | null {
+  if (!eventDate) return null;
+  const [year, month, day] = eventDate.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  const datePart = `${day} ${MONTHS_NL[month - 1]}`;
+  return eventTime ? `${datePart}, ${eventTime}` : datePart;
 }
 
 export async function toggleLike(postId: string, userId: string, liked: boolean) {
