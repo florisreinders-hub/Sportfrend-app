@@ -113,6 +113,7 @@ export default function HomeScreen({ navigation, route }: Props) {
                       profile={profile}
                       isTop={index === arr.length - 1}
                       onSwiped={(direction) => handleSwipe(profile, direction)}
+                      onPress={() => navigation.navigate("SporterProfile", { sporterId: profile.id })}
                     />
                   ))}
               </View>

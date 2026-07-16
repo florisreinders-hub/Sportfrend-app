@@ -62,6 +62,19 @@ function isoDateForAge(age: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Age in whole years from a `profiles.birthdate` ISO date string, or null if unset. */
+export function calculateAge(birthdate: string | null | undefined): number | null {
+  if (!birthdate) return null;
+  const birth = new Date(birthdate);
+  if (Number.isNaN(birth.getTime())) return null;
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const hasHadBirthdayThisYear =
+    today.getMonth() > birth.getMonth() || (today.getMonth() === birth.getMonth() && today.getDate() >= birth.getDate());
+  if (!hasHadBirthdayThisYear) age -= 1;
+  return age;
+}
+
 /**
  * Discover feed: same sport as the current user (when set) and within their
  * search radius (when they have a location set), excluding the user and
@@ -176,6 +189,24 @@ export async function fetchConnections(userId: string) {
   return data ?? [];
 }
 
+/** The matches.id for an existing match between two users, or null if they're not matched. */
+export async function findMatchBetween(userAId: string, userBId: string): Promise<string | null> {
+  const [userA, userB] = [userAId, userBId].sort();
+  const { data, error } = await supabase
+    .from("matches")
+    .select("id")
+    .eq("user_a_id", userA)
+    .eq("user_b_id", userB)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.id ?? null;
+}
+
+export async function deleteMatch(matchId: string) {
+  const { error } = await supabase.from("matches").delete().eq("id", matchId);
+  if (error) throw error;
+}
+
 export async function fetchMessages(matchId: string) {
   const { data, error } = await supabase
     .from("messages")
@@ -195,6 +226,16 @@ export async function fetchPosts() {
   const { data, error } = await supabase
     .from("posts")
     .select("*, author:profiles(*), post_likes(user_id)")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function fetchPostsByAuthor(authorId: string) {
+  const { data, error } = await supabase
+    .from("posts")
+    .select("*, author:profiles(*), post_likes(user_id)")
+    .eq("author_id", authorId)
     .order("created_at", { ascending: false });
   if (error) throw error;
   return data ?? [];

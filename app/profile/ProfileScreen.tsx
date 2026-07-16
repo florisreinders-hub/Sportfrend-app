@@ -10,7 +10,7 @@ import { BottomNav } from "@/components/BottomNav";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { getDataErrorMessage, Profile } from "@/lib/api";
+import { calculateAge, getDataErrorMessage, Profile } from "@/lib/api";
 import { avatarPlaceholder, sportPhotoPlaceholder } from "@/constants/placeholders";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Profile">;
@@ -64,7 +64,9 @@ export default function ProfileScreen({ navigation }: Props) {
             />
             <View>
               <Text style={styles.name}>{profile?.full_name ?? "Jouw naam"}</Text>
-              {profile?.birthdate ? <Text style={styles.age}>Leeftijd {profile.birthdate}</Text> : null}
+              {calculateAge(profile?.birthdate) != null ? (
+                <Text style={styles.age}>Leeftijd {calculateAge(profile?.birthdate)}</Text>
+              ) : null}
             </View>
           </View>
 
