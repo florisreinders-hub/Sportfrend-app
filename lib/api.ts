@@ -334,10 +334,19 @@ export type NewPostFields = {
   imageUrl?: string | null;
   sport?: string | null;
   eventDate?: string | null;
-  eventTime?: string | null;
-  location?: string | null;
 };
 
+// Only sport/event_date/image_url are sent, all optional. image_url and
+// event_date have been in the posts table since the very first migration;
+// sport, event_time and location were all added together in a later
+// migration (0002) that turned out to not reliably reach every project's
+// live database - that's what caused "Could not find the 'event_time'
+// column of 'posts' in the schema cache": keying an insert on a column
+// that isn't guaranteed to exist fails unconditionally, on every single
+// post, regardless of whether that particular field had a real value.
+// event_time and location are dropped here rather than re-chased (date is
+// the only "wanneer" field wanted now anyway, no time-of-day); sport stays
+// since it's still wanted, backed by migration 0003 instead.
 export async function createPost(authorId: string, body: string, fields: NewPostFields = {}) {
   const { error } = await supabase.from("posts").insert({
     author_id: authorId,
@@ -345,21 +354,18 @@ export async function createPost(authorId: string, body: string, fields: NewPost
     image_url: fields.imageUrl ?? null,
     sport: fields.sport ?? null,
     event_date: fields.eventDate ?? null,
-    event_time: fields.eventTime ?? null,
-    location: fields.location ?? null,
   });
   if (error) throw error;
 }
 
 const MONTHS_NL = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
 
-/** "18 jul" or "18 jul, 14:00" for a post's event_date (+ optional event_time), or null if unset. */
-export function formatEventDateTime(eventDate: string | null | undefined, eventTime: string | null | undefined): string | null {
+/** "18 jul" for a post's event_date, or null if unset. */
+export function formatEventDateTime(eventDate: string | null | undefined): string | null {
   if (!eventDate) return null;
   const [year, month, day] = eventDate.split("-").map(Number);
   if (!year || !month || !day) return null;
-  const datePart = `${day} ${MONTHS_NL[month - 1]}`;
-  return eventTime ? `${datePart}, ${eventTime}` : datePart;
+  return `${day} ${MONTHS_NL[month - 1]}`;
 }
 
 export async function toggleLike(postId: string, userId: string, liked: boolean) {

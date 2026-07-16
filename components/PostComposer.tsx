@@ -48,7 +48,7 @@ export function PostComposer({ style }: Props) {
     }
   };
 
-  const dateLabel = eventDate ? formatEventDateTime(eventDate, null) : null;
+  const dateLabel = eventDate ? formatEventDateTime(eventDate) : null;
 
   return (
     <Pressable

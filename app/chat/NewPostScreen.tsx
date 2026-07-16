@@ -33,8 +33,6 @@ function parseDutchDate(input: string): string | null {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
-
 /** ISO "YYYY-MM-DD" -> "DD-MM-JJJJ", for pre-filling the manual date field. */
 function isoToDutchDate(iso: string): string {
   const [year, month, day] = iso.split("-");
@@ -48,9 +46,8 @@ export default function NewPostScreen({ navigation, route }: Props) {
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [sport, setSport] = useState<string | null>(null);
   const [sportPickerVisible, setSportPickerVisible] = useState(false);
-  const [showWhen, setShowWhen] = useState(Boolean(prefilledDate));
+  const [showDate, setShowDate] = useState(Boolean(prefilledDate));
   const [dateText, setDateText] = useState(prefilledDate ? isoToDutchDate(prefilledDate) : "");
-  const [timeText, setTimeText] = useState("");
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,21 +67,16 @@ export default function NewPostScreen({ navigation, route }: Props) {
     if (!body.trim() || !session?.user || posting) return;
     setError(null);
 
+    // Datum is fully optional (requirement: a post must succeed with no
+    // date picked at all) - only validate/send it when the user actually
+    // opened the date row and typed something in it.
     let eventDate: string | null = null;
-    if (showWhen && dateText.trim()) {
+    if (showDate && dateText.trim()) {
       eventDate = parseDutchDate(dateText);
       if (!eventDate) {
         setError("Vul een geldige datum in (DD-MM-JJJJ).");
         return;
       }
-    }
-    let eventTime: string | null = null;
-    if (showWhen && timeText.trim()) {
-      if (!TIME_PATTERN.test(timeText.trim())) {
-        setError("Vul een geldige tijd in (UU:MM).");
-        return;
-      }
-      eventTime = timeText.trim();
     }
 
     setPosting(true);
@@ -93,7 +85,6 @@ export default function NewPostScreen({ navigation, route }: Props) {
         imageUrl: imageUri ?? undefined,
         sport,
         eventDate,
-        eventTime,
       });
       navigation.goBack();
     } catch (e) {
@@ -131,29 +122,20 @@ export default function NewPostScreen({ navigation, route }: Props) {
           <Ionicons name="basketball-outline" size={22} color={colors.black} />
           <Text style={styles.toolLabel}>{sportLabel}</Text>
         </Pressable>
-        <Pressable style={styles.toolButton} onPress={() => setShowWhen((v) => !v)}>
+        <Pressable style={styles.toolButton} onPress={() => setShowDate((v) => !v)}>
           <Ionicons name="calendar-outline" size={22} color={colors.black} />
-          <Text style={styles.toolLabel}>Datum</Text>
+          <Text style={styles.toolLabel}>Datum (optioneel)</Text>
         </Pressable>
       </View>
 
-      {showWhen ? (
-        <View style={styles.whenRow}>
-          <Input
-            placeholder="DD-MM-JJJJ"
-            value={dateText}
-            onChangeText={setDateText}
-            keyboardType="number-pad"
-            style={styles.whenInput}
-          />
-          <Input
-            placeholder="UU:MM"
-            value={timeText}
-            onChangeText={setTimeText}
-            keyboardType="number-pad"
-            style={styles.whenInput}
-          />
-        </View>
+      {showDate ? (
+        <Input
+          placeholder="DD-MM-JJJJ"
+          value={dateText}
+          onChangeText={setDateText}
+          keyboardType="number-pad"
+          style={styles.dateInput}
+        />
       ) : null}
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -213,14 +195,9 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     color: colors.black,
   },
-  whenRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
+  dateInput: {
     marginHorizontal: spacing.md,
     marginTop: spacing.md,
-  },
-  whenInput: {
-    flex: 1,
   },
   error: {
     fontFamily: fonts.body,

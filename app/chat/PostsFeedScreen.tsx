@@ -62,7 +62,7 @@ export default function PostsFeedScreen(_props: Props) {
           renderItem={({ item }) => {
             const liked = item.post_likes?.some((l: any) => l.user_id === session?.user?.id);
             const likeCount = item.post_likes?.length ?? 0;
-            const when = formatEventDateTime(item.event_date, item.event_time);
+            const when = formatEventDateTime(item.event_date);
             return (
               <View style={styles.postCard}>
                 <View style={styles.postHeader}>
@@ -74,7 +74,7 @@ export default function PostsFeedScreen(_props: Props) {
                 </View>
                 <Text style={styles.postBody}>{item.body}</Text>
                 {item.image_url ? <Image source={{ uri: item.image_url }} style={styles.postImage} /> : null}
-                {item.sport || when || item.location ? (
+                {item.sport || when ? (
                   <View style={styles.meta}>
                     {item.sport ? (
                       <View style={styles.metaItem}>
@@ -86,12 +86,6 @@ export default function PostsFeedScreen(_props: Props) {
                       <View style={styles.metaItem}>
                         <Ionicons name="calendar-outline" size={14} color={colors.textSecondary} />
                         <Text style={styles.metaText}>{when}</Text>
-                      </View>
-                    ) : null}
-                    {item.location ? (
-                      <View style={styles.metaItem}>
-                        <Ionicons name="location-outline" size={14} color={colors.textSecondary} />
-                        <Text style={styles.metaText}>{item.location}</Text>
                       </View>
                     ) : null}
                   </View>

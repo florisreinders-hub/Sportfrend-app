@@ -161,7 +161,7 @@ export default function SporterProfileScreen({ route, navigation }: Props) {
             posts.map((post) => {
               const liked = post.post_likes?.some((l: any) => l.user_id === session?.user?.id);
               const likeCount = post.post_likes?.length ?? 0;
-              const when = formatEventDateTime(post.event_date, post.event_time);
+              const when = formatEventDateTime(post.event_date);
               return (
                 <View key={post.id} style={styles.postCard}>
                   <View style={styles.postHeader}>
@@ -173,7 +173,7 @@ export default function SporterProfileScreen({ route, navigation }: Props) {
                   </View>
                   <Text style={styles.postBody}>{post.body}</Text>
                   {post.image_url ? <Image source={{ uri: post.image_url }} style={styles.postImage} /> : null}
-                  {post.sport || when || post.location ? (
+                  {post.sport || when ? (
                     <View style={styles.meta}>
                       {post.sport ? (
                         <View style={styles.metaItem}>
@@ -185,12 +185,6 @@ export default function SporterProfileScreen({ route, navigation }: Props) {
                         <View style={styles.metaItem}>
                           <Ionicons name="calendar-outline" size={14} color={colors.textSecondary} />
                           <Text style={styles.metaText}>{when}</Text>
-                        </View>
-                      ) : null}
-                      {post.location ? (
-                        <View style={styles.metaItem}>
-                          <Ionicons name="location-outline" size={14} color={colors.textSecondary} />
-                          <Text style={styles.metaText}>{post.location}</Text>
                         </View>
                       ) : null}
                     </View>
