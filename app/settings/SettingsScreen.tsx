@@ -7,15 +7,10 @@ import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
-import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
+import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { signOut } from "@/lib/auth";
-import {
-  fetchProfileSettings,
-  getDataErrorMessage,
-  updateProfileSettings,
-  WEEKDAY_OPTIONS,
-} from "@/lib/api";
+import { fetchProfileSettings, getDataErrorMessage, updateProfileSettings } from "@/lib/api";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Settings">;
 
@@ -25,7 +20,6 @@ export default function SettingsScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(true);
   const [pushEnabled, setPushEnabled] = useState(true);
   const [profileVisible, setProfileVisible] = useState(true);
-  const [availabilityDays, setAvailabilityDays] = useState<string[]>([]);
   const [signingOut, setSigningOut] = useState(false);
 
   useFocusEffect(
@@ -38,7 +32,6 @@ export default function SettingsScreen({ navigation }: Props) {
           if (cancelled) return;
           setPushEnabled(settings.push_notifications_enabled);
           setProfileVisible(settings.profile_visible);
-          setAvailabilityDays(settings.availability_days);
         })
         .catch((e) => Alert.alert("Kon instellingen niet laden", getDataErrorMessage(e)))
         .finally(() => {
@@ -68,21 +61,6 @@ export default function SettingsScreen({ navigation }: Props) {
       await updateProfileSettings(userId, { profile_visible: value });
     } catch (e) {
       setProfileVisible(!value);
-      Alert.alert("Opslaan mislukt", getDataErrorMessage(e));
-    }
-  };
-
-  const onToggleDay = async (day: string) => {
-    const next = availabilityDays.includes(day)
-      ? availabilityDays.filter((d) => d !== day)
-      : [...availabilityDays, day];
-    const previous = availabilityDays;
-    setAvailabilityDays(next);
-    if (!userId) return;
-    try {
-      await updateProfileSettings(userId, { availability_days: next });
-    } catch (e) {
-      setAvailabilityDays(previous);
       Alert.alert("Opslaan mislukt", getDataErrorMessage(e));
     }
   };
@@ -158,25 +136,6 @@ export default function SettingsScreen({ navigation }: Props) {
           </View>
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Beschikbaarheid</Text>
-            <Text style={styles.hint}>Kies de dagen waarop je meestal beschikbaar bent om te sporten.</Text>
-            <View style={styles.dayRow}>
-              {WEEKDAY_OPTIONS.map((day) => {
-                const selected = availabilityDays.includes(day.key);
-                return (
-                  <Pressable
-                    key={day.key}
-                    style={[styles.dayPill, selected && styles.dayPillSelected]}
-                    onPress={() => onToggleDay(day.key)}
-                  >
-                    <Text style={[styles.dayPillText, selected && styles.dayPillTextSelected]}>{day.label}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-
-          <View style={styles.section}>
             <Text style={styles.sectionTitle}>Ondersteuning</Text>
             <Pressable style={styles.row} onPress={() => navigation.navigate("Helpdesk")}>
               <Ionicons name="help-circle-outline" size={20} color={colors.black} />
@@ -249,35 +208,6 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.xs,
     color: colors.textSecondary,
     marginTop: spacing.xs,
-  },
-  dayRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
-    marginTop: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  dayPill: {
-    width: 44,
-    height: 36,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  dayPillSelected: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  dayPillText: {
-    fontFamily: fonts.bodyMedium,
-    fontSize: fontSizes.sm,
-    color: colors.black,
-  },
-  dayPillTextSelected: {
-    color: colors.black,
-    fontFamily: fonts.bodySemiBold,
   },
   logout: {
     color: colors.danger,
