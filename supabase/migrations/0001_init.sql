@@ -21,9 +21,17 @@ create table if not exists public.profiles (
   avatar_url text,
   photo_url text,
   is_onboarded boolean default false,
+  push_notifications_enabled boolean not null default true,
+  profile_visible boolean not null default true,
+  availability_days text[] not null default '{}',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Note: if public.profiles already existed in your database from before
+-- the three columns above were added to this file, the `create table if
+-- not exists` above is a no-op and won't add them - run
+-- supabase/migrations/0005_profile_settings.sql to patch those.
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- swipes: every like/skip a user performs on another profile

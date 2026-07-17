@@ -1,20 +1,104 @@
-import React from "react";
-import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
-import { useState } from "react";
+import React, { useCallback, useState } from "react";
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Switch, Text, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
-import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
+import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
+import { useAuth } from "@/lib/AuthContext";
 import { signOut } from "@/lib/auth";
+import {
+  fetchProfileSettings,
+  getDataErrorMessage,
+  updateProfileSettings,
+  WEEKDAY_OPTIONS,
+} from "@/lib/api";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Settings">;
 
 export default function SettingsScreen({ navigation }: Props) {
+  const { session } = useAuth();
+  const userId = session?.user?.id;
+  const [loading, setLoading] = useState(true);
   const [pushEnabled, setPushEnabled] = useState(true);
-  const [locationEnabled, setLocationEnabled] = useState(true);
+  const [profileVisible, setProfileVisible] = useState(true);
+  const [availabilityDays, setAvailabilityDays] = useState<string[]>([]);
+  const [signingOut, setSigningOut] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!userId) return;
+      let cancelled = false;
+      setLoading(true);
+      fetchProfileSettings(userId)
+        .then((settings) => {
+          if (cancelled) return;
+          setPushEnabled(settings.push_notifications_enabled);
+          setProfileVisible(settings.profile_visible);
+          setAvailabilityDays(settings.availability_days);
+        })
+        .catch((e) => Alert.alert("Kon instellingen niet laden", getDataErrorMessage(e)))
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [userId])
+  );
+
+  const onTogglePush = async (value: boolean) => {
+    setPushEnabled(value);
+    if (!userId) return;
+    try {
+      await updateProfileSettings(userId, { push_notifications_enabled: value });
+    } catch (e) {
+      setPushEnabled(!value);
+      Alert.alert("Opslaan mislukt", getDataErrorMessage(e));
+    }
+  };
+
+  const onToggleVisible = async (value: boolean) => {
+    setProfileVisible(value);
+    if (!userId) return;
+    try {
+      await updateProfileSettings(userId, { profile_visible: value });
+    } catch (e) {
+      setProfileVisible(!value);
+      Alert.alert("Opslaan mislukt", getDataErrorMessage(e));
+    }
+  };
+
+  const onToggleDay = async (day: string) => {
+    const next = availabilityDays.includes(day)
+      ? availabilityDays.filter((d) => d !== day)
+      : [...availabilityDays, day];
+    const previous = availabilityDays;
+    setAvailabilityDays(next);
+    if (!userId) return;
+    try {
+      await updateProfileSettings(userId, { availability_days: next });
+    } catch (e) {
+      setAvailabilityDays(previous);
+      Alert.alert("Opslaan mislukt", getDataErrorMessage(e));
+    }
+  };
+
+  const onSignOut = async () => {
+    setSigningOut(true);
+    try {
+      const { error } = await signOut();
+      if (error) throw error;
+      // AuthContext's onAuthStateChange picks up the cleared session and
+      // RootNavigator switches back to the signed-out stack on its own.
+    } catch (e) {
+      setSigningOut(false);
+      Alert.alert("Uitloggen mislukt", getDataErrorMessage(e));
+    }
+  };
 
   return (
     <ScreenContainer withBottomPadding={false}>
@@ -22,62 +106,101 @@ export default function SettingsScreen({ navigation }: Props) {
       <Text style={styles.header}>INSTELLINGEN</Text>
       <View style={styles.divider} />
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Account</Text>
-        <Pressable style={styles.row} onPress={() => navigation.navigate("ChangeEmail")}>
-          <Ionicons name="mail-outline" size={20} color={colors.black} />
-          <Text style={styles.rowLabel}>E-mail wijzigen</Text>
-          <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
-        </Pressable>
-        <Pressable style={styles.row} onPress={() => navigation.navigate("LocationSetup")}>
-          <Ionicons name="location-outline" size={20} color={colors.black} />
-          <Text style={styles.rowLabel}>Locatie wijzigen</Text>
-          <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
-        </Pressable>
-        <Pressable style={styles.row} onPress={() => navigation.navigate("Pricing")}>
-          <Ionicons name="star-outline" size={20} color={colors.black} />
-          <Text style={styles.rowLabel}>Abonnement beheren</Text>
-          <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
-        </Pressable>
-      </View>
+      {loading ? (
+        <ActivityIndicator color={colors.primary} style={{ marginTop: spacing.xl }} />
+      ) : (
+        <>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Account</Text>
+            <Pressable style={styles.row} onPress={() => navigation.navigate("EditProfile")}>
+              <Ionicons name="person-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>Mijn profiel bewerken</Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+            </Pressable>
+            <Pressable style={styles.row} onPress={() => navigation.navigate("ChangeEmail")}>
+              <Ionicons name="mail-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>E-mail wijzigen</Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+            </Pressable>
+            <Pressable style={styles.row} onPress={() => navigation.navigate("LocationSetup")}>
+              <Ionicons name="location-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>Locatie wijzigen</Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+            </Pressable>
+            <Pressable style={styles.row} onPress={() => navigation.navigate("Pricing")}>
+              <Ionicons name="star-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>Abonnement beheren</Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+            </Pressable>
+          </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Voorkeuren</Text>
-        <View style={styles.row}>
-          <Ionicons name="notifications-outline" size={20} color={colors.black} />
-          <Text style={styles.rowLabel}>Pushmeldingen</Text>
-          <Switch value={pushEnabled} onValueChange={setPushEnabled} trackColor={{ true: colors.primary }} />
-        </View>
-        <View style={styles.row}>
-          <Ionicons name="navigate-outline" size={20} color={colors.black} />
-          <Text style={styles.rowLabel}>Locatie delen</Text>
-          <Switch value={locationEnabled} onValueChange={setLocationEnabled} trackColor={{ true: colors.primary }} />
-        </View>
-      </View>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Notificatievoorkeuren</Text>
+            <View style={styles.row}>
+              <Ionicons name="notifications-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>Pushmeldingen</Text>
+              <Switch value={pushEnabled} onValueChange={onTogglePush} trackColor={{ true: colors.primary }} />
+            </View>
+          </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Ondersteuning</Text>
-        <Pressable style={styles.row} onPress={() => navigation.navigate("Helpdesk")}>
-          <Ionicons name="help-circle-outline" size={20} color={colors.black} />
-          <Text style={styles.rowLabel}>Helpdesk</Text>
-          <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
-        </Pressable>
-        <Pressable style={styles.row} onPress={() => navigation.navigate("Faq")}>
-          <Ionicons name="document-text-outline" size={20} color={colors.black} />
-          <Text style={styles.rowLabel}>Veelgestelde vragen</Text>
-          <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
-        </Pressable>
-        <Pressable style={styles.row} onPress={() => navigation.navigate("Support")}>
-          <Ionicons name="headset-outline" size={20} color={colors.black} />
-          <Text style={styles.rowLabel}>Klantenservice</Text>
-          <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
-        </Pressable>
-      </View>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Privacy</Text>
+            <View style={styles.row}>
+              <Ionicons name="eye-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>Profiel zichtbaar in Ontdekken</Text>
+              <Switch value={profileVisible} onValueChange={onToggleVisible} trackColor={{ true: colors.primary }} />
+            </View>
+            <Text style={styles.hint}>
+              {profileVisible
+                ? "Andere gebruikers kunnen je profiel vinden in Ontdekken."
+                : "Je profiel wordt niet meer getoond aan andere gebruikers in Ontdekken."}
+            </Text>
+          </View>
 
-      <Pressable style={styles.row} onPress={() => signOut()}>
-        <Ionicons name="log-out-outline" size={20} color={colors.danger} />
-        <Text style={[styles.rowLabel, styles.logout]}>Uitloggen</Text>
-      </Pressable>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Beschikbaarheid</Text>
+            <Text style={styles.hint}>Kies de dagen waarop je meestal beschikbaar bent om te sporten.</Text>
+            <View style={styles.dayRow}>
+              {WEEKDAY_OPTIONS.map((day) => {
+                const selected = availabilityDays.includes(day.key);
+                return (
+                  <Pressable
+                    key={day.key}
+                    style={[styles.dayPill, selected && styles.dayPillSelected]}
+                    onPress={() => onToggleDay(day.key)}
+                  >
+                    <Text style={[styles.dayPillText, selected && styles.dayPillTextSelected]}>{day.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Ondersteuning</Text>
+            <Pressable style={styles.row} onPress={() => navigation.navigate("Helpdesk")}>
+              <Ionicons name="help-circle-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>Helpdesk</Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+            </Pressable>
+            <Pressable style={styles.row} onPress={() => navigation.navigate("Faq")}>
+              <Ionicons name="document-text-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>Veelgestelde vragen</Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+            </Pressable>
+            <Pressable style={styles.row} onPress={() => navigation.navigate("Support")}>
+              <Ionicons name="headset-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>Klantenservice</Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+            </Pressable>
+          </View>
+
+          <Pressable style={styles.row} onPress={onSignOut} disabled={signingOut}>
+            <Ionicons name="log-out-outline" size={20} color={colors.danger} />
+            <Text style={[styles.rowLabel, styles.logout]}>{signingOut ? "Bezig met uitloggen..." : "Uitloggen"}</Text>
+          </Pressable>
+        </>
+      )}
 
       <BottomNav active="menu" />
     </ScreenContainer>
@@ -120,6 +243,41 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodyMedium,
     fontSize: fontSizes.md,
     color: colors.black,
+  },
+  hint: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.xs,
+    color: colors.textSecondary,
+    marginTop: spacing.xs,
+  },
+  dayRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  dayPill: {
+    width: 44,
+    height: 36,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dayPillSelected: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  dayPillText: {
+    fontFamily: fonts.bodyMedium,
+    fontSize: fontSizes.sm,
+    color: colors.black,
+  },
+  dayPillTextSelected: {
+    color: colors.black,
+    fontFamily: fonts.bodySemiBold,
   },
   logout: {
     color: colors.danger,

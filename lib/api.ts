@@ -125,7 +125,11 @@ export async function fetchDiscoverProfiles(
   let query = supabase
     .from("profiles")
     .select("*")
-    .not("id", "in", `(${excludedIds.join(",")})`);
+    .not("id", "in", `(${excludedIds.join(",")})`)
+    // Respects the "Profiel zichtbaar voor anderen" privacy toggle
+    // (Instellingen-scherm) - someone who turned it off is simply never
+    // offered in anyone else's Ontdekken feed.
+    .eq("profile_visible", true);
 
   const sportFilter = filters.sport ?? ownProfile?.sport;
   if (sportFilter) {
@@ -400,5 +404,46 @@ export async function upsertSubscription(userId: string, plan: "basis" | "premiu
   const { error } = await supabase
     .from("subscriptions")
     .upsert({ user_id: userId, plan, price_cents: priceCents, status: "active" }, { onConflict: "user_id" });
+  if (error) throw error;
+}
+
+export const WEEKDAY_OPTIONS: { key: string; label: string }[] = [
+  { key: "ma", label: "Ma" },
+  { key: "di", label: "Di" },
+  { key: "wo", label: "Wo" },
+  { key: "do", label: "Do" },
+  { key: "vr", label: "Vr" },
+  { key: "za", label: "Za" },
+  { key: "zo", label: "Zo" },
+];
+
+export type ProfileSettings = {
+  push_notifications_enabled: boolean;
+  profile_visible: boolean;
+  availability_days: string[];
+};
+
+export async function fetchProfileSettings(userId: string): Promise<ProfileSettings> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("push_notifications_enabled, profile_visible, availability_days")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  return {
+    push_notifications_enabled: data?.push_notifications_enabled ?? true,
+    profile_visible: data?.profile_visible ?? true,
+    availability_days: data?.availability_days ?? [],
+  };
+}
+
+/**
+ * upsert (not update): same reasoning as LocationSetupScreen's save - a
+ * profile row might not exist yet for this user for whatever reason, and
+ * .update().eq("id", userId) silently matches zero rows and "succeeds"
+ * without writing anything in that case, rather than erroring.
+ */
+export async function updateProfileSettings(userId: string, fields: Partial<ProfileSettings>) {
+  const { error } = await supabase.from("profiles").upsert({ id: userId, ...fields }, { onConflict: "id" });
   if (error) throw error;
 }
