@@ -311,10 +311,22 @@ export function formatConversationTimestamp(iso: string): string {
   return date.toLocaleDateString("nl-NL", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+// posts has exactly one direct foreign key to profiles (author_id), but
+// PostgREST's relationship detection also treats post_likes as an implicit
+// bridge between posts and profiles - it has its own FKs to both
+// (post_id -> posts, user_id -> profiles), which reads as a second,
+// indirect many-to-many-style path connecting the two. Embedding both
+// `profiles` and `post_likes` in the same posts query is therefore
+// ambiguous ("Could not embed because more than one relationship was
+// found for 'posts' and 'profiles'") unless the profiles embed names its
+// exact constraint - posts_author_id_fkey is Postgres's default-generated
+// name for `author_id ... references public.profiles (id)` in
+// 0001_init.sql (no explicit `constraint` clause there), the same pattern
+// already used for matches.user_a/user_b below.
 export async function fetchPosts() {
   const { data, error } = await supabase
     .from("posts")
-    .select("*, author:profiles(*), post_likes(user_id)")
+    .select("*, author:profiles!posts_author_id_fkey(*), post_likes(user_id)")
     .order("created_at", { ascending: false });
   if (error) throw error;
   return data ?? [];
@@ -323,7 +335,7 @@ export async function fetchPosts() {
 export async function fetchPostsByAuthor(authorId: string) {
   const { data, error } = await supabase
     .from("posts")
-    .select("*, author:profiles(*), post_likes(user_id)")
+    .select("*, author:profiles!posts_author_id_fkey(*), post_likes(user_id)")
     .eq("author_id", authorId)
     .order("created_at", { ascending: false });
   if (error) throw error;
