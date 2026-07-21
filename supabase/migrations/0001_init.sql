@@ -249,10 +249,21 @@ create policy "Users can view their own subscription"
   to authenticated
   using (auth.uid() = user_id);
 
+-- selectPendingPlan()/upsertSubscription() (lib/api.ts) both .upsert() -
+-- Postgres compiles that to INSERT ... ON CONFLICT DO UPDATE, which needs
+-- INSERT privilege even when the row already exists and the statement
+-- ends up just updating it. Without this policy that upsert is blocked by
+-- RLS unconditionally - see supabase/migrations/0007_subscriptions_insert_policy.sql.
+create policy "Users can insert their own subscription"
+  on public.subscriptions for insert
+  to authenticated
+  with check (auth.uid() = user_id);
+
 create policy "Users can update their own subscription"
   on public.subscriptions for update
   to authenticated
-  using (auth.uid() = user_id);
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- Realtime: broadcast changes on messages and matches for the chat screens
