@@ -13,7 +13,7 @@ create table if not exists public.profiles (
   gender text check (gender in ('man', 'vrouw', 'anders')),
   bio text,
   sport text,
-  level text check (level in ('beginner', 'gevorderd', 'competitief')),
+  level text check (level in ('beginner', 'gemiddeld', 'gevorderd', 'expert')),
   city text,
   latitude double precision,
   longitude double precision,
@@ -32,6 +32,12 @@ create table if not exists public.profiles (
 -- the three columns above were added to this file, the `create table if
 -- not exists` above is a no-op and won't add them - run
 -- supabase/migrations/0005_profile_settings.sql to patch those.
+--
+-- Similarly, the level check constraint above (an inline `create table`
+-- constraint, applied only when the table is first created) won't update
+-- an existing table's constraint either - run
+-- supabase/migrations/0010_profiles_level_gemiddeld.sql to add 'gemiddeld'
+-- and rename 'competitief' to 'expert' on an existing database.
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- swipes: every like/skip a user performs on another profile

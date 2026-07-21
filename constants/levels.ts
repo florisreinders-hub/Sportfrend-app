@@ -8,6 +8,7 @@ import { SelectOption } from "@/components/SelectModal";
 export const LEVEL_OPTIONS: SelectOption[] = [
   { label: "Alle niveaus", value: null },
   { label: "Beginner", value: "beginner" },
+  { label: "Gemiddeld", value: "gemiddeld" },
   { label: "Gevorderd", value: "gevorderd" },
-  { label: "Competitief", value: "competitief" },
+  { label: "Expert", value: "expert" },
 ];
