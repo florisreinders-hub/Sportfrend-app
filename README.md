@@ -118,9 +118,50 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
 - `messages` — 1-op-1 chatberichten per match, met Supabase Realtime
 - `posts` / `post_likes` — de "Bericht plaatsen" community-feed
 - `subscriptions` — Basis / Premium / Elite abonnement per gebruiker
+- `support_requests` — ingediende Klantenservice-berichten (back-up/overzicht,
+  zie ook de "Klantenservice-e-mail"-sectie hieronder)
 
 Alle tabellen hebben Row Level Security policies zodat gebruikers alleen hun
 eigen data kunnen wijzigen en alleen berichten van hun eigen matches kunnen lezen.
+
+## Klantenservice-e-mail (Resend)
+
+Het Klantenservice-contactformulier (`app/settings/SupportScreen.tsx`) doet
+twee dingen bij versturen: het bericht wordt altijd opgeslagen in
+`support_requests` (de back-up/het overzicht), en daarna wordt best-effort
+een Supabase Edge Function aangeroepen
+(`supabase/functions/send-support-email`) die via [Resend](https://resend.com)
+een e-mail stuurt naar **info.sportfrend@gmail.com**. Als die e-mail om wat
+voor reden dan ook mislukt (functie nog niet gedeployed, Resend-fout, etc.)
+blijft het bericht gewoon in de database staan - de gebruiker ziet nog
+steeds de bevestiging, want het bericht ís ontvangen.
+
+**Belangrijk:** deze sandbox heeft geen netwerktoegang tot Supabase's API, dus
+de Edge Function kon hier niet gedeployed worden en `RESEND_API_KEY` kon niet
+getest worden. Dit moet jij zelf doen:
+
+1. **Deploy de Edge Function** met de [Supabase CLI](https://supabase.com/docs/guides/cli):
+   ```bash
+   npm install -g supabase
+   supabase login
+   supabase link --project-ref duefdlibkeghdskongjd
+   supabase functions deploy send-support-email
+   ```
+2. **Controleer dat `RESEND_API_KEY` als secret op het Supabase-project staat**
+   (jij gaf aan dat dit al geconfigureerd is):
+   ```bash
+   supabase secrets list
+   ```
+   Zo niet, zet 'm met `supabase secrets set RESEND_API_KEY=re_jouw_key`.
+   Let op: dit is een **Supabase Edge Function secret**, geen
+   `EXPO_PUBLIC_...`-variabele - hij wordt nooit in de app zelf gebruikt of
+   meegebundeld, alleen server-side door de Edge Function gelezen.
+3. **Afzenderadres**: de functie verstuurt standaard vanaf
+   `Sportfrend <onboarding@resend.dev>` (Resend's gedeelde test-domein, werkt
+   direct zonder domeinverificatie, maar is rate-limited en niet bedoeld voor
+   productiegebruik). Verifieer een eigen domein in Resend en zet daarna de
+   secret `RESEND_FROM_EMAIL` (bijv. `Sportfrend <support@sportfrend.app>`)
+   voor een eigen afzenderadres.
 
 ## RevenueCat (Betalen-scherm)
 

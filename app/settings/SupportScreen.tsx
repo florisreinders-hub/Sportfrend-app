@@ -9,7 +9,7 @@ import { Input } from "@/components/Input";
 import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
-import { createSupportRequest, getDataErrorMessage } from "@/lib/api";
+import { createSupportRequest, getDataErrorMessage, notifySupportRequest } from "@/lib/api";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Support">;
 
@@ -28,6 +28,15 @@ export default function SupportScreen(_props: Props) {
     try {
       await createSupportRequest(session.user.id, subject.trim(), message.trim());
       setSent(true);
+      // Best-effort on top of the row that's already saved above - the
+      // message getting to the Sportfrend inbox is a convenience, the
+      // database row is the actual record. A failure here (e.g. the
+      // Edge Function isn't deployed yet, or Resend rejects the request)
+      // shouldn't undo the "message received" confirmation the user just
+      // saw, since the message really was received.
+      notifySupportRequest(subject.trim(), message.trim()).catch((notifyError) => {
+        console.warn("[Support] E-mailmelding via Resend is mislukt:", notifyError);
+      });
     } catch (e) {
       setError(getDataErrorMessage(e));
     } finally {

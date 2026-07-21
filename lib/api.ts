@@ -466,3 +466,19 @@ export async function createSupportRequest(userId: string, subject: string, mess
   const { error } = await supabase.from("support_requests").insert({ user_id: userId, subject, message });
   if (error) throw error;
 }
+
+/**
+ * Triggers the send-support-email Edge Function (supabase/functions/
+ * send-support-email) so a Klantenservice submission also lands as an
+ * email in the Sportfrend inbox, on top of the support_requests row
+ * createSupportRequest() already wrote. Best-effort on top of that row,
+ * not a replacement for it - callers should let this fail without
+ * blocking the "message received" confirmation, since the message is
+ * already safely saved either way.
+ */
+export async function notifySupportRequest(subject: string, message: string) {
+  const { error } = await supabase.functions.invoke("send-support-email", {
+    body: { subject, message },
+  });
+  if (error) throw error;
+}
