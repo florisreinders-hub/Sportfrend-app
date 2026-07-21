@@ -461,3 +461,8 @@ export async function updateProfileSettings(userId: string, fields: Partial<Prof
   const { error } = await supabase.from("profiles").upsert({ id: userId, ...fields }, { onConflict: "id" });
   if (error) throw error;
 }
+
+export async function createSupportRequest(userId: string, subject: string, message: string) {
+  const { error } = await supabase.from("support_requests").insert({ user_id: userId, subject, message });
+  if (error) throw error;
+}

@@ -116,6 +116,21 @@ create table if not exists public.subscriptions (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────
+-- support_requests: "Klantenservice" contact form submissions
+-- ─────────────────────────────────────────────────────────────────────────
+create table if not exists public.support_requests (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  subject text not null,
+  message text not null,
+  created_at timestamptz not null default now()
+);
+
+-- Note: if public.support_requests already existed in your database from
+-- before this table was added to this file, `create table if not exists`
+-- above is a no-op - run supabase/migrations/0008_support_requests.sql.
+
+-- ─────────────────────────────────────────────────────────────────────────
 -- updated_at triggers
 -- ─────────────────────────────────────────────────────────────────────────
 create or replace function public.set_updated_at()
@@ -163,6 +178,7 @@ alter table public.messages enable row level security;
 alter table public.posts enable row level security;
 alter table public.post_likes enable row level security;
 alter table public.subscriptions enable row level security;
+alter table public.support_requests enable row level security;
 
 create policy "Profiles are readable by authenticated users"
   on public.profiles for select
@@ -264,6 +280,16 @@ create policy "Users can update their own subscription"
   to authenticated
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+create policy "Users can insert their own support requests"
+  on public.support_requests for insert
+  to authenticated
+  with check (auth.uid() = user_id);
+
+create policy "Users can view their own support requests"
+  on public.support_requests for select
+  to authenticated
+  using (auth.uid() = user_id);
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- Realtime: broadcast changes on messages and matches for the chat screens

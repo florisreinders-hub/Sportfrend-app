@@ -8,11 +8,14 @@ import { BottomNav } from "@/components/BottomNav";
 import { Input } from "@/components/Input";
 import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
+import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
+import { getAuthErrorMessage } from "@/lib/auth";
 
 type Props = NativeStackScreenProps<RootStackParamList, "ChangeEmail">;
 
 export default function ChangeEmailScreen({ navigation }: Props) {
+  const { session } = useAuth();
   const [newEmail, setNewEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -21,14 +24,36 @@ export default function ChangeEmailScreen({ navigation }: Props) {
 
   const onSubmit = async () => {
     setError(null);
-    setLoading(true);
-    const { error: updateError } = await supabase.auth.updateUser({ email: newEmail.trim() });
-    setLoading(false);
-    if (updateError) {
-      setError(updateError.message);
+    const currentEmail = session?.user?.email;
+    if (!currentEmail) {
+      setError("Geen actieve sessie gevonden. Log opnieuw in en probeer het nogmaals.");
       return;
     }
-    setSent(true);
+    setLoading(true);
+    try {
+      // Re-verify the current password before allowing an email change -
+      // the field was previously collected but never actually checked
+      // against anything, so it looked like a security step without
+      // being one.
+      const { error: reauthError } = await supabase.auth.signInWithPassword({
+        email: currentEmail,
+        password,
+      });
+      if (reauthError) throw reauthError;
+
+      // Supabase's default "secure email change" setting sends a
+      // confirmation link to the new address (and, depending on project
+      // config, the old one too) - the change only takes effect once
+      // that's confirmed, not immediately here.
+      const { error: updateError } = await supabase.auth.updateUser({ email: newEmail.trim() });
+      if (updateError) throw updateError;
+
+      setSent(true);
+    } catch (e) {
+      setError(getAuthErrorMessage(e));
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -37,7 +62,8 @@ export default function ChangeEmailScreen({ navigation }: Props) {
       <View style={styles.content}>
         {sent ? (
           <Text style={styles.confirmation}>
-            We hebben een bevestigingslink gestuurd naar {newEmail}. Bevestig de wijziging via die e-mail.
+            We hebben een bevestigingslink gestuurd naar {newEmail}. Bevestig de wijziging via die e-mail voordat hij
+            ingaat.
           </Text>
         ) : (
           <>

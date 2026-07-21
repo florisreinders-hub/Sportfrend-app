@@ -8,13 +8,32 @@ import { BottomNav } from "@/components/BottomNav";
 import { Input } from "@/components/Input";
 import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
+import { useAuth } from "@/lib/AuthContext";
+import { createSupportRequest, getDataErrorMessage } from "@/lib/api";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Support">;
 
 export default function SupportScreen(_props: Props) {
+  const { session } = useAuth();
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+
+  const onSend = async () => {
+    if (!session?.user || !subject.trim() || !message.trim() || sending) return;
+    setError(null);
+    setSending(true);
+    try {
+      await createSupportRequest(session.user.id, subject.trim(), message.trim());
+      setSent(true);
+    } catch (e) {
+      setError(getDataErrorMessage(e));
+    } finally {
+      setSending(false);
+    }
+  };
 
   return (
     <ScreenContainer withBottomPadding={false}>
@@ -38,9 +57,11 @@ export default function SupportScreen(_props: Props) {
               multiline
               style={styles.messageInput}
             />
+            {error ? <Text style={styles.error}>{error}</Text> : null}
             <Button
               label="Versturen"
-              onPress={() => setSent(true)}
+              onPress={onSend}
+              loading={sending}
               disabled={!subject.trim() || !message.trim()}
               style={styles.cta}
             />
@@ -66,6 +87,12 @@ const styles = StyleSheet.create({
     height: 120,
     textAlignVertical: "top",
     paddingTop: spacing.sm,
+  },
+  error: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.danger,
+    marginBottom: spacing.sm,
   },
   cta: {
     marginTop: spacing.sm,
