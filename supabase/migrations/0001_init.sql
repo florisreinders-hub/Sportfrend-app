@@ -104,7 +104,10 @@ create table if not exists public.subscriptions (
   id uuid primary key default uuid_generate_v4(),
   user_id uuid not null references public.profiles (id) on delete cascade,
   plan text not null check (plan in ('basis', 'premium', 'elite')) default 'basis',
-  status text not null check (status in ('active', 'canceled', 'past_due')) default 'active',
+  -- 'pending' = chosen on the Pricing screen, checkout not completed yet -
+  -- distinct from 'active' so a plan selection is never mistaken for a
+  -- real (even demo) payment. See supabase/migrations/0006_subscriptions_pending_status.sql.
+  status text not null check (status in ('pending', 'active', 'canceled', 'past_due')) default 'active',
   price_cents integer not null default 0,
   current_period_end timestamptz,
   created_at timestamptz not null default now(),

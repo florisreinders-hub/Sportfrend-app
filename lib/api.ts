@@ -407,6 +407,20 @@ export async function upsertSubscription(userId: string, plan: "basis" | "premiu
   if (error) throw error;
 }
 
+/**
+ * Records a plan chosen on the Pricing screen ahead of the (not yet real)
+ * payment flow - status "pending", not "active", so a mere selection is
+ * never mistaken for a completed payment. PaymentScreen's own checkout
+ * still calls upsertSubscription() with status "active" once it actually
+ * "pays".
+ */
+export async function selectPendingPlan(userId: string, plan: "premium" | "elite", priceCents: number) {
+  const { error } = await supabase
+    .from("subscriptions")
+    .upsert({ user_id: userId, plan, price_cents: priceCents, status: "pending" }, { onConflict: "user_id" });
+  if (error) throw error;
+}
+
 export const WEEKDAY_OPTIONS: { key: string; label: string }[] = [
   { key: "ma", label: "Ma" },
   { key: "di", label: "Di" },
