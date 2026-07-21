@@ -298,3 +298,39 @@ alter publication supabase_realtime add table public.messages;
 alter publication supabase_realtime add table public.matches;
 alter publication supabase_realtime add table public.posts;
 alter publication supabase_realtime add table public.post_likes;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Storage: profile photo uploads ("Profiel bewerken" screen)
+-- ─────────────────────────────────────────────────────────────────────────
+-- Note: if this project already existed before this bucket/these policies
+-- were added to this file, run
+-- supabase/migrations/0009_profile_photos_storage.sql to patch it - the
+-- statements below are otherwise identical and safe to run again.
+
+insert into storage.buckets (id, name, public)
+values ('profile-photos', 'profile-photos', true)
+on conflict (id) do nothing;
+
+drop policy if exists "Profile photos are publicly readable" on storage.objects;
+create policy "Profile photos are publicly readable"
+  on storage.objects for select
+  to public
+  using (bucket_id = 'profile-photos');
+
+drop policy if exists "Users can upload their own profile photos" on storage.objects;
+create policy "Users can upload their own profile photos"
+  on storage.objects for insert
+  to authenticated
+  with check (bucket_id = 'profile-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "Users can update their own profile photos" on storage.objects;
+create policy "Users can update their own profile photos"
+  on storage.objects for update
+  to authenticated
+  using (bucket_id = 'profile-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "Users can delete their own profile photos" on storage.objects;
+create policy "Users can delete their own profile photos"
+  on storage.objects for delete
+  to authenticated
+  using (bucket_id = 'profile-photos' and (storage.foldername(name))[1] = auth.uid()::text);

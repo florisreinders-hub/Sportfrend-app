@@ -8,19 +8,11 @@ import { ScreenContainer } from "@/components/ScreenContainer";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { Button } from "@/components/Button";
-import { SelectModal, SelectOption } from "@/components/SelectModal";
+import { SelectModal } from "@/components/SelectModal";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { DEFAULT_FILTERS, useDiscoverFilters } from "@/lib/FilterContext";
 import { SPORT_OPTIONS } from "@/constants/sports";
-
-// value: null = "Alle niveaus", i.e. no level filter. Values match the
-// profiles table's level check constraint (beginner/gevorderd/competitief).
-const LEVEL_OPTIONS: SelectOption[] = [
-  { label: "Alle niveaus", value: null },
-  { label: "Beginner", value: "beginner" },
-  { label: "Gevorderd", value: "gevorderd" },
-  { label: "Competitief", value: "competitief" },
-];
+import { LEVEL_OPTIONS } from "@/constants/levels";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Filter">;
 
