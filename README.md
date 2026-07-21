@@ -122,6 +122,53 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
 Alle tabellen hebben Row Level Security policies zodat gebruikers alleen hun
 eigen data kunnen wijzigen en alleen berichten van hun eigen matches kunnen lezen.
 
+## RevenueCat (Betalen-scherm)
+
+Het Betalen-scherm (`app/premium/PaymentScreen.tsx`) draait nu in een
+**sandbox-modus** die duidelijk als zodanig gelabeld is in de app: er wordt
+geen echte betaling verwerkt, en `react-native-purchases` (RevenueCat's SDK)
+is nog niet geïnstalleerd. Dat is een bewuste keuze, geen omissie: die SDK is
+een native module die niet in Expo Go zit (in tegenstelling tot bijv.
+`expo-image-picker` of `@react-native-community/datetimepicker`, die dat wel
+zijn) - installeren zou een custom EAS development/production build vereisen,
+en Expo Go (waarmee dit hele project tot nu toe getest is) zou de app dan
+niet meer kunnen draaien.
+
+`lib/purchases.ts` bevat wel al de productconfiguratie (product-ID's,
+entitlements) die een echte koppeling zou gebruiken, en sandbox-versies van
+de functies (`purchasePlanSandbox`, `restorePurchasesSandbox`) met exact de
+vorm die de echte RevenueCat SDK-aanroepen straks zouden hebben - het
+vervangen van die twee functies door echte `Purchases.purchasePackage()` /
+`Purchases.restorePurchases()`-aanroepen zou de enige codewijziging moeten
+zijn wanneer de SDK er eenmaal in zit.
+
+**Stappen die jij zelf moet zetten om dit later echt te maken:**
+
+1. Maak een account aan op [revenuecat.com](https://app.revenuecat.com) en
+   maak een nieuw project aan.
+2. Voeg in dat project een iOS-app en een Android-app toe (App Store
+   Connect-bundle-ID / Google Play-pakketnaam van deze app).
+3. Maak in **App Store Connect** en **Google Play Console** twee
+   auto-renewable/abonnement-producten aan:
+   - Premium — €4,99/maand — product-ID `sportfrend_premium_monthly` (iOS) /
+     `sportfrend:premium-monthly` (Android)
+   - Elite — €9,99/maand — product-ID `sportfrend_elite_monthly` (iOS) /
+     `sportfrend:elite-monthly` (Android)
+   (Deze exacte ID's staan ook in `lib/purchases.ts` - als je andere ID's
+   kiest, moeten ze daar aangepast worden.)
+4. Koppel die producten in RevenueCat aan twee entitlements, `premium` en
+   `elite`, en maak een Offering met beide als packages.
+5. Kopieer de **Public API keys** (RevenueCat-dashboard → Project settings →
+   API keys) voor iOS en Android, en zet ze als
+   `EXPO_PUBLIC_REVENUECAT_IOS_KEY` / `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY` -
+   zowel lokaal in `.env` als in de EAS-omgevingsvariabelen (dezelfde plek
+   waar `EXPO_PUBLIC_SUPABASE_URL` nu al staat).
+6. Laat daarna de daadwerkelijke SDK-installatie en -koppeling bouwen (een
+   vervolgstap: `react-native-purchases` toevoegen, `lib/purchases.ts`'s
+   sandbox-functies vervangen door echte SDK-aanroepen, en een nieuwe
+   EAS-build maken) - dat kan pas nadat stap 1 t/m 5 hierboven staan, en dat
+   testen kan dan niet meer via Expo Go.
+
 ## Scripts
 
 - `npm start` — start de Expo dev server
@@ -132,5 +179,6 @@ eigen data kunnen wijzigen en alleen berichten van hun eigen matches kunnen leze
 
 - Sportfoto's en avatars gebruiken placeholder-URLs (`picsum.photos`, `i.pravatar.cc`)
   totdat gebruikers eigen foto's uploaden naar Supabase Storage.
-- Het betaalscherm is een demo-formulier; koppel Stripe of Mollie via
-  `EXPO_PUBLIC_PAYMENTS_PUBLIC_KEY` voor echte betalingen.
+- Het betaalscherm draait in een sandbox-modus (geen echte betaling) in
+  afwachting van een echte RevenueCat-koppeling - zie de "RevenueCat"-sectie
+  hierboven.

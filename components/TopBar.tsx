@@ -8,14 +8,19 @@ import { RootStackParamList } from "@/navigation/types";
 
 const logoMark = require("@/assets/logo-mark.png");
 
-export function TopBar() {
+type Props = {
+  /** Defaults to the "SPORTFREND" brand wordmark - some screens (e.g. Betalen, Figma node 2003:3596) show a page title here instead. */
+  title?: string;
+};
+
+export function TopBar({ title = "SPORTFREND" }: Props) {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   return (
     <View style={styles.container}>
       <View style={styles.brand}>
         <Image source={logoMark} style={styles.logo} resizeMode="contain" />
-        <Text style={styles.title}>SPORTFREND</Text>
+        <Text style={styles.title}>{title}</Text>
       </View>
       <View style={styles.actions}>
         <Pressable hitSlop={8} onPress={() => navigation.navigate("PostsFeed")} style={styles.iconButton}>
