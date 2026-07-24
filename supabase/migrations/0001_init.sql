@@ -24,6 +24,7 @@ create table if not exists public.profiles (
   push_notifications_enabled boolean not null default true,
   profile_visible boolean not null default true,
   availability_days text[] not null default '{}',
+  expo_push_token text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -38,6 +39,12 @@ create table if not exists public.profiles (
 -- an existing table's constraint either - run
 -- supabase/migrations/0010_profiles_level_gemiddeld.sql to add 'gemiddeld'
 -- and rename 'competitief' to 'expert' on an existing database.
+--
+-- And expo_push_token (for push notifications) needs
+-- supabase/migrations/0011_push_notifications.sql on an existing database
+-- for the same reason - that file also sets up the database webhooks that
+-- actually send the notifications, which 0001 intentionally does not
+-- (they embed a project-specific secret, see that file's own comments).
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- swipes: every like/skip a user performs on another profile

@@ -124,6 +124,62 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
 Alle tabellen hebben Row Level Security policies zodat gebruikers alleen hun
 eigen data kunnen wijzigen en alleen berichten van hun eigen matches kunnen lezen.
 
+## Pushmeldingen (Expo Notifications)
+
+Na inloggen/registreren vraagt de app om toestemming voor pushmeldingen
+(`lib/notifications.ts`, aangeroepen vanuit `lib/AuthContext.tsx` zodra er
+een echte sessie is - niet bij elke token refresh) en slaat het
+apparaat-token op in `profiles.expo_push_token`. Twee database webhooks
+(Postgres-triggers op `messages` en `matches`, zie
+`supabase/migrations/0011_push_notifications.sql`) roepen bij elke nieuwe
+rij een Edge Function aan (`send-message-push` / `send-match-push`) die de
+Expo Push API aanroept. Beide functies respecteren de
+"Pushmeldingen"-schakelaar in Instellingen (`profiles.push_notifications_enabled`)
+- staat die uit, dan wordt er voor die gebruiker niets verstuurd.
+
+**Belangrijke beperking: Expo Go ondersteunt sinds SDK 53 geen remote
+pushmeldingen meer**, op geen van beide platforms - Expo Go is één
+gedeelde app en kan daarom geen los push-certificaat per ontwikkelaars-app
+meer hebben. `registerForPushNotificationsAsync()` herkent dit en slaat de
+registratie over (met een duidelijke log-regel) in plaats van te crashen,
+dus de rest van de app blijft gewoon werken in Expo Go zoals de rest van
+dit project tot nu toe getest is. Om een écht werkend push-token te krijgen
+en een melding te ontvangen, is een **custom development build** nodig
+(`eas build --profile development`), geen Expo Go.
+
+**Handmatige stappen die jij zelf moet zetten:**
+
+1. **Deploy de twee Edge Functions** met de Supabase CLI:
+   ```bash
+   supabase functions deploy send-message-push --no-verify-jwt
+   supabase functions deploy send-match-push --no-verify-jwt
+   ```
+   (`--no-verify-jwt` omdat deze functies worden aangeroepen door een
+   database-trigger, niet door een ingelogde gebruiker - er is dus geen
+   gebruikers-JWT om te verifiëren. De functies controleren in plaats
+   daarvan zelf een gedeeld geheim, zie stap 2.)
+2. **Zet een gedeeld geheim** dat de trigger en de functies gebruiken om
+   elkaar te vertrouwen:
+   ```bash
+   openssl rand -hex 32
+   supabase secrets set DB_WEBHOOK_SECRET=<de gegenereerde waarde>
+   ```
+3. **Voer de trigger-SQL uit** in de Supabase SQL Editor: open
+   `supabase/migrations/0011_push_notifications.sql`, vervang beide
+   `REPLACE_WITH_YOUR_DB_WEBHOOK_SECRET`-plekken door dezelfde waarde als
+   stap 2, en voer het bestand uit. (Gebruikt
+   `supabase_functions.http_request` - hetzelfde mechanisme als de
+   Database Webhooks-UI in het dashboard. Werkt dat om wat voor reden dan
+   ook niet, maak dan dezelfde twee webhooks handmatig aan via
+   **Database → Webhooks** in het dashboard, gericht op dezelfde
+   function-URLs en header.)
+4. **Optioneel: `EXPO_ACCESS_TOKEN`** - alleen nodig als je Expo's
+   "enhanced push security" hebt ingeschakeld voor dit project
+   (Expo-dashboard → project settings). Zo niet, hoeft dit niet gezet te
+   worden; de Expo Push API werkt ook zonder.
+5. **Test pas echt via een development build**, niet via Expo Go (zie de
+   beperking hierboven).
+
 ## Klantenservice-e-mail (Resend)
 
 Het Klantenservice-contactformulier (`app/settings/SupportScreen.tsx`) doet

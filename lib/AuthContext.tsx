@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { isSupabaseConfigured, supabase } from "./supabase";
+import { registerForPushNotificationsAsync } from "./notifications";
 
 type AuthContextValue = {
   session: Session | null;
@@ -63,6 +64,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setCheckingLocation(true);
           setHasLocation(await fetchHasLocation(data.session.user.id));
           setCheckingLocation(false);
+          // Fire-and-forget: a permission prompt shouldn't hold up the
+          // app's own loading state, and a denial/failure here isn't
+          // fatal to anything else.
+          registerForPushNotificationsAsync(data.session.user.id);
         }
       })
       .catch((error) => {
@@ -93,6 +98,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setHasLocation(result);
         setCheckingLocation(false);
       });
+      registerForPushNotificationsAsync(userId);
     });
 
     return () => listener.subscription.unsubscribe();
