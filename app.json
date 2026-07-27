@@ -3,6 +3,7 @@
     "name": "Sportfrend",
     "slug": "sportfrend-app",
     "version": "1.0.0",
+    "privacy": "public",
     "scheme": "sportfrend",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
