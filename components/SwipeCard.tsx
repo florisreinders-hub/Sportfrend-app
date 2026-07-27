@@ -1,24 +1,30 @@
 import React, { useRef } from "react";
-import { Animated, Image, PanResponder, StyleSheet, Text, View, Dimensions } from "react-native";
+import { Animated, Image, PanResponder, Pressable, StyleSheet, Text, View, Dimensions } from "react-native";
 import { fonts, fontSizes, radii, spacing } from "@/constants/theme";
-import { Profile } from "@/lib/api";
+import { calculateAge, Profile } from "@/lib/api";
 import { sportPhotoPlaceholder } from "@/constants/placeholders";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.28;
+// Below this, a touch is treated as a tap (opens the profile) rather than a
+// drag (swipes the card) - lets both gestures live on the same card.
+const DRAG_CLAIM_THRESHOLD = 6;
 
 type Props = {
   profile: Profile;
   onSwiped: (direction: "like" | "skip") => void;
+  onPress?: () => void;
   isTop: boolean;
 };
 
-export function SwipeCard({ profile, onSwiped, isTop }: Props) {
+export function SwipeCard({ profile, onSwiped, onPress, isTop }: Props) {
   const position = useRef(new Animated.ValueXY()).current;
 
   const panResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: () => isTop,
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, gesture) =>
+        isTop && (Math.abs(gesture.dx) > DRAG_CLAIM_THRESHOLD || Math.abs(gesture.dy) > DRAG_CLAIM_THRESHOLD),
       onPanResponderMove: (_, gesture) => {
         position.setValue({ x: gesture.dx, y: gesture.dy });
       },
@@ -51,26 +57,26 @@ export function SwipeCard({ profile, onSwiped, isTop }: Props) {
     ? { transform: [{ translateX: position.x }, { translateY: position.y }, { rotate }] }
     : undefined;
 
-  const age = profile.birthdate
-    ? Math.floor((Date.now() - new Date(profile.birthdate).getTime()) / (365.25 * 24 * 3600 * 1000))
-    : undefined;
+  const age = calculateAge(profile.birthdate);
 
   return (
     <Animated.View
       style={[styles.card, cardStyle]}
       {...(isTop ? panResponder.panHandlers : {})}
     >
-      <Image
-        source={{ uri: profile.photo_url ?? sportPhotoPlaceholder(profile.id) }}
-        style={styles.photo}
-      />
-      <View style={styles.overlay}>
-        <Text style={styles.overlayText}>Naam:{profile.full_name ?? "Onbekend"}</Text>
-        {age ? <Text style={styles.overlayText}>Leeftijd:{age}</Text> : null}
-        <Text style={styles.overlayText}>Sport:{profile.sport ?? "-"}</Text>
-        <Text style={styles.overlayText}>Locatie:{profile.city ?? "-"}</Text>
-        <Text style={styles.overlayText}>Niveau: {profile.level ?? "-"}</Text>
-      </View>
+      <Pressable onPress={onPress} disabled={!isTop} style={styles.pressable}>
+        <Image
+          source={{ uri: profile.photo_url ?? sportPhotoPlaceholder(profile.id) }}
+          style={styles.photo}
+        />
+        <View style={styles.overlay}>
+          <Text style={styles.overlayText}>Naam:{profile.full_name ?? "Onbekend"}</Text>
+          {age != null ? <Text style={styles.overlayText}>Leeftijd:{age}</Text> : null}
+          <Text style={styles.overlayText}>Sport:{profile.sport ?? "-"}</Text>
+          <Text style={styles.overlayText}>Locatie:{profile.city ?? "-"}</Text>
+          <Text style={styles.overlayText}>Niveau: {profile.level ?? "-"}</Text>
+        </View>
+      </Pressable>
     </Animated.View>
   );
 }
@@ -83,6 +89,9 @@ const styles = StyleSheet.create({
     borderRadius: radii.xl,
     overflow: "hidden",
     backgroundColor: "#ddd",
+  },
+  pressable: {
+    flex: 1,
   },
   photo: {
     width: "100%",

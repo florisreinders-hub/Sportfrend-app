@@ -10,7 +10,7 @@ import { BottomNav } from "@/components/BottomNav";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { Profile } from "@/lib/api";
+import { calculateAge, getDataErrorMessage, Profile } from "@/lib/api";
 import { avatarPlaceholder, sportPhotoPlaceholder } from "@/constants/placeholders";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Profile">;
@@ -19,18 +19,24 @@ export default function ProfileScreen({ navigation }: Props) {
   const { session } = useAuth();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
       if (!session?.user) return;
       setLoading(true);
+      setError(null);
       supabase
         .from("profiles")
         .select("*")
         .eq("id", session.user.id)
         .maybeSingle()
-        .then(({ data }) => {
-          setProfile(data as Profile | null);
+        .then(({ data, error: fetchError }) => {
+          if (fetchError) {
+            setError(getDataErrorMessage(fetchError));
+          } else {
+            setProfile(data as Profile | null);
+          }
           setLoading(false);
         });
     }, [session?.user])
@@ -42,6 +48,8 @@ export default function ProfileScreen({ navigation }: Props) {
 
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: spacing.xl }} />
+      ) : error ? (
+        <Text style={styles.errorText}>{error}</Text>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           <Pressable style={styles.editButton} onPress={() => navigation.navigate("EditProfile")}>
@@ -56,7 +64,9 @@ export default function ProfileScreen({ navigation }: Props) {
             />
             <View>
               <Text style={styles.name}>{profile?.full_name ?? "Jouw naam"}</Text>
-              {profile?.birthdate ? <Text style={styles.age}>Leeftijd {profile.birthdate}</Text> : null}
+              {calculateAge(profile?.birthdate) != null ? (
+                <Text style={styles.age}>Leeftijd {calculateAge(profile?.birthdate)}</Text>
+              ) : null}
             </View>
           </View>
 
@@ -88,6 +98,14 @@ export default function ProfileScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   content: {
     padding: spacing.md,
+  },
+  errorText: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.danger,
+    textAlign: "center",
+    marginTop: spacing.xl,
+    paddingHorizontal: spacing.lg,
   },
   editButton: {
     alignSelf: "flex-end",

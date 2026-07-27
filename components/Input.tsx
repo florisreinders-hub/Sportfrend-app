@@ -1,4 +1,4 @@
-import React from "react";
+import React, { forwardRef } from "react";
 import { StyleSheet, Text, TextInput, TextInputProps, View } from "react-native";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 
@@ -7,11 +7,12 @@ type Props = TextInputProps & {
   error?: string;
 };
 
-export function Input({ label, error, style, ...rest }: Props) {
+export const Input = forwardRef<TextInput, Props>(function Input({ label, error, style, ...rest }, ref) {
   return (
     <View style={styles.wrapper}>
       {label ? <Text style={styles.label}>{label}</Text> : null}
       <TextInput
+        ref={ref}
         placeholderTextColor={colors.textSecondary}
         style={[styles.input, error ? styles.inputError : null, style]}
         {...rest}
@@ -19,7 +20,7 @@ export function Input({ label, error, style, ...rest }: Props) {
       {error ? <Text style={styles.error}>{error}</Text> : null}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   wrapper: {

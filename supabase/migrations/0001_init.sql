@@ -13,7 +13,7 @@ create table if not exists public.profiles (
   gender text check (gender in ('man', 'vrouw', 'anders')),
   bio text,
   sport text,
-  level text check (level in ('beginner', 'gevorderd', 'competitief')),
+  level text check (level in ('beginner', 'gemiddeld', 'gevorderd', 'expert')),
   city text,
   latitude double precision,
   longitude double precision,
@@ -21,9 +21,30 @@ create table if not exists public.profiles (
   avatar_url text,
   photo_url text,
   is_onboarded boolean default false,
+  push_notifications_enabled boolean not null default true,
+  profile_visible boolean not null default true,
+  availability_days text[] not null default '{}',
+  expo_push_token text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Note: if public.profiles already existed in your database from before
+-- the three columns above were added to this file, the `create table if
+-- not exists` above is a no-op and won't add them - run
+-- supabase/migrations/0005_profile_settings.sql to patch those.
+--
+-- Similarly, the level check constraint above (an inline `create table`
+-- constraint, applied only when the table is first created) won't update
+-- an existing table's constraint either - run
+-- supabase/migrations/0010_profiles_level_gemiddeld.sql to add 'gemiddeld'
+-- and rename 'competitief' to 'expert' on an existing database.
+--
+-- And expo_push_token (for push notifications) needs
+-- supabase/migrations/0011_push_notifications.sql on an existing database
+-- for the same reason - that file also sets up the database webhooks that
+-- actually send the notifications, which 0001 intentionally does not
+-- (they embed a project-specific secret, see that file's own comments).
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- swipes: every like/skip a user performs on another profile
@@ -68,9 +89,19 @@ create table if not exists public.posts (
   author_id uuid not null references public.profiles (id) on delete cascade,
   body text not null,
   image_url text,
+  sport text,
   event_date date,
+  event_time text,
+  location text,
   created_at timestamptz not null default now()
 );
+
+-- Note: if public.posts already existed in your database from before the
+-- sport/event_time/location columns above were added to this file, the
+-- `create table if not exists` above is a no-op and won't add them. The
+-- app itself only writes to sport and event_date - run
+-- supabase/migrations/0004_posts_sport_column_fix.sql to patch those (it
+-- repeats what 0002/0003 already added, if those never actually got run).
 
 create table if not exists public.post_likes (
   post_id uuid not null references public.posts (id) on delete cascade,
@@ -86,13 +117,31 @@ create table if not exists public.subscriptions (
   id uuid primary key default uuid_generate_v4(),
   user_id uuid not null references public.profiles (id) on delete cascade,
   plan text not null check (plan in ('basis', 'premium', 'elite')) default 'basis',
-  status text not null check (status in ('active', 'canceled', 'past_due')) default 'active',
+  -- 'pending' = chosen on the Pricing screen, checkout not completed yet -
+  -- distinct from 'active' so a plan selection is never mistaken for a
+  -- real (even demo) payment. See supabase/migrations/0006_subscriptions_pending_status.sql.
+  status text not null check (status in ('pending', 'active', 'canceled', 'past_due')) default 'active',
   price_cents integer not null default 0,
   current_period_end timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (user_id)
 );
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- support_requests: "Klantenservice" contact form submissions
+-- ─────────────────────────────────────────────────────────────────────────
+create table if not exists public.support_requests (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  subject text not null,
+  message text not null,
+  created_at timestamptz not null default now()
+);
+
+-- Note: if public.support_requests already existed in your database from
+-- before this table was added to this file, `create table if not exists`
+-- above is a no-op - run supabase/migrations/0008_support_requests.sql.
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- updated_at triggers
@@ -142,6 +191,7 @@ alter table public.messages enable row level security;
 alter table public.posts enable row level security;
 alter table public.post_likes enable row level security;
 alter table public.subscriptions enable row level security;
+alter table public.support_requests enable row level security;
 
 create policy "Profiles are readable by authenticated users"
   on public.profiles for select
@@ -228,8 +278,29 @@ create policy "Users can view their own subscription"
   to authenticated
   using (auth.uid() = user_id);
 
+-- selectPendingPlan()/upsertSubscription() (lib/api.ts) both .upsert() -
+-- Postgres compiles that to INSERT ... ON CONFLICT DO UPDATE, which needs
+-- INSERT privilege even when the row already exists and the statement
+-- ends up just updating it. Without this policy that upsert is blocked by
+-- RLS unconditionally - see supabase/migrations/0007_subscriptions_insert_policy.sql.
+create policy "Users can insert their own subscription"
+  on public.subscriptions for insert
+  to authenticated
+  with check (auth.uid() = user_id);
+
 create policy "Users can update their own subscription"
   on public.subscriptions for update
+  to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can insert their own support requests"
+  on public.support_requests for insert
+  to authenticated
+  with check (auth.uid() = user_id);
+
+create policy "Users can view their own support requests"
+  on public.support_requests for select
   to authenticated
   using (auth.uid() = user_id);
 
@@ -240,3 +311,39 @@ alter publication supabase_realtime add table public.messages;
 alter publication supabase_realtime add table public.matches;
 alter publication supabase_realtime add table public.posts;
 alter publication supabase_realtime add table public.post_likes;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Storage: profile photo uploads ("Profiel bewerken" screen)
+-- ─────────────────────────────────────────────────────────────────────────
+-- Note: if this project already existed before this bucket/these policies
+-- were added to this file, run
+-- supabase/migrations/0009_profile_photos_storage.sql to patch it - the
+-- statements below are otherwise identical and safe to run again.
+
+insert into storage.buckets (id, name, public)
+values ('profile-photos', 'profile-photos', true)
+on conflict (id) do nothing;
+
+drop policy if exists "Profile photos are publicly readable" on storage.objects;
+create policy "Profile photos are publicly readable"
+  on storage.objects for select
+  to public
+  using (bucket_id = 'profile-photos');
+
+drop policy if exists "Users can upload their own profile photos" on storage.objects;
+create policy "Users can upload their own profile photos"
+  on storage.objects for insert
+  to authenticated
+  with check (bucket_id = 'profile-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "Users can update their own profile photos" on storage.objects;
+create policy "Users can update their own profile photos"
+  on storage.objects for update
+  to authenticated
+  using (bucket_id = 'profile-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "Users can delete their own profile photos" on storage.objects;
+create policy "Users can delete their own profile photos"
+  on storage.objects for delete
+  to authenticated
+  using (bucket_id = 'profile-photos' and (storage.foldername(name))[1] = auth.uid()::text);

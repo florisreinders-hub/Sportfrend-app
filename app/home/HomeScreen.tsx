@@ -8,48 +8,79 @@ import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { SwipeCard } from "@/components/SwipeCard";
 import { Button } from "@/components/Button";
+import { PostComposer } from "@/components/PostComposer";
+import { PostCard } from "@/components/PostCard";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
-import { fetchConnections, fetchDiscoverProfiles, recordSwipe, Profile } from "@/lib/api";
+import { useDiscoverFilters } from "@/lib/FilterContext";
+import {
+  fetchConnections,
+  fetchDiscoverProfiles,
+  fetchPosts,
+  getDataErrorMessage,
+  recordSwipe,
+  toggleLike,
+  Profile,
+} from "@/lib/api";
 import { avatarPlaceholder } from "@/constants/placeholders";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Home">;
 
 export default function HomeScreen({ navigation, route }: Props) {
   const { session } = useAuth();
+  const { filters } = useDiscoverFilters();
   const [tab, setTab] = useState<"ontdekken" | "connecties">(route.params?.tab ?? "ontdekken");
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [connections, setConnections] = useState<any[]>([]);
+  const [posts, setPosts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const loadDiscover = useCallback(async () => {
     if (!session?.user) return;
     setLoading(true);
+    setError(null);
     try {
-      const data = await fetchDiscoverProfiles(session.user.id);
+      const data = await fetchDiscoverProfiles(session.user.id, filters);
       setProfiles(data);
+    } catch (e) {
+      setError(getDataErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  }, [session?.user]);
+  }, [session?.user, filters]);
 
-  const loadConnections = useCallback(async () => {
+  const loadPosts = useCallback(async () => {
+    setPosts(await fetchPosts());
+  }, []);
+
+  const loadConnectiesTab = useCallback(async () => {
     if (!session?.user) return;
     setLoading(true);
+    setError(null);
     try {
-      const data = await fetchConnections(session.user.id);
-      setConnections(data);
+      const [connectionsData] = await Promise.all([fetchConnections(session.user.id), loadPosts()]);
+      setConnections(connectionsData);
+    } catch (e) {
+      setError(getDataErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  }, [session?.user]);
+  }, [session?.user, loadPosts]);
 
   useFocusEffect(
     useCallback(() => {
       if (tab === "ontdekken") loadDiscover();
-      else loadConnections();
-    }, [tab, loadDiscover, loadConnections])
+      else loadConnectiesTab();
+    }, [tab, loadDiscover, loadConnectiesTab])
   );
+
+  const onLikePost = async (post: any) => {
+    if (!session?.user) return;
+    const liked = post.post_likes?.some((l: any) => l.user_id === session.user.id);
+    await toggleLike(post.id, session.user.id, liked);
+    loadPosts();
+  };
 
   const handleSwipe = async (profile: Profile, direction: "like" | "skip") => {
     setProfiles((prev) => prev.filter((p) => p.id !== profile.id));
@@ -58,6 +89,7 @@ export default function HomeScreen({ navigation, route }: Props) {
       const result = await recordSwipe(session.user.id, profile.id, direction);
       if (result.matched) {
         navigation.navigate("Match", {
+          matchId: result.matchId,
           matchedName: profile.full_name ?? "Sportmaatje",
           matchedPhoto: profile.photo_url ?? avatarPlaceholder(profile.id),
         });
@@ -87,6 +119,8 @@ export default function HomeScreen({ navigation, route }: Props) {
         <View style={styles.deckArea}>
           {loading ? (
             <ActivityIndicator color={colors.primary} size="large" />
+          ) : error ? (
+            <Text style={styles.empty}>{error}</Text>
           ) : profiles.length === 0 ? (
             <Text style={styles.empty}>Geen sporters gevonden. Pas je filters aan of kom later terug.</Text>
           ) : (
@@ -101,6 +135,7 @@ export default function HomeScreen({ navigation, route }: Props) {
                       profile={profile}
                       isTop={index === arr.length - 1}
                       onSwiped={(direction) => handleSwipe(profile, direction)}
+                      onPress={() => navigation.navigate("SporterProfile", { sporterId: profile.id })}
                     />
                   ))}
               </View>
@@ -124,36 +159,56 @@ export default function HomeScreen({ navigation, route }: Props) {
       ) : (
         <FlatList
           contentContainerStyle={styles.connectionsList}
-          data={connections}
+          data={posts}
           keyExtractor={(item) => item.id}
+          ListHeaderComponent={
+            <>
+              <PostComposer style={styles.composer} />
+              {connections.length > 0 ? (
+                <View style={styles.connectionsSection}>
+                  <Text style={styles.sectionTitle}>CONNECTIES</Text>
+                  {connections.map((item) => {
+                    const other = item.user_a_id === session?.user?.id ? item.user_b : item.user_a;
+                    return (
+                      <Pressable
+                        key={item.id}
+                        style={styles.connectionRow}
+                        onPress={() =>
+                          navigation.navigate("ChatDetail", {
+                            chatId: item.id,
+                            name: other?.full_name ?? "Sportmaatje",
+                            photo: other?.photo_url ?? avatarPlaceholder(other?.id ?? item.id),
+                          })
+                        }
+                      >
+                        <Image
+                          source={{ uri: other?.photo_url ?? avatarPlaceholder(other?.id ?? item.id) }}
+                          style={styles.avatar}
+                        />
+                        <View>
+                          <Text style={styles.connectionName}>{other?.full_name ?? "Sportmaatje"}</Text>
+                          <Text style={styles.connectionMeta}>{other?.sport ?? "Sport onbekend"}</Text>
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : null}
+              <Text style={styles.sectionTitle}>BERICHTEN</Text>
+            </>
+          }
           ListEmptyComponent={
             loading ? (
               <ActivityIndicator color={colors.primary} size="large" />
+            ) : error ? (
+              <Text style={styles.empty}>{error}</Text>
             ) : (
-              <Text style={styles.empty}>Nog geen connecties. Swipe rechts om te connecten!</Text>
+              <Text style={styles.empty}>Nog geen berichten. Plaats de eerste!</Text>
             )
           }
-          renderItem={({ item }) => {
-            const other = item.user_a_id === session?.user?.id ? item.user_b : item.user_a;
-            return (
-              <Pressable
-                style={styles.connectionRow}
-                onPress={() =>
-                  navigation.navigate("ChatDetail", {
-                    chatId: item.id,
-                    name: other?.full_name ?? "Sportmaatje",
-                    photo: other?.photo_url ?? avatarPlaceholder(other?.id ?? item.id),
-                  })
-                }
-              >
-                <Image source={{ uri: other?.photo_url ?? avatarPlaceholder(other?.id ?? item.id) }} style={styles.avatar} />
-                <View>
-                  <Text style={styles.connectionName}>{other?.full_name ?? "Sportmaatje"}</Text>
-                  <Text style={styles.connectionMeta}>{other?.sport ?? "Sport onbekend"}</Text>
-                </View>
-              </Pressable>
-            );
-          }}
+          renderItem={({ item }) => (
+            <PostCard post={item} currentUserId={session?.user?.id} onToggleLike={onLikePost} />
+          )}
         />
       )}
 
@@ -222,6 +277,23 @@ const styles = StyleSheet.create({
   connectionsList: {
     padding: spacing.md,
     gap: spacing.sm,
+  },
+  // PostComposer already carries its own marginHorizontal: spacing.md, which
+  // would double up with connectionsList's own horizontal padding above -
+  // zero it out here and add the bottom gap instead, since it sits as this
+  // list's ListHeaderComponent rather than a sibling with its own margins.
+  composer: {
+    marginHorizontal: 0,
+    marginBottom: spacing.sm,
+  },
+  connectionsSection: {
+    marginBottom: spacing.sm,
+  },
+  sectionTitle: {
+    fontFamily: fonts.display,
+    fontSize: fontSizes.lg,
+    color: colors.black,
+    marginBottom: spacing.xs,
   },
   connectionRow: {
     flexDirection: "row",

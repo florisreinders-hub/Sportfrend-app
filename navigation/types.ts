@@ -1,11 +1,12 @@
 export type RootStackParamList = {
   Login: undefined;
   Register: undefined;
-  RegisterDetails: { email: string; password: string };
+  RegisterDetails: undefined;
+  EmailConfirmed: undefined;
   ForgotPassword: undefined;
   LocationSetup: undefined;
   Home: { tab?: "ontdekken" | "connecties" } | undefined;
-  Match: { matchedName: string; matchedPhoto: string };
+  Match: { matchId: string; matchedName: string; matchedPhoto: string };
   Filter: undefined;
   SporterProfile: { sporterId: string };
   Profile: undefined;
@@ -13,7 +14,8 @@ export type RootStackParamList = {
   Menu: undefined;
   ChatList: undefined;
   ChatDetail: { chatId: string; name: string; photo: string };
-  NewPost: undefined;
+  PostsFeed: undefined;
+  NewPost: { eventDate?: string } | undefined;
   Settings: undefined;
   Pricing: undefined;
   Payment: { plan: "premium" | "elite" };

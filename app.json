@@ -3,6 +3,8 @@
     "name": "Sportfrend",
     "slug": "sportfrend-app",
     "version": "1.0.0",
+    "privacy": "public",
+    "scheme": "sportfrend",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -11,7 +13,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#FFFFFF"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sportfrend.app",
@@ -25,7 +29,10 @@
         "backgroundColor": "#FFFFFF"
       },
       "package": "com.sportfrend.app",
-      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -36,7 +43,20 @@
         {
           "locationAlwaysAndWhenInUsePermission": "Sportfrend gebruikt je locatie om sportmaatjes in de buurt te vinden."
         }
-      ]
-    ]
+      ],
+      "expo-notifications"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "f5b98495-a6cb-429f-89e3-6ffd2e522e23"
+      }
+    },
+    "owner": "sportfrendofficial",
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/f5b98495-a6cb-429f-89e3-6ffd2e522e23"
+    }
   }
 }

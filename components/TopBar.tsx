@@ -1,22 +1,29 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { RootStackParamList } from "@/navigation/types";
 
-export function TopBar() {
+const logoMark = require("@/assets/logo-mark.png");
+
+type Props = {
+  /** Defaults to the "SPORTFREND" brand wordmark - some screens (e.g. Betalen, Figma node 2003:3596) show a page title here instead. */
+  title?: string;
+};
+
+export function TopBar({ title = "SPORTFREND" }: Props) {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   return (
     <View style={styles.container}>
       <View style={styles.brand}>
-        <Ionicons name="leaf" size={30} color={colors.primary} />
-        <Text style={styles.title}>SPORTFREND</Text>
+        <Image source={logoMark} style={styles.logo} resizeMode="contain" />
+        <Text style={styles.title}>{title}</Text>
       </View>
       <View style={styles.actions}>
-        <Pressable hitSlop={8} onPress={() => navigation.navigate("ChatList")} style={styles.iconButton}>
+        <Pressable hitSlop={8} onPress={() => navigation.navigate("PostsFeed")} style={styles.iconButton}>
           <Ionicons name="notifications-outline" size={22} color={colors.black} />
         </Pressable>
         <Pressable hitSlop={8} onPress={() => navigation.navigate("ChatList")} style={styles.iconButton}>
@@ -39,6 +46,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xs,
+  },
+  logo: {
+    width: 26,
+    height: 30,
   },
   title: {
     fontFamily: fonts.display,

@@ -1,30 +1,44 @@
 import React, { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Slider from "@react-native-community/slider";
+import { Ionicons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { Button } from "@/components/Button";
+import { SelectModal } from "@/components/SelectModal";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
-
-const SPORTS = ["Golf", "Tennis", "Padel", "Hardlopen", "Fitness"];
-const LEVELS = ["Beginner", "Gevorderd", "Competitief"];
+import { DEFAULT_FILTERS, useDiscoverFilters } from "@/lib/FilterContext";
+import { SPORT_OPTIONS } from "@/constants/sports";
+import { LEVEL_OPTIONS } from "@/constants/levels";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Filter">;
 
 export default function FilterScreen({ navigation }: Props) {
-  const [age, setAge] = useState(90);
-  const [distance, setDistance] = useState(150);
-  const [sportIndex, setSportIndex] = useState(0);
-  const [levelIndex, setLevelIndex] = useState(0);
+  const { filters, setFilters, resetFilters } = useDiscoverFilters();
+  const [maxAge, setMaxAge] = useState(filters.maxAge);
+  const [distanceKm, setDistanceKm] = useState(filters.distanceKm);
+  const [sport, setSport] = useState<string | null>(filters.sport);
+  const [level, setLevel] = useState<string | null>(filters.level);
+  const [sportPickerVisible, setSportPickerVisible] = useState(false);
+  const [levelPickerVisible, setLevelPickerVisible] = useState(false);
+
+  const sportLabel = SPORT_OPTIONS.find((o) => o.value === sport)?.label ?? "Alle sporten";
+  const levelLabel = LEVEL_OPTIONS.find((o) => o.value === level)?.label ?? "Alle niveaus";
+
+  const apply = () => {
+    setFilters({ maxAge, distanceKm, sport, level });
+    navigation.navigate("Home", { tab: "ontdekken" });
+  };
 
   const reset = () => {
-    setAge(90);
-    setDistance(150);
-    setSportIndex(0);
-    setLevelIndex(0);
+    resetFilters();
+    setMaxAge(DEFAULT_FILTERS.maxAge);
+    setDistanceKm(DEFAULT_FILTERS.distanceKm);
+    setSport(DEFAULT_FILTERS.sport);
+    setLevel(DEFAULT_FILTERS.level);
   };
 
   return (
@@ -36,44 +50,52 @@ export default function FilterScreen({ navigation }: Props) {
       <View style={styles.content}>
         <View style={styles.row}>
           <Text style={styles.label}>LEEFTIJD</Text>
-          <Text style={styles.value}>18-{age}</Text>
+          <Text style={styles.value}>18-{Math.round(maxAge)}</Text>
         </View>
-        <SliderControl value={age} minimumValue={18} maximumValue={90} onValueChange={setAge} />
+        <SliderControl value={maxAge} minimumValue={18} maximumValue={90} onValueChange={setMaxAge} />
 
         <View style={styles.row}>
           <Text style={styles.label}>AFSTAND</Text>
-          <Text style={styles.value}>{distance}KM</Text>
+          <Text style={styles.value}>{Math.round(distanceKm)}KM</Text>
         </View>
-        <SliderControl value={distance} minimumValue={1} maximumValue={150} onValueChange={setDistance} />
+        <SliderControl value={distanceKm} minimumValue={1} maximumValue={150} onValueChange={setDistanceKm} />
 
         <View style={styles.row}>
           <Text style={styles.label}>SPORT</Text>
-          <Pressable
-            style={styles.pill}
-            onPress={() => setSportIndex((sportIndex + 1) % SPORTS.length)}
-          >
-            <Text style={styles.pillText}>{SPORTS[sportIndex].toUpperCase()}</Text>
+          <Pressable style={styles.pill} onPress={() => setSportPickerVisible(true)}>
+            <Text style={styles.pillText}>{sportLabel.toUpperCase()}</Text>
+            <Ionicons name="chevron-down" size={16} color={colors.black} />
           </Pressable>
         </View>
 
         <View style={styles.row}>
           <Text style={styles.label}>NIVEAU</Text>
-          <Pressable
-            style={styles.pill}
-            onPress={() => setLevelIndex((levelIndex + 1) % LEVELS.length)}
-          >
-            <Text style={styles.pillText}>{LEVELS[levelIndex].toUpperCase()}</Text>
+          <Pressable style={styles.pill} onPress={() => setLevelPickerVisible(true)}>
+            <Text style={styles.pillText}>{levelLabel.toUpperCase()}</Text>
+            <Ionicons name="chevron-down" size={16} color={colors.black} />
           </Pressable>
         </View>
 
-        <Text style={[styles.label, styles.availabilityLabel]}>BESCHIKBAARHEID</Text>
-        <Text style={styles.availabilityHint}>
-          Kies dagen waarop je beschikbaar bent in je profielinstellingen.
-        </Text>
-
-        <Button label="Reset filter" onPress={reset} style={styles.reset} />
-        <Button label="Toepassen" onPress={() => navigation.navigate("Home")} variant="outline" style={styles.apply} />
+        <Button label="Toepassen" onPress={apply} style={styles.apply} />
+        <Button label="Reset filter" onPress={reset} variant="outline" style={styles.reset} />
       </View>
+
+      <SelectModal
+        visible={sportPickerVisible}
+        title="Kies een sport"
+        options={SPORT_OPTIONS}
+        selectedValue={sport}
+        onSelect={setSport}
+        onClose={() => setSportPickerVisible(false)}
+      />
+      <SelectModal
+        visible={levelPickerVisible}
+        title="Kies een niveau"
+        options={LEVEL_OPTIONS}
+        selectedValue={level}
+        onSelect={setLevel}
+        onClose={() => setLevelPickerVisible(false)}
+      />
 
       <BottomNav active="filter" />
     </ScreenContainer>
@@ -97,10 +119,11 @@ function SliderControl({
       value={value}
       minimumValue={minimumValue}
       maximumValue={maximumValue}
+      step={1}
       minimumTrackTintColor={colors.primary}
       maximumTrackTintColor={colors.border}
       thumbTintColor={colors.black}
-      onValueChange={onValueChange}
+      onValueChange={(v) => onValueChange(Math.round(v))}
     />
   );
 }
@@ -142,6 +165,9 @@ const styles = StyleSheet.create({
     height: 32,
   },
   pill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
     backgroundColor: colors.surface,
     borderRadius: radii.sm,
     paddingVertical: spacing.xs,
@@ -152,19 +178,10 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     color: colors.black,
   },
-  availabilityLabel: {
-    marginTop: spacing.lg,
-  },
-  availabilityHint: {
-    fontFamily: fonts.body,
-    fontSize: fontSizes.sm,
-    color: colors.textSecondary,
-    marginTop: spacing.xs,
-  },
-  reset: {
+  apply: {
     marginTop: spacing.xl,
   },
-  apply: {
+  reset: {
     marginTop: spacing.sm,
   },
 });
