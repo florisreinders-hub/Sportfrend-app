@@ -129,6 +129,32 @@ create table if not exists public.subscriptions (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────
+-- reports / blocks: moderation (see supabase/migrations/0012_moderation_reports_blocks.sql
+-- for the full standalone migration, incl. the RLS changes on profiles/
+-- matches/messages that make blocking actually take effect - not repeated
+-- inline here since those are `alter policy`/`drop + create` statements
+-- against policies defined further down this same file)
+-- ─────────────────────────────────────────────────────────────────────────
+create table if not exists public.reports (
+  id uuid primary key default uuid_generate_v4(),
+  reporter_id uuid not null references public.profiles (id) on delete cascade,
+  reported_id uuid not null references public.profiles (id) on delete cascade,
+  reason text not null,
+  details text,
+  match_id uuid references public.matches (id) on delete set null,
+  status text not null default 'open' check (status in ('open', 'reviewing', 'resolved', 'dismissed')),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.blocks (
+  id uuid primary key default uuid_generate_v4(),
+  blocker_id uuid not null references public.profiles (id) on delete cascade,
+  blocked_id uuid not null references public.profiles (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (blocker_id, blocked_id)
+);
+
+-- ─────────────────────────────────────────────────────────────────────────
 -- support_requests: "Klantenservice" contact form submissions
 -- ─────────────────────────────────────────────────────────────────────────
 create table if not exists public.support_requests (
@@ -192,11 +218,23 @@ alter table public.posts enable row level security;
 alter table public.post_likes enable row level security;
 alter table public.subscriptions enable row level security;
 alter table public.support_requests enable row level security;
+alter table public.reports enable row level security;
+alter table public.blocks enable row level security;
 
+-- Blocked users are hidden from each other everywhere profiles are read
+-- (Ontdekken, connecties, posts' author embed, ...) except a user can
+-- always read their own row.
 create policy "Profiles are readable by authenticated users"
   on public.profiles for select
   to authenticated
-  using (true);
+  using (
+    auth.uid() = id
+    or not exists (
+      select 1 from public.blocks b
+      where (b.blocker_id = auth.uid() and b.blocked_id = profiles.id)
+         or (b.blocker_id = profiles.id and b.blocked_id = auth.uid())
+    )
+  );
 
 create policy "Users can update their own profile"
   on public.profiles for update
@@ -214,10 +252,21 @@ create policy "Users manage their own swipes"
   using (auth.uid() = swiper_id)
   with check (auth.uid() = swiper_id);
 
+-- A blocked match is hidden from both participants - this also hides its
+-- messages, since "Match participants can read messages" below re-checks
+-- this same matches row (itself subject to this policy) via its EXISTS
+-- subquery.
 create policy "Users can view their own matches"
   on public.matches for select
   to authenticated
-  using (auth.uid() = user_a_id or auth.uid() = user_b_id);
+  using (
+    (auth.uid() = user_a_id or auth.uid() = user_b_id)
+    and not exists (
+      select 1 from public.blocks b
+      where (b.blocker_id = matches.user_a_id and b.blocked_id = matches.user_b_id)
+         or (b.blocker_id = matches.user_b_id and b.blocked_id = matches.user_a_id)
+    )
+  );
 
 create policy "Matches are created by the matching function"
   on public.matches for insert
@@ -244,6 +293,11 @@ create policy "Match participants can send messages"
       select 1 from public.matches m
       where m.id = match_id
         and (m.user_a_id = auth.uid() or m.user_b_id = auth.uid())
+        and not exists (
+          select 1 from public.blocks b
+          where (b.blocker_id = m.user_a_id and b.blocked_id = m.user_b_id)
+             or (b.blocker_id = m.user_b_id and b.blocked_id = m.user_a_id)
+        )
     )
   );
 
@@ -303,6 +357,31 @@ create policy "Users can view their own support requests"
   on public.support_requests for select
   to authenticated
   using (auth.uid() = user_id);
+
+create policy "Users can create their own reports"
+  on public.reports for insert
+  to authenticated
+  with check (auth.uid() = reporter_id);
+
+create policy "Users can view their own reports"
+  on public.reports for select
+  to authenticated
+  using (auth.uid() = reporter_id);
+
+create policy "Users can create their own blocks"
+  on public.blocks for insert
+  to authenticated
+  with check (auth.uid() = blocker_id);
+
+create policy "Users can view their own blocks"
+  on public.blocks for select
+  to authenticated
+  using (auth.uid() = blocker_id);
+
+create policy "Users can remove their own blocks"
+  on public.blocks for delete
+  to authenticated
+  using (auth.uid() = blocker_id);
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- Realtime: broadcast changes on messages and matches for the chat screens

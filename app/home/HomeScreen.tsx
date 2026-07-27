@@ -92,6 +92,7 @@ export default function HomeScreen({ navigation, route }: Props) {
           matchId: result.matchId,
           matchedName: profile.full_name ?? "Sportmaatje",
           matchedPhoto: profile.photo_url ?? avatarPlaceholder(profile.id),
+          matchedUserId: profile.id,
         });
       }
     } catch (e) {
@@ -178,6 +179,7 @@ export default function HomeScreen({ navigation, route }: Props) {
                             chatId: item.id,
                             name: other?.full_name ?? "Sportmaatje",
                             photo: other?.photo_url ?? avatarPlaceholder(other?.id ?? item.id),
+                            otherUserId: other?.id ?? item.id,
                           })
                         }
                       >

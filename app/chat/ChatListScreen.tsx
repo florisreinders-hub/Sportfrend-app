@@ -71,6 +71,7 @@ export default function ChatListScreen({ navigation }: Props) {
       chatId: conversation.id,
       name: conversation.otherUser?.full_name ?? "Sportmaatje",
       photo: conversation.otherUser?.photo_url ?? avatarPlaceholder(conversation.otherUser?.id ?? conversation.id),
+      otherUserId: conversation.otherUser?.id ?? conversation.id,
     });
   };
 

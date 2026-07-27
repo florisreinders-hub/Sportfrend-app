@@ -482,3 +482,45 @@ export async function notifySupportRequest(subject: string, message: string) {
   });
   if (error) throw error;
 }
+
+export const REPORT_REASONS: { key: string; label: string }[] = [
+  { key: "ongepast_gedrag", label: "Ongepast gedrag" },
+  { key: "nepprofiel", label: "Nepprofiel" },
+  { key: "spam", label: "Spam" },
+  { key: "anders", label: "Anders" },
+];
+
+/**
+ * Saves a moderation report. `matchId` is only passed when reporting from a
+ * chat (ChatDetailScreen) - lets a moderator later find the conversation the
+ * report came from, left null for reports filed straight from a profile.
+ */
+export async function createReport(
+  reporterId: string,
+  reportedId: string,
+  reason: string,
+  details?: string,
+  matchId?: string
+) {
+  const { error } = await supabase.from("reports").insert({
+    reporter_id: reporterId,
+    reported_id: reportedId,
+    reason,
+    details: details?.trim() || null,
+    match_id: matchId ?? null,
+  });
+  if (error) throw error;
+}
+
+/**
+ * Blocking is one-directional to record (blocker_id/blocked_id), but its
+ * effect is symmetric: the "blocks" RLS policies added on profiles/matches/
+ * messages (0012_moderation_reports_blocks.sql) hide the other person from
+ * both sides regardless of who blocked whom.
+ */
+export async function blockUser(blockerId: string, blockedId: string) {
+  const { error } = await supabase
+    .from("blocks")
+    .upsert({ blocker_id: blockerId, blocked_id: blockedId }, { onConflict: "blocker_id,blocked_id" });
+  if (error) throw error;
+}

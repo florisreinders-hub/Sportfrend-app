@@ -6,14 +6,14 @@ export type RootStackParamList = {
   ForgotPassword: undefined;
   LocationSetup: undefined;
   Home: { tab?: "ontdekken" | "connecties" } | undefined;
-  Match: { matchId: string; matchedName: string; matchedPhoto: string };
+  Match: { matchId: string; matchedName: string; matchedPhoto: string; matchedUserId: string };
   Filter: undefined;
   SporterProfile: { sporterId: string };
   Profile: undefined;
   EditProfile: undefined;
   Menu: undefined;
   ChatList: undefined;
-  ChatDetail: { chatId: string; name: string; photo: string };
+  ChatDetail: { chatId: string; name: string; photo: string; otherUserId: string };
   PostsFeed: undefined;
   NewPost: { eventDate?: string } | undefined;
   Settings: undefined;

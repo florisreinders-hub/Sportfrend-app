@@ -19,17 +19,19 @@ import { Input } from "@/components/Input";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { fetchMessages, getDataErrorMessage, Message, sendMessage } from "@/lib/api";
+import { blockUser, fetchMessages, getDataErrorMessage, Message, sendMessage } from "@/lib/api";
+import { ReportModal } from "@/components/ReportModal";
 
 type Props = NativeStackScreenProps<RootStackParamList, "ChatDetail">;
 
 export default function ChatDetailScreen({ route, navigation }: Props) {
-  const { chatId, name, photo } = route.params;
+  const { chatId, name, photo, otherUserId } = route.params;
   const { session } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [reportVisible, setReportVisible] = useState(false);
   const listRef = useRef<FlatList>(null);
 
   const load = useCallback(async () => {
@@ -82,6 +84,37 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
     }
   };
 
+  const onBlock = () => {
+    if (!session?.user) return;
+    Alert.alert(
+      "Gebruiker blokkeren",
+      `Weet je zeker dat je ${name} wilt blokkeren? Jullie zien elkaar dan niet meer in Ontdekken en kunnen niet meer met elkaar chatten.`,
+      [
+        { text: "Annuleren", style: "cancel" },
+        {
+          text: "Blokkeren",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await blockUser(session.user.id, otherUserId);
+              navigation.goBack();
+            } catch (e) {
+              Alert.alert("Mislukt", getDataErrorMessage(e));
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const onOpenMenu = () => {
+    Alert.alert(name, undefined, [
+      { text: "Rapporteren", onPress: () => setReportVisible(true) },
+      { text: "Blokkeren", style: "destructive", onPress: onBlock },
+      { text: "Annuleren", style: "cancel" },
+    ]);
+  };
+
   return (
     <ScreenContainer withBottomPadding={false} edges={["top", "left", "right"]}>
       <View style={styles.header}>
@@ -90,8 +123,23 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
         </Pressable>
         <Image source={{ uri: photo }} style={styles.avatar} />
         <Text style={styles.name}>{name}</Text>
+        <View style={{ flex: 1 }} />
+        <Pressable onPress={onOpenMenu} hitSlop={8}>
+          <Ionicons name="ellipsis-vertical" size={22} color={colors.black} />
+        </Pressable>
       </View>
       <View style={styles.divider} />
+
+      {session?.user ? (
+        <ReportModal
+          visible={reportVisible}
+          onClose={() => setReportVisible(false)}
+          reporterId={session.user.id}
+          reportedId={otherUserId}
+          reportedName={name}
+          matchId={chatId}
+        />
+      ) : null}
 
       <KeyboardAvoidingView
         style={styles.flex}

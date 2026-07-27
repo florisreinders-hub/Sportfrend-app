@@ -120,9 +120,29 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
 - `subscriptions` — Basis / Premium / Elite abonnement per gebruiker
 - `support_requests` — ingediende Klantenservice-berichten (back-up/overzicht,
   zie ook de "Klantenservice-e-mail"-sectie hieronder)
+- `reports` / `blocks` — moderatie: rapportages en blokkades tussen gebruikers
+  (zie "Moderatie" hieronder)
 
 Alle tabellen hebben Row Level Security policies zodat gebruikers alleen hun
 eigen data kunnen wijzigen en alleen berichten van hun eigen matches kunnen lezen.
+
+## Moderatie (rapporteren & blokkeren)
+
+Op het "Sporters profiel bekijken"-scherm en in de chat (ChatDetailScreen)
+staat een "..."-knop met "Rapporteren" en "Blokkeren". Rapporteren opent een
+formulier (reden + optionele toelichting) dat een rij in `public.reports`
+opslaat (`reporter_id`, `reported_id`, `reason`, `details`, optioneel
+`match_id` bij een melding vanuit de chat, `status` default `'open'`).
+Blokkeren slaat een rij op in `public.blocks` (`blocker_id`, `blocked_id`) en
+navigeert direct terug.
+
+Een blokkade werkt via RLS-policies op bestaande tabellen, niet via
+clientcode: geblokkeerde gebruikers kunnen elkaars profiel niet meer lezen
+(verdwijnen dus uit Ontdekken), hun match (en dus ook hun berichten) wordt
+voor beiden verborgen, en nieuwe berichten tussen hen worden geweigerd. Zie
+`supabase/migrations/0012_moderation_reports_blocks.sql` voor de volledige
+SQL - draai deze migratie op je bestaande database (0001_init.sql is ook
+bijgewerkt voor nieuwe installaties).
 
 ## Pushmeldingen (Expo Notifications)
 
