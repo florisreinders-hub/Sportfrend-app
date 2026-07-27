@@ -11,10 +11,12 @@
 --   2. Generate a random secret and set it on the project:
 --        openssl rand -hex 32
 --        supabase secrets set DB_WEBHOOK_SECRET=<the value you generated>
---   3. Replace every duefdlibkeghdskongjd below with that
+--   3. Replace every REPLACE_WITH_YOUR_DB_WEBHOOK_SECRET below with that
 --      *same* value (this file is committed to the repo, so this
 --      placeholder is deliberately not a real secret - fill in your own
---      copy before running it, don't commit the real value back).
+--      copy before running it, don't commit the real value back). Leave
+--      duefdlibkeghdskongjd (the Supabase project ref, used in the
+--      function URLs below) as-is - that isn't the secret.
 --
 -- Run this via `supabase db push` or paste into the Supabase SQL editor
 -- (after editing the placeholder above). Safe to run more than once.
