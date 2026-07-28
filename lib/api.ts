@@ -58,6 +58,26 @@ export type Profile = {
   photo_url: string | null;
 };
 
+/**
+ * Every profiles column the app is allowed to read, deliberately excluding
+ * expo_push_token - that's a write-only field from the client's point of
+ * view (lib/notifications.ts upserts it, nothing in the app UI ever needs
+ * to display anyone's token, own or otherwise). Only the send-message-push/
+ * send-match-push Edge Functions read it, via the service-role key, which
+ * isn't subject to this column grant.
+ *
+ * supabase/migrations/0013_rls_security_audit_fixes.sql revokes SELECT on
+ * that column for the `authenticated` role at the database level (a stray
+ * `expo_push_token` left in a query would otherwise let any signed-in user
+ * read another user's token and, since Expo's push API accepts a token
+ * with no further auth, send that person arbitrary spoofed
+ * notifications) - every profiles query in this file and the app's screens
+ * must use this column list (or a subset of it) instead of "*" so that
+ * revoke doesn't also break reading your own profile.
+ */
+export const PROFILE_COLUMNS =
+  "id, full_name, birthdate, gender, bio, sport, level, city, latitude, longitude, search_radius_km, avatar_url, photo_url, is_onboarded, push_notifications_enabled, profile_visible, availability_days, created_at, updated_at";
+
 function haversineDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -124,7 +144,7 @@ export async function fetchDiscoverProfiles(
 
   let query = supabase
     .from("profiles")
-    .select("*")
+    .select(PROFILE_COLUMNS)
     .not("id", "in", `(${excludedIds.join(",")})`)
     // Respects the "Profiel zichtbaar voor anderen" privacy toggle
     // (Instellingen-scherm) - someone who turned it off is simply never
@@ -199,7 +219,9 @@ export async function recordSwipe(swiperId: string, swipedId: string, direction:
 export async function fetchConnections(userId: string) {
   const { data, error } = await supabase
     .from("matches")
-    .select("id, created_at, user_a_id, user_b_id, user_a:profiles!matches_user_a_id_fkey(*), user_b:profiles!matches_user_b_id_fkey(*)")
+    .select(
+      `id, created_at, user_a_id, user_b_id, user_a:profiles!matches_user_a_id_fkey(${PROFILE_COLUMNS}), user_b:profiles!matches_user_b_id_fkey(${PROFILE_COLUMNS})`
+    )
     .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -330,7 +352,7 @@ export function formatConversationTimestamp(iso: string): string {
 export async function fetchPosts() {
   const { data, error } = await supabase
     .from("posts")
-    .select("*, author:profiles!posts_author_id_fkey(*), post_likes(user_id)")
+    .select(`*, author:profiles!posts_author_id_fkey(${PROFILE_COLUMNS}), post_likes(user_id)`)
     .order("created_at", { ascending: false });
   if (error) throw error;
   return data ?? [];
@@ -339,7 +361,7 @@ export async function fetchPosts() {
 export async function fetchPostsByAuthor(authorId: string) {
   const { data, error } = await supabase
     .from("posts")
-    .select("*, author:profiles!posts_author_id_fkey(*), post_likes(user_id)")
+    .select(`*, author:profiles!posts_author_id_fkey(${PROFILE_COLUMNS}), post_likes(user_id)`)
     .eq("author_id", authorId)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -480,5 +502,47 @@ export async function notifySupportRequest(subject: string, message: string) {
   const { error } = await supabase.functions.invoke("send-support-email", {
     body: { subject, message },
   });
+  if (error) throw error;
+}
+
+export const REPORT_REASONS: { key: string; label: string }[] = [
+  { key: "ongepast_gedrag", label: "Ongepast gedrag" },
+  { key: "nepprofiel", label: "Nepprofiel" },
+  { key: "spam", label: "Spam" },
+  { key: "anders", label: "Anders" },
+];
+
+/**
+ * Saves a moderation report. `matchId` is only passed when reporting from a
+ * chat (ChatDetailScreen) - lets a moderator later find the conversation the
+ * report came from, left null for reports filed straight from a profile.
+ */
+export async function createReport(
+  reporterId: string,
+  reportedId: string,
+  reason: string,
+  details?: string,
+  matchId?: string
+) {
+  const { error } = await supabase.from("reports").insert({
+    reporter_id: reporterId,
+    reported_id: reportedId,
+    reason,
+    details: details?.trim() || null,
+    match_id: matchId ?? null,
+  });
+  if (error) throw error;
+}
+
+/**
+ * Blocking is one-directional to record (blocker_id/blocked_id), but its
+ * effect is symmetric: the "blocks" RLS policies added on profiles/matches/
+ * messages (0012_moderation_reports_blocks.sql) hide the other person from
+ * both sides regardless of who blocked whom.
+ */
+export async function blockUser(blockerId: string, blockedId: string) {
+  const { error } = await supabase
+    .from("blocks")
+    .upsert({ blocker_id: blockerId, blocked_id: blockedId }, { onConflict: "blocker_id,blocked_id" });
   if (error) throw error;
 }

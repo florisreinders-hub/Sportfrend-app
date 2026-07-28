@@ -10,16 +10,19 @@ import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthContext";
 import {
+  blockUser,
   calculateAge,
   deleteMatch,
   findMatchBetween,
   fetchPostsByAuthor,
   formatEventDateTime,
   getDataErrorMessage,
+  PROFILE_COLUMNS,
   toggleLike,
   Profile,
 } from "@/lib/api";
 import { avatarPlaceholder, sportPhotoPlaceholder } from "@/constants/placeholders";
+import { ReportModal } from "@/components/ReportModal";
 
 const logoMark = require("@/assets/logo-mark.png");
 
@@ -34,6 +37,7 @@ export default function SporterProfileScreen({ route, navigation }: Props) {
   const [loading, setLoading] = useState(true);
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reportVisible, setReportVisible] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -44,7 +48,7 @@ export default function SporterProfileScreen({ route, navigation }: Props) {
       (async () => {
         try {
           const [{ data: profileData, error: profileError }, postsData] = await Promise.all([
-            supabase.from("profiles").select("*").eq("id", sporterId).maybeSingle(),
+            supabase.from("profiles").select(PROFILE_COLUMNS).eq("id", sporterId).maybeSingle(),
             fetchPostsByAuthor(sporterId),
           ]);
           if (profileError) throw profileError;
@@ -91,6 +95,37 @@ export default function SporterProfileScreen({ route, navigation }: Props) {
     ]);
   };
 
+  const onBlock = () => {
+    if (!session?.user) return;
+    Alert.alert(
+      "Gebruiker blokkeren",
+      `Weet je zeker dat je ${profile?.full_name ?? "deze sporter"} wilt blokkeren? Jullie zien elkaar dan niet meer in Ontdekken en kunnen niet meer met elkaar chatten.`,
+      [
+        { text: "Annuleren", style: "cancel" },
+        {
+          text: "Blokkeren",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await blockUser(session.user.id, sporterId);
+              navigation.goBack();
+            } catch (e) {
+              Alert.alert("Mislukt", getDataErrorMessage(e));
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const onOpenMenu = () => {
+    Alert.alert(profile?.full_name ?? "Sportmaatje", undefined, [
+      { text: "Rapporteren", onPress: () => setReportVisible(true) },
+      { text: "Blokkeren", style: "destructive", onPress: onBlock },
+      { text: "Annuleren", style: "cancel" },
+    ]);
+  };
+
   const onToggleLike = async (post: any) => {
     if (!session?.user) return;
     const liked = post.post_likes?.some((l: any) => l.user_id === session.user.id);
@@ -129,7 +164,20 @@ export default function SporterProfileScreen({ route, navigation }: Props) {
             <Text style={styles.removeButtonLabel}>{removing ? "Bezig..." : "Vriend verwijderen"}</Text>
           </Pressable>
         ) : null}
+        <Pressable onPress={onOpenMenu} hitSlop={8} style={styles.menuButton}>
+          <Ionicons name="ellipsis-vertical" size={22} color={colors.black} />
+        </Pressable>
       </View>
+
+      {session?.user ? (
+        <ReportModal
+          visible={reportVisible}
+          onClose={() => setReportVisible(false)}
+          reporterId={session.user.id}
+          reportedId={sporterId}
+          reportedName={profile?.full_name ?? "deze sporter"}
+        />
+      ) : null}
 
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: spacing.xl }} />
@@ -236,6 +284,9 @@ const styles = StyleSheet.create({
     fontFamily: fonts.display,
     fontSize: 10,
     color: colors.black,
+  },
+  menuButton: {
+    marginLeft: spacing.sm,
   },
   content: {
     padding: spacing.md,

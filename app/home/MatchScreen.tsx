@@ -15,7 +15,7 @@ import { getDataErrorMessage, sendMessage } from "@/lib/api";
 type Props = NativeStackScreenProps<RootStackParamList, "Match">;
 
 export default function MatchScreen({ route, navigation }: Props) {
-  const { matchId, matchedName, matchedPhoto } = route.params;
+  const { matchId, matchedName, matchedPhoto, matchedUserId } = route.params;
   const { session } = useAuth();
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
@@ -47,7 +47,7 @@ export default function MatchScreen({ route, navigation }: Props) {
     setSending(true);
     try {
       await sendMessage(matchId, session.user.id, body);
-      navigation.replace("ChatDetail", { chatId: matchId, name: matchedName, photo: matchedPhoto });
+      navigation.replace("ChatDetail", { chatId: matchId, name: matchedName, photo: matchedPhoto, otherUserId: matchedUserId });
     } catch (e) {
       setError(getDataErrorMessage(e));
     } finally {

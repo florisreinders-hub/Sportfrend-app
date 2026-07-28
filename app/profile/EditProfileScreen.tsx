@@ -14,7 +14,7 @@ import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { LEVEL_OPTIONS } from "@/constants/levels";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { getDataErrorMessage, Profile } from "@/lib/api";
+import { getDataErrorMessage, PROFILE_COLUMNS, Profile } from "@/lib/api";
 import { sportPhotoPlaceholder } from "@/constants/placeholders";
 
 type Props = NativeStackScreenProps<RootStackParamList, "EditProfile">;
@@ -42,7 +42,7 @@ export default function EditProfileScreen({ navigation }: Props) {
     if (!session?.user) return;
     supabase
       .from("profiles")
-      .select("*")
+      .select(PROFILE_COLUMNS)
       .eq("id", session.user.id)
       .maybeSingle()
       .then(({ data, error: fetchError }) => {

@@ -120,9 +120,97 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
 - `subscriptions` — Basis / Premium / Elite abonnement per gebruiker
 - `support_requests` — ingediende Klantenservice-berichten (back-up/overzicht,
   zie ook de "Klantenservice-e-mail"-sectie hieronder)
+- `reports` / `blocks` — moderatie: rapportages en blokkades tussen gebruikers
+  (zie "Moderatie" hieronder)
 
 Alle tabellen hebben Row Level Security policies zodat gebruikers alleen hun
 eigen data kunnen wijzigen en alleen berichten van hun eigen matches kunnen lezen.
+
+## Moderatie (rapporteren & blokkeren)
+
+Op het "Sporters profiel bekijken"-scherm en in de chat (ChatDetailScreen)
+staat een "..."-knop met "Rapporteren" en "Blokkeren". Rapporteren opent een
+formulier (reden + optionele toelichting) dat een rij in `public.reports`
+opslaat (`reporter_id`, `reported_id`, `reason`, `details`, optioneel
+`match_id` bij een melding vanuit de chat, `status` default `'open'`).
+Blokkeren slaat een rij op in `public.blocks` (`blocker_id`, `blocked_id`) en
+navigeert direct terug.
+
+Een blokkade werkt via RLS-policies op bestaande tabellen, niet via
+clientcode: geblokkeerde gebruikers kunnen elkaars profiel niet meer lezen
+(verdwijnen dus uit Ontdekken), hun match (en dus ook hun berichten) wordt
+voor beiden verborgen, en nieuwe berichten tussen hen worden geweigerd. Zie
+`supabase/migrations/0012_moderation_reports_blocks.sql` voor de volledige
+SQL - draai deze migratie op je bestaande database (0001_init.sql is ook
+bijgewerkt voor nieuwe installaties).
+
+## RLS-beveiligingsaudit
+
+`supabase/migrations/0013_rls_security_audit_fixes.sql` fixt vijf gaten die
+een volledige audit van alle RLS-policies aan het licht bracht (zie het
+bestand zelf voor de exacte SQL en toelichting per punt):
+
+1. `swipes` had geen policy om een 'like' te zien die naar jou toe gestuurd
+   is - de wederzijdse-like-check in `recordSwipe()` kon de andere
+   persoon's rij daardoor nooit zien, dus een match ontstond in de praktijk
+   nooit vanuit twee echte swipes over en weer.
+2. `matches` had geen serverside check dat beide personen elkaar echt
+   geliked hadden - elke ingelogde gebruiker kon via de API direct een
+   "match" afdwingen met wie dan ook, en zo ongevraagd gaan chatten.
+3. `matches` had helemaal geen DELETE-policy, waardoor "Vriend verwijderen"
+   stil niets deed.
+4. De "Profiel zichtbaar voor anderen"-schakelaar in Instellingen werd
+   alleen client-side gefilterd in Ontdekken, niet afgedwongen door RLS -
+   iemand met (of gokkend naar) een gebruikers-id kon een onzichtbaar
+   profiel alsnog direct uitlezen.
+5. `profiles.expo_push_token` was leesbaar voor elke ingelogde gebruiker via
+   de overal gebruikte `select("*")` - omdat Expo's push-API een kaal token
+   zonder verdere authenticatie accepteert, was dat genoeg om willekeurige
+   pushmeldingen naar andermans toestel te sturen. Alle profiles-queries in
+   de app gebruiken nu `lib/api.ts`'s `PROFILE_COLUMNS` in plaats van `"*"`.
+
+Draai deze migratie op je bestaande database - `0001_init.sql` is ook
+bijgewerkt zodat een nieuwe installatie deze fixes direct meekrijgt.
+
+## Account verwijderen
+
+"Account verwijderen" (onderaan Instellingen, onder "Uitloggen") vraagt
+eerst om bevestiging via een destructieve alert, en roept daarna de
+`delete-account` Edge Function aan (`lib/auth.ts`'s `deleteAccount()`).
+Die functie draait met de service-role key (nodig om zowel de
+`auth.users`-rij als de opgeslagen profielfoto's te verwijderen - dat kan
+niet met een gewone gebruikerssessie) en verwijdert, in deze volgorde:
+
+1. De bestanden van de gebruiker in de `profile-photos`-storage-bucket
+   (die worden niet automatisch opgeruimd - er loopt geen foreign key van
+   `storage.objects` naar `auth.users`).
+2. De `auth.users`-rij zelf, via `auth.admin.deleteUser()`. Omdat
+   `profiles.id` verwijst naar `auth.users(id)` met `on delete cascade`, en
+   elke andere tabel met persoonlijke gegevens (`swipes`, `matches`,
+   `messages`, `posts`, `post_likes`, `subscriptions`,
+   `support_requests`, `reports`, `blocks`) op zijn beurt verwijst naar
+   `profiles(id)` met `on delete cascade`, ruimt deze ene verwijdering
+   automatisch alles op - geen aparte delete-statements per tabel nodig.
+
+Na een geslaagde verwijdering logt de app ook lokaal uit
+(`supabase.auth.signOut()`), zodat de sessie op het toestel meteen
+verdwijnt en `RootNavigator` automatisch terugschakelt naar het
+inlogscherm - hetzelfde mechanisme als de bestaande "Uitloggen"-knop.
+
+De functie verifieert (in tegenstelling tot de twee pushmeldingen-functies)
+gewoon het JWT van de aanroeper - alleen een echt ingelogde gebruiker kan
+'m bereiken, en hij verwijdert altijd exact de gebruiker achter dat JWT,
+nooit een id uit de request body.
+
+**Belangrijk:** deze sandbox heeft geen netwerktoegang tot Supabase's API,
+dus de functie kon hier niet gedeployed of getest worden. Deploy 'm zelf:
+
+```bash
+supabase functions deploy delete-account
+```
+
+(geen `--no-verify-jwt` hier, in tegenstelling tot de pushmeldingen-functies -
+zie hierboven waarom.)
 
 ## Pushmeldingen (Expo Notifications)
 
