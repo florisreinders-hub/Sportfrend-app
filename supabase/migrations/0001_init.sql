@@ -221,18 +221,51 @@ alter table public.support_requests enable row level security;
 alter table public.reports enable row level security;
 alter table public.blocks enable row level security;
 
+-- expo_push_token is write-only from the client's point of view (only
+-- lib/notifications.ts upserts it; nothing in the app UI reads it back,
+-- own or anyone else's - only the send-message-push/send-match-push Edge
+-- Functions read it, via the service-role key, which isn't subject to
+-- this grant). Table-level SELECT on public.profiles otherwise defaults
+-- to all columns, which would let any authenticated user read anyone
+-- else's push token - and since Expo's push API accepts a bare token with
+-- no further authentication, that token alone is enough to send that
+-- person arbitrary spoofed push notifications. Every profiles query in
+-- the app uses lib/api.ts's PROFILE_COLUMNS (or a subset) instead of "*"
+-- to match this.
+revoke select on public.profiles from authenticated;
+grant select (
+  id, full_name, birthdate, gender, bio, sport, level, city, latitude, longitude,
+  search_radius_km, avatar_url, photo_url, is_onboarded, push_notifications_enabled,
+  profile_visible, availability_days, created_at, updated_at
+) on public.profiles to authenticated;
+
 -- Blocked users are hidden from each other everywhere profiles are read
 -- (Ontdekken, connecties, posts' author embed, ...) except a user can
--- always read their own row.
+-- always read their own row. Beyond blocking, a profile with
+-- profile_visible = false (the "Profiel zichtbaar voor anderen" toggle in
+-- Instellingen) is only readable by its owner and by users who already
+-- have a match with them - the toggle is meant to control discoverability
+-- by strangers, not to hide someone from a match they're already chatting
+-- with.
 create policy "Profiles are readable by authenticated users"
   on public.profiles for select
   to authenticated
   using (
     auth.uid() = id
-    or not exists (
-      select 1 from public.blocks b
-      where (b.blocker_id = auth.uid() and b.blocked_id = profiles.id)
-         or (b.blocker_id = profiles.id and b.blocked_id = auth.uid())
+    or (
+      not exists (
+        select 1 from public.blocks b
+        where (b.blocker_id = auth.uid() and b.blocked_id = profiles.id)
+           or (b.blocker_id = profiles.id and b.blocked_id = auth.uid())
+      )
+      and (
+        profiles.profile_visible = true
+        or exists (
+          select 1 from public.matches m
+          where (m.user_a_id = auth.uid() and m.user_b_id = profiles.id)
+             or (m.user_b_id = auth.uid() and m.user_a_id = profiles.id)
+        )
+      )
     )
   );
 
@@ -252,6 +285,17 @@ create policy "Users manage their own swipes"
   using (auth.uid() = swiper_id)
   with check (auth.uid() = swiper_id);
 
+-- recordSwipe() (lib/api.ts) needs to read the *other* person's swipe row
+-- to detect a mutual like (their swiper_id is not auth.uid(), so the
+-- policy above alone hides it) - without this, two people liking each
+-- other would never actually produce a match, since neither session could
+-- ever see the other's row. Scoped to only the 'like' direction so a user
+-- still can't see who skipped them.
+create policy "Users can see likes directed at them"
+  on public.swipes for select
+  to authenticated
+  using (auth.uid() = swiped_id and direction = 'like');
+
 -- A blocked match is hidden from both participants - this also hides its
 -- messages, since "Match participants can read messages" below re-checks
 -- this same matches row (itself subject to this policy) via its EXISTS
@@ -268,10 +312,36 @@ create policy "Users can view their own matches"
     )
   );
 
+-- Without the two "exists" checks, any authenticated user could insert an
+-- arbitrary matches row naming themselves and any other profile as long as
+-- they pass themselves as user_a_id/user_b_id - forcing a "match" (and
+-- therefore the ability to message) with someone who never actually liked
+-- them back. Requiring both directions of a 'like' swipe to already exist
+-- makes the double opt-in a database-enforced rule, not just something the
+-- client (recordSwipe in lib/api.ts) happens to do voluntarily.
 create policy "Matches are created by the matching function"
   on public.matches for insert
   to authenticated
-  with check (auth.uid() = user_a_id or auth.uid() = user_b_id);
+  with check (
+    (auth.uid() = user_a_id or auth.uid() = user_b_id)
+    and exists (
+      select 1 from public.swipes s
+      where s.swiper_id = user_a_id and s.swiped_id = user_b_id and s.direction = 'like'
+    )
+    and exists (
+      select 1 from public.swipes s
+      where s.swiper_id = user_b_id and s.swiped_id = user_a_id and s.direction = 'like'
+    )
+  );
+
+-- deleteMatch() (lib/api.ts, "Vriend verwijderen" on SporterProfileScreen)
+-- had no matching DELETE policy before this - RLS defaults to denying a
+-- command with no applicable policy, so every delete silently affected
+-- zero rows and the button did nothing.
+create policy "Match participants can delete their match"
+  on public.matches for delete
+  to authenticated
+  using (auth.uid() = user_a_id or auth.uid() = user_b_id);
 
 create policy "Match participants can read messages"
   on public.messages for select

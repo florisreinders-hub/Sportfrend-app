@@ -17,6 +17,7 @@ import {
   fetchPostsByAuthor,
   formatEventDateTime,
   getDataErrorMessage,
+  PROFILE_COLUMNS,
   toggleLike,
   Profile,
 } from "@/lib/api";
@@ -47,7 +48,7 @@ export default function SporterProfileScreen({ route, navigation }: Props) {
       (async () => {
         try {
           const [{ data: profileData, error: profileError }, postsData] = await Promise.all([
-            supabase.from("profiles").select("*").eq("id", sporterId).maybeSingle(),
+            supabase.from("profiles").select(PROFILE_COLUMNS).eq("id", sporterId).maybeSingle(),
             fetchPostsByAuthor(sporterId),
           ]);
           if (profileError) throw profileError;

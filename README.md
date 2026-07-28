@@ -144,6 +144,34 @@ voor beiden verborgen, en nieuwe berichten tussen hen worden geweigerd. Zie
 SQL - draai deze migratie op je bestaande database (0001_init.sql is ook
 bijgewerkt voor nieuwe installaties).
 
+## RLS-beveiligingsaudit
+
+`supabase/migrations/0013_rls_security_audit_fixes.sql` fixt vijf gaten die
+een volledige audit van alle RLS-policies aan het licht bracht (zie het
+bestand zelf voor de exacte SQL en toelichting per punt):
+
+1. `swipes` had geen policy om een 'like' te zien die naar jou toe gestuurd
+   is - de wederzijdse-like-check in `recordSwipe()` kon de andere
+   persoon's rij daardoor nooit zien, dus een match ontstond in de praktijk
+   nooit vanuit twee echte swipes over en weer.
+2. `matches` had geen serverside check dat beide personen elkaar echt
+   geliked hadden - elke ingelogde gebruiker kon via de API direct een
+   "match" afdwingen met wie dan ook, en zo ongevraagd gaan chatten.
+3. `matches` had helemaal geen DELETE-policy, waardoor "Vriend verwijderen"
+   stil niets deed.
+4. De "Profiel zichtbaar voor anderen"-schakelaar in Instellingen werd
+   alleen client-side gefilterd in Ontdekken, niet afgedwongen door RLS -
+   iemand met (of gokkend naar) een gebruikers-id kon een onzichtbaar
+   profiel alsnog direct uitlezen.
+5. `profiles.expo_push_token` was leesbaar voor elke ingelogde gebruiker via
+   de overal gebruikte `select("*")` - omdat Expo's push-API een kaal token
+   zonder verdere authenticatie accepteert, was dat genoeg om willekeurige
+   pushmeldingen naar andermans toestel te sturen. Alle profiles-queries in
+   de app gebruiken nu `lib/api.ts`'s `PROFILE_COLUMNS` in plaats van `"*"`.
+
+Draai deze migratie op je bestaande database - `0001_init.sql` is ook
+bijgewerkt zodat een nieuwe installatie deze fixes direct meekrijgt.
+
 ## Pushmeldingen (Expo Notifications)
 
 Na inloggen/registreren vraagt de app om toestemming voor pushmeldingen

@@ -10,7 +10,7 @@ import { BottomNav } from "@/components/BottomNav";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { calculateAge, getDataErrorMessage, Profile } from "@/lib/api";
+import { calculateAge, getDataErrorMessage, PROFILE_COLUMNS, Profile } from "@/lib/api";
 import { avatarPlaceholder, sportPhotoPlaceholder } from "@/constants/placeholders";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Profile">;
@@ -28,7 +28,7 @@ export default function ProfileScreen({ navigation }: Props) {
       setError(null);
       supabase
         .from("profiles")
-        .select("*")
+        .select(PROFILE_COLUMNS)
         .eq("id", session.user.id)
         .maybeSingle()
         .then(({ data, error: fetchError }) => {
