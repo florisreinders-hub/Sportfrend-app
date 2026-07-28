@@ -121,7 +121,10 @@ export default function HomeScreen({ navigation, route }: Props) {
           {loading ? (
             <ActivityIndicator color={colors.primary} size="large" />
           ) : error ? (
-            <Text style={styles.empty}>{error}</Text>
+            <View style={styles.errorState}>
+              <Text style={styles.empty}>{error}</Text>
+              <Button label="Opnieuw proberen" variant="outline" onPress={loadDiscover} style={styles.retryButton} />
+            </View>
           ) : profiles.length === 0 ? (
             <Text style={styles.empty}>Geen sporters gevonden. Pas je filters aan of kom later terug.</Text>
           ) : (
@@ -275,6 +278,14 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: spacing.xxl,
     paddingHorizontal: spacing.lg,
+  },
+  errorState: {
+    alignItems: "center",
+    paddingHorizontal: spacing.lg,
+  },
+  retryButton: {
+    marginTop: spacing.md,
+    minWidth: 160,
   },
   connectionsList: {
     padding: spacing.md,
