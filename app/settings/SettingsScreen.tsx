@@ -9,7 +9,7 @@ import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
-import { signOut } from "@/lib/auth";
+import { deleteAccount, signOut } from "@/lib/auth";
 import { fetchProfileSettings, getDataErrorMessage, updateProfileSettings } from "@/lib/api";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Settings">;
@@ -21,6 +21,7 @@ export default function SettingsScreen({ navigation }: Props) {
   const [pushEnabled, setPushEnabled] = useState(true);
   const [profileVisible, setProfileVisible] = useState(true);
   const [signingOut, setSigningOut] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -76,6 +77,32 @@ export default function SettingsScreen({ navigation }: Props) {
       setSigningOut(false);
       Alert.alert("Uitloggen mislukt", getDataErrorMessage(e));
     }
+  };
+
+  const onDeleteAccount = () => {
+    Alert.alert(
+      "Account verwijderen",
+      "Weet je het zeker? Dit kan niet ongedaan gemaakt worden. Je profiel, matches, berichten, posts en alle andere gegevens worden permanent verwijderd.",
+      [
+        { text: "Annuleren", style: "cancel" },
+        {
+          text: "Verwijderen",
+          style: "destructive",
+          onPress: async () => {
+            setDeleting(true);
+            try {
+              await deleteAccount();
+              // Same as onSignOut: AuthContext picks up the cleared session
+              // and RootNavigator switches back to the signed-out stack
+              // (Login) on its own.
+            } catch (e) {
+              setDeleting(false);
+              Alert.alert("Verwijderen mislukt", getDataErrorMessage(e));
+            }
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -157,6 +184,13 @@ export default function SettingsScreen({ navigation }: Props) {
           <Pressable style={styles.row} onPress={onSignOut} disabled={signingOut}>
             <Ionicons name="log-out-outline" size={20} color={colors.danger} />
             <Text style={[styles.rowLabel, styles.logout]}>{signingOut ? "Bezig met uitloggen..." : "Uitloggen"}</Text>
+          </Pressable>
+
+          <Pressable style={styles.row} onPress={onDeleteAccount} disabled={deleting}>
+            <Ionicons name="trash-outline" size={20} color={colors.danger} />
+            <Text style={[styles.rowLabel, styles.logout]}>
+              {deleting ? "Account wordt verwijderd..." : "Account verwijderen"}
+            </Text>
           </Pressable>
         </>
       )}
