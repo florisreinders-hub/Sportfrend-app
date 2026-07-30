@@ -10,7 +10,7 @@ import { SwipeCard } from "@/components/SwipeCard";
 import { Button } from "@/components/Button";
 import { PostComposer } from "@/components/PostComposer";
 import { PostCard } from "@/components/PostCard";
-import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
+import { BOTTOM_NAV_HEIGHT, colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { useDiscoverFilters } from "@/lib/FilterContext";
 import {
@@ -264,9 +264,19 @@ const styles = StyleSheet.create({
   },
   actionRow: {
     flexDirection: "row",
+    width: "100%",
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
+    paddingTop: spacing.md,
+    // BottomNav (components/BottomNav.tsx) is position:"absolute", bottom:0,
+    // height: BOTTOM_NAV_HEIGHT - it's painted as an overlay, not reserved
+    // as flex space, and ScreenContainer's own bottom padding is off for
+    // this screen (withBottomPadding={false}, needed so the Connecties
+    // tab's FlatList can scroll full-bleed). Without this, actionRow (the
+    // last flex child of deckArea) lands flush with the screen's bottom
+    // edge - exactly where BottomNav paints on top, hiding Skip/Connect
+    // underneath it and stealing their taps.
+    paddingBottom: BOTTOM_NAV_HEIGHT + spacing.md,
   },
   actionButton: {
     flex: 1,
