@@ -1,5 +1,5 @@
 import React from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { formatEventDateTime } from "@/lib/api";
@@ -9,19 +9,34 @@ type Props = {
   post: any;
   currentUserId?: string;
   onToggleLike: (post: any) => void;
+  /** Omitted entirely for a post that isn't the current user's own - see the isOwnPost guard below. */
+  onDelete?: (post: any) => void;
 };
 
 /** A single "Bericht plaatsen" post - author, body, photo, sport/datum, like button. Shared by every screen that lists posts. */
-export function PostCard({ post, currentUserId, onToggleLike }: Props) {
+export function PostCard({ post, currentUserId, onToggleLike, onDelete }: Props) {
   const liked = post.post_likes?.some((l: any) => l.user_id === currentUserId);
   const likeCount = post.post_likes?.length ?? 0;
   const when = formatEventDateTime(post.event_date);
+  const isOwnPost = Boolean(currentUserId) && post.author_id === currentUserId;
+
+  const onPressDelete = () => {
+    Alert.alert("Bericht verwijderen", "Weet je zeker dat je dit bericht wilt verwijderen? Dit kan niet ongedaan gemaakt worden.", [
+      { text: "Annuleren", style: "cancel" },
+      { text: "Verwijderen", style: "destructive", onPress: () => onDelete?.(post) },
+    ]);
+  };
 
   return (
     <View style={styles.postCard}>
       <View style={styles.postHeader}>
         <Image source={{ uri: post.author?.avatar_url ?? avatarPlaceholder(post.author_id) }} style={styles.avatar} />
         <Text style={styles.postAuthor}>{post.author?.full_name ?? "Sportmaatje"}</Text>
+        {isOwnPost && onDelete ? (
+          <Pressable onPress={onPressDelete} hitSlop={8} style={styles.deleteButton}>
+            <Ionicons name="trash-outline" size={18} color={colors.danger} />
+          </Pressable>
+        ) : null}
       </View>
       <Text style={styles.postBody}>{post.body}</Text>
       {post.image_url ? <Image source={{ uri: post.image_url }} style={styles.postImage} /> : null}
@@ -71,9 +86,13 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   postAuthor: {
+    flex: 1,
     fontFamily: fonts.accent,
     fontSize: fontSizes.md,
     color: colors.black,
+  },
+  deleteButton: {
+    padding: spacing.xs,
   },
   postBody: {
     fontFamily: fonts.body,

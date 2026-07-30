@@ -396,6 +396,17 @@ export async function createPost(authorId: string, body: string, fields: NewPost
   if (error) throw error;
 }
 
+/**
+ * "Users can delete their own posts" (0001_init.sql) already restricts this
+ * to auth.uid() = author_id at the RLS level - PostCard only shows the
+ * delete option to a post's own author to begin with, this is the
+ * server-side backstop.
+ */
+export async function deletePost(postId: string) {
+  const { error } = await supabase.from("posts").delete().eq("id", postId);
+  if (error) throw error;
+}
+
 const MONTHS_NL = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
 
 /** "18 jul" for a post's event_date, or null if unset. */

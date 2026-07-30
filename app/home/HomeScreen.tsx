@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, FlatList, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 import { RootStackParamList } from "@/navigation/types";
@@ -14,6 +14,7 @@ import { BOTTOM_NAV_HEIGHT, colors, fonts, fontSizes, radii, spacing } from "@/c
 import { useAuth } from "@/lib/AuthContext";
 import { useDiscoverFilters } from "@/lib/FilterContext";
 import {
+  deletePost,
   fetchConnections,
   fetchDiscoverProfiles,
   fetchPosts,
@@ -80,6 +81,15 @@ export default function HomeScreen({ navigation, route }: Props) {
     const liked = post.post_likes?.some((l: any) => l.user_id === session.user.id);
     await toggleLike(post.id, session.user.id, liked);
     loadPosts();
+  };
+
+  const onDeletePost = async (post: any) => {
+    try {
+      await deletePost(post.id);
+      setPosts((prev) => prev.filter((p) => p.id !== post.id));
+    } catch (e) {
+      Alert.alert("Verwijderen mislukt", getDataErrorMessage(e));
+    }
   };
 
   const handleSwipe = async (profile: Profile, direction: "like" | "skip") => {
@@ -212,7 +222,7 @@ export default function HomeScreen({ navigation, route }: Props) {
             )
           }
           renderItem={({ item }) => (
-            <PostCard post={item} currentUserId={session?.user?.id} onToggleLike={onLikePost} />
+            <PostCard post={item} currentUserId={session?.user?.id} onToggleLike={onLikePost} onDelete={onDeletePost} />
           )}
         />
       )}
