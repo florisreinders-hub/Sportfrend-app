@@ -45,6 +45,22 @@ create table if not exists public.profiles (
 -- for the same reason - that file also sets up the database webhooks that
 -- actually send the notifications, which 0001 intentionally does not
 -- (they embed a project-specific secret, see that file's own comments).
+--
+-- On an existing database, the minimum-age check constraint below needs
+-- supabase/migrations/0015_profiles_min_age_check.sql for the same reason
+-- (an inline `create table` constraint only applies when the table is
+-- first created).
+
+-- Registration requires a birthdate implying at least 18 years old
+-- (RegisterDetailsScreen validates this client-side already; this is the
+-- backstop that can't be bypassed by a modified/malicious client calling
+-- the API directly). Nulls are still allowed - handle_new_user() below
+-- inserts a bare profile row with no birthdate yet before the client's
+-- own follow-up upsert fills it in, and this constraint only needs to
+-- block a *present but underage* birthdate, not require one to exist.
+alter table public.profiles drop constraint if exists profiles_birthdate_min_age_check;
+alter table public.profiles add constraint profiles_birthdate_min_age_check
+  check (birthdate is null or birthdate <= (current_date - interval '18 years'));
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- swipes: every like/skip a user performs on another profile
@@ -232,9 +248,15 @@ alter table public.blocks enable row level security;
 -- person arbitrary spoofed push notifications. Every profiles query in
 -- the app uses lib/api.ts's PROFILE_COLUMNS (or a subset) instead of "*"
 -- to match this.
+-- latitude/longitude are excluded here too (see
+-- 0014_discover_profiles_location_privacy.sql) - exact GPS coordinates are
+-- no longer readable by anyone, including the owner, via a plain column
+-- read. The owner reads their own via get_my_location(); everyone else
+-- only ever gets a computed distance via discover_profiles() - both
+-- defined further down this file, after the storage section.
 revoke select on public.profiles from authenticated;
 grant select (
-  id, full_name, birthdate, gender, bio, sport, level, city, latitude, longitude,
+  id, full_name, birthdate, gender, bio, sport, level, city,
   search_radius_km, avatar_url, photo_url, is_onboarded, push_notifications_enabled,
   profile_visible, availability_days, created_at, updated_at
 ) on public.profiles to authenticated;
@@ -496,3 +518,144 @@ create policy "Users can delete their own profile photos"
   on storage.objects for delete
   to authenticated
   using (bucket_id = 'profile-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Location privacy: exact coordinates are never readable via a plain
+-- column read (see the "revoke select on public.profiles" above) - these
+-- two SECURITY DEFINER functions are the only way to get at them, and
+-- neither one leaks a raw coordinate to anyone but the profile's own
+-- owner. See supabase/migrations/0014_discover_profiles_location_privacy.sql
+-- for the full write-up.
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- The calling user's own exact coordinates - used by AuthContext's
+-- location check and the "Mijn gegevens opvragen" export, both of which
+-- legitimately need the owner's own raw location.
+create or replace function public.get_my_location()
+returns table (latitude double precision, longitude double precision, city text)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select p.latitude, p.longitude, p.city
+  from public.profiles p
+  where p.id = auth.uid()
+$$;
+
+grant execute on function public.get_my_location() to authenticated;
+
+-- Powers the Ontdekken feed (fetchDiscoverProfiles, lib/api.ts): computes
+-- distance server-side from the caller's own coordinates (via auth.uid(),
+-- never a parameter - a viewer id parameter would let anyone query
+-- distances relative to someone else's location instead of their own) so
+-- raw coordinates for any *other* profile never leave the database at
+-- all, only the resulting distance_km. Mirrors fetchDiscoverProfiles's
+-- previous client-side filtering exactly: same sport/search-radius
+-- fallback to the caller's own profile, same "no location set = no
+-- distance narrowing" degradation, same visibility/block/already-swiped
+-- exclusions RLS would otherwise apply (this function runs SECURITY
+-- DEFINER and so bypasses RLS internally - those checks are re-implemented
+-- here by hand instead).
+create or replace function public.discover_profiles(
+  p_sport text default null,
+  p_level text default null,
+  p_max_age int default null,
+  p_distance_km double precision default null,
+  p_limit int default 20
+)
+returns table (
+  id uuid,
+  full_name text,
+  birthdate date,
+  gender text,
+  bio text,
+  sport text,
+  level text,
+  city text,
+  search_radius_km int,
+  avatar_url text,
+  photo_url text,
+  distance_km double precision
+)
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_my_sport text;
+  v_my_lat double precision;
+  v_my_lng double precision;
+  v_my_radius_km double precision;
+  v_sport text;
+  v_radius_km double precision;
+  v_min_birthdate date;
+  v_max_birthdate date;
+begin
+  if v_uid is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select p.sport, p.latitude, p.longitude, p.search_radius_km
+    into v_my_sport, v_my_lat, v_my_lng, v_my_radius_km
+  from public.profiles p
+  where p.id = v_uid;
+
+  v_sport := coalesce(p_sport, v_my_sport);
+  v_radius_km := coalesce(p_distance_km, v_my_radius_km);
+
+  if p_max_age is not null then
+    v_min_birthdate := (current_date - (p_max_age || ' years')::interval)::date;
+    v_max_birthdate := (current_date - interval '18 years')::date;
+  end if;
+
+  return query
+  with candidates as (
+    select p.*
+    from public.profiles p
+    where p.id <> v_uid
+      and p.profile_visible = true
+      and not exists (select 1 from public.swipes s where s.swiper_id = v_uid and s.swiped_id = p.id)
+      and not exists (
+        select 1 from public.blocks b
+        where (b.blocker_id = v_uid and b.blocked_id = p.id)
+           or (b.blocker_id = p.id and b.blocked_id = v_uid)
+      )
+      and (v_sport is null or p.sport = v_sport)
+      and (p_level is null or p.level = p_level)
+      and (v_min_birthdate is null or p.birthdate >= v_min_birthdate)
+      and (v_max_birthdate is null or p.birthdate <= v_max_birthdate)
+    limit 50
+  ),
+  with_distance as (
+    select
+      c.id, c.full_name, c.birthdate, c.gender, c.bio, c.sport, c.level, c.city,
+      c.search_radius_km, c.avatar_url, c.photo_url,
+      case
+        when v_my_lat is not null and v_my_lng is not null and c.latitude is not null and c.longitude is not null
+        then 6371 * 2 * asin(least(1.0, sqrt(
+               sin(radians((c.latitude - v_my_lat) / 2)) ^ 2
+               + cos(radians(v_my_lat)) * cos(radians(c.latitude))
+               * sin(radians((c.longitude - v_my_lng) / 2)) ^ 2
+             )))
+        else null
+      end as distance_km
+    from candidates c
+  )
+  select w.id, w.full_name, w.birthdate, w.gender, w.bio, w.sport, w.level, w.city,
+         w.search_radius_km, w.avatar_url, w.photo_url, w.distance_km
+  from with_distance w
+  where
+    -- Only apply the radius cutoff when the viewer actually has a location
+    -- and a radius to compare against - no location set means no
+    -- distance-based narrowing at all, same as before.
+    (v_my_lat is null or v_my_lng is null or v_radius_km is null)
+    or (w.distance_km is not null and w.distance_km <= v_radius_km)
+  order by (case when w.distance_km is null then 1 else 0 end), w.distance_km asc nulls last
+  limit p_limit;
+end;
+$$;
+
+grant execute on function public.discover_profiles(text, text, int, double precision, int) to authenticated;

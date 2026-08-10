@@ -2,6 +2,7 @@ import { supabase } from "./supabase";
 import {
   fetchConnections,
   fetchMessages,
+  fetchMyLocation,
   fetchOwnBlocks,
   fetchOwnReports,
   fetchOwnSupportRequests,
@@ -35,6 +36,14 @@ export type DataExportMatch = {
 
 export type DataExportResult = {
   profile: Profile | null;
+  /**
+   * Fetched separately via get_my_location() - profileResult (below) uses
+   * PROFILE_COLUMNS, which no longer includes latitude/longitude for
+   * anyone, own row included (see PROFILE_COLUMNS's comment in lib/api.ts).
+   * This is the one legitimate "read my own exact coordinates" case that
+   * function exists for.
+   */
+  location: Awaited<ReturnType<typeof fetchMyLocation>>;
   matches: DataExportMatch[];
   posts: any[];
   swipes: OwnSwipe[];
@@ -45,16 +54,18 @@ export type DataExportResult = {
 };
 
 export async function fetchDataExport(userId: string): Promise<DataExportResult> {
-  const [profileResult, connections, posts, swipes, subscription, supportRequests, reports, blocks] = await Promise.all([
-    supabase.from("profiles").select(PROFILE_COLUMNS).eq("id", userId).maybeSingle(),
-    fetchConnections(userId),
-    fetchPostsByAuthor(userId),
-    fetchOwnSwipes(userId),
-    fetchSubscription(userId),
-    fetchOwnSupportRequests(userId),
-    fetchOwnReports(userId),
-    fetchOwnBlocks(userId),
-  ]);
+  const [profileResult, location, connections, posts, swipes, subscription, supportRequests, reports, blocks] =
+    await Promise.all([
+      supabase.from("profiles").select(PROFILE_COLUMNS).eq("id", userId).maybeSingle(),
+      fetchMyLocation(),
+      fetchConnections(userId),
+      fetchPostsByAuthor(userId),
+      fetchOwnSwipes(userId),
+      fetchSubscription(userId),
+      fetchOwnSupportRequests(userId),
+      fetchOwnReports(userId),
+      fetchOwnBlocks(userId),
+    ]);
   if (profileResult.error) throw profileResult.error;
 
   const matches: DataExportMatch[] = await Promise.all(
@@ -68,6 +79,7 @@ export async function fetchDataExport(userId: string): Promise<DataExportResult>
 
   return {
     profile: profileResult.data as Profile | null,
+    location,
     matches,
     posts,
     swipes,
@@ -100,7 +112,7 @@ export function formatDataExportText(data: DataExportResult, userId: string, use
     lines.push(`Niveau: ${p.level ?? "-"}`);
     lines.push(`Bio: ${p.bio ?? "-"}`);
     lines.push(`Stad: ${p.city ?? "-"}`);
-    lines.push(`Locatiecoördinaten: ${p.latitude ?? "-"}, ${p.longitude ?? "-"}`);
+    lines.push(`Locatiecoördinaten: ${data.location.latitude ?? "-"}, ${data.location.longitude ?? "-"}`);
     lines.push(`Zoekstraal: ${p.search_radius_km ?? "-"} km`);
     lines.push(`Profielfoto-URL: ${p.photo_url ?? "-"}`);
     lines.push(`Profiel zichtbaar in Ontdekken: ${(p as any).profile_visible === false ? "Nee" : "Ja"}`);

@@ -31,6 +31,21 @@ export function getDataErrorMessage(error: unknown): string {
       case "42501":
       case "PGRST301":
         return "Je hebt geen toegang tot deze gegevens. Log opnieuw in en probeer het nogmaals.";
+      case "23514": {
+        // check_violation - profiles_birthdate_min_age_check
+        // (0015_profiles_min_age_check.sql) is the one a client can
+        // realistically trigger directly (RegisterDetailsScreen already
+        // validates this client-side, but a modified/malicious client
+        // could skip straight to the insert/upsert - the database is the
+        // actual enforcement boundary, this is just a friendly message
+        // for it). Other check constraints (level, gender, plan/status,
+        // ...) fall through to the generic message below.
+        const message = (error as { message?: string }).message ?? "";
+        if (message.includes("profiles_birthdate_min_age_check")) {
+          return "Je moet minimaal 18 jaar zijn om je te registreren.";
+        }
+        return "Deze gegevens voldoen niet aan de vereisten.";
+      }
       default: {
         const message = (error as { message?: string }).message;
         if (message) return message;
@@ -51,8 +66,6 @@ export type Profile = {
   sport: string | null;
   level: string | null;
   city: string | null;
-  latitude: number | null;
-  longitude: number | null;
   search_radius_km: number | null;
   avatar_url: string | null;
   photo_url: string | null;
@@ -60,32 +73,33 @@ export type Profile = {
 
 /**
  * Every profiles column the app is allowed to read, deliberately excluding
- * expo_push_token - that's a write-only field from the client's point of
- * view (lib/notifications.ts upserts it, nothing in the app UI ever needs
- * to display anyone's token, own or otherwise). Only the send-message-push/
- * send-match-push Edge Functions read it, via the service-role key, which
- * isn't subject to this column grant.
+ * expo_push_token (see 0013_rls_security_audit_fixes.sql) and latitude/
+ * longitude (see 0014_discover_profiles_location_privacy.sql) - both are
+ * revoked at the column-privilege level for the `authenticated` role, so
+ * every profiles query in this file and the app's screens must use this
+ * column list (or a subset of it) instead of "*", including for a user's
+ * own row (column grants are role-wide, not row-aware - RLS alone can't
+ * express "this column, but only on your own row").
  *
- * supabase/migrations/0013_rls_security_audit_fixes.sql revokes SELECT on
- * that column for the `authenticated` role at the database level (a stray
- * `expo_push_token` left in a query would otherwise let any signed-in user
- * read another user's token and, since Expo's push API accepts a token
- * with no further auth, send that person arbitrary spoofed
- * notifications) - every profiles query in this file and the app's screens
- * must use this column list (or a subset of it) instead of "*" so that
- * revoke doesn't also break reading your own profile.
+ * expo_push_token has no legitimate reader on the client at all (only the
+ * push Edge Functions, via the service-role key). latitude/longitude do
+ * have one: the profile owner, via get_my_location() (see
+ * fetchMyLocation() below) - a SECURITY DEFINER function scoped to
+ * auth.uid()'s own row, used instead of a raw column read wherever this
+ * app needs someone's own exact coordinates (AuthContext's location
+ * check, the "Mijn gegevens opvragen" export). Anyone else's coordinates
+ * are never returned raw at all - see fetchDiscoverProfiles(), which gets
+ * only a computed distance_km from the discover_profiles() function.
  */
 export const PROFILE_COLUMNS =
-  "id, full_name, birthdate, gender, bio, sport, level, city, latitude, longitude, search_radius_km, avatar_url, photo_url, is_onboarded, push_notifications_enabled, profile_visible, availability_days, created_at, updated_at";
+  "id, full_name, birthdate, gender, bio, sport, level, city, search_radius_km, avatar_url, photo_url, is_onboarded, push_notifications_enabled, profile_visible, availability_days, created_at, updated_at";
 
-function haversineDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+/** The calling user's own exact coordinates - see PROFILE_COLUMNS's comment for why this needs a function instead of a plain column read. */
+export async function fetchMyLocation(): Promise<{ latitude: number | null; longitude: number | null; city: string | null }> {
+  const { data, error } = await supabase.rpc("get_my_location");
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return { latitude: row?.latitude ?? null, longitude: row?.longitude ?? null, city: row?.city ?? null };
 }
 
 /** "DD-MM-JJJJ"-free ISO date for someone who is exactly `age` years old today. */
@@ -108,6 +122,8 @@ export function calculateAge(birthdate: string | null | undefined): number | nul
   return age;
 }
 
+export type DiscoverProfile = Profile & { distance_km: number | null };
+
 /**
  * Discover feed: same sport as the current user (when set) and within their
  * search radius (when they have a location set), excluding the user and
@@ -122,67 +138,35 @@ export function calculateAge(birthdate: string | null | undefined): number | nul
  * default (90) adds a birthdate range. Left-at-default filter values are
  * treated as "not set" so a user who never opens the Filter screen still
  * gets the same profile-based feed as before.
+ *
+ * All of this - including the sport/search-radius fallback to the caller's
+ * own profile - runs inside the discover_profiles() Postgres function
+ * (supabase/migrations/0014_discover_profiles_location_privacy.sql) rather
+ * than here, because computing distance requires reading raw coordinates,
+ * which this app no longer lets any client (including this one) read for
+ * someone else's profile at all - see PROFILE_COLUMNS's comment. The
+ * function runs SECURITY DEFINER (so it can read the coordinates
+ * internally) but only ever returns a computed distance_km, never the
+ * coordinates themselves.
  */
 export async function fetchDiscoverProfiles(
+  // Kept for call-site stability (HomeScreen passes session.user.id) even
+  // though the RPC no longer needs it - discover_profiles() always
+  // resolves "who's asking" from auth.uid() server-side, not a parameter,
+  // so the caller can't query distances relative to someone else's
+  // location by passing a different id here.
   currentUserId: string,
   filters: DiscoverFilters = DEFAULT_FILTERS
-): Promise<Profile[]> {
-  const { data: ownProfile, error: ownProfileError } = await supabase
-    .from("profiles")
-    .select("sport, latitude, longitude, search_radius_km")
-    .eq("id", currentUserId)
-    .maybeSingle();
-  if (ownProfileError) throw ownProfileError;
-
-  const { data: swiped, error: swipedError } = await supabase
-    .from("swipes")
-    .select("swiped_id")
-    .eq("swiper_id", currentUserId);
-  if (swipedError) throw swipedError;
-
-  const excludedIds = [currentUserId, ...(swiped ?? []).map((s) => s.swiped_id)];
-
-  let query = supabase
-    .from("profiles")
-    .select(PROFILE_COLUMNS)
-    .not("id", "in", `(${excludedIds.join(",")})`)
-    // Respects the "Profiel zichtbaar voor anderen" privacy toggle
-    // (Instellingen-scherm) - someone who turned it off is simply never
-    // offered in anyone else's Ontdekken feed.
-    .eq("profile_visible", true);
-
-  const sportFilter = filters.sport ?? ownProfile?.sport;
-  if (sportFilter) {
-    query = query.eq("sport", sportFilter);
-  }
-
-  if (filters.level) {
-    query = query.eq("level", filters.level);
-  }
-
-  if (filters.maxAge < DEFAULT_FILTERS.maxAge) {
-    // Youngest allowed (18) sets the upper birthdate bound, oldest allowed
-    // (filters.maxAge) sets the lower one.
-    query = query.gte("birthdate", isoDateForAge(filters.maxAge)).lte("birthdate", isoDateForAge(18));
-  }
-
-  const { data, error } = await query.limit(50);
+): Promise<DiscoverProfile[]> {
+  const { data, error } = await supabase.rpc("discover_profiles", {
+    p_sport: filters.sport,
+    p_level: filters.level,
+    p_max_age: filters.maxAge < DEFAULT_FILTERS.maxAge ? filters.maxAge : null,
+    p_distance_km: filters.distanceKm < DEFAULT_FILTERS.distanceKm ? filters.distanceKm : null,
+    p_limit: 20,
+  });
   if (error) throw error;
-  let results = (data ?? []) as Profile[];
-
-  const radiusKm = filters.distanceKm < DEFAULT_FILTERS.distanceKm ? filters.distanceKm : ownProfile?.search_radius_km;
-  if (ownProfile?.latitude != null && ownProfile?.longitude != null && radiusKm != null) {
-    const ownLat = ownProfile.latitude;
-    const ownLng = ownProfile.longitude;
-    results = results
-      .filter((p) => p.latitude != null && p.longitude != null)
-      .map((p) => ({ profile: p, distanceKm: haversineDistanceKm(ownLat, ownLng, p.latitude!, p.longitude!) }))
-      .filter(({ distanceKm }) => distanceKm <= radiusKm)
-      .sort((a, b) => a.distanceKm - b.distanceKm)
-      .map(({ profile }) => profile);
-  }
-
-  return results.slice(0, 20);
+  return (data ?? []) as DiscoverProfile[];
 }
 
 export type SwipeResult = { matched: false } | { matched: true; matchId: string };
