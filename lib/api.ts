@@ -31,6 +31,21 @@ export function getDataErrorMessage(error: unknown): string {
       case "42501":
       case "PGRST301":
         return "Je hebt geen toegang tot deze gegevens. Log opnieuw in en probeer het nogmaals.";
+      case "23514": {
+        // check_violation - profiles_birthdate_min_age_check
+        // (0015_profiles_min_age_check.sql) is the one a client can
+        // realistically trigger directly (RegisterDetailsScreen already
+        // validates this client-side, but a modified/malicious client
+        // could skip straight to the insert/upsert - the database is the
+        // actual enforcement boundary, this is just a friendly message
+        // for it). Other check constraints (level, gender, plan/status,
+        // ...) fall through to the generic message below.
+        const message = (error as { message?: string }).message ?? "";
+        if (message.includes("profiles_birthdate_min_age_check")) {
+          return "Je moet minimaal 18 jaar zijn om je te registreren.";
+        }
+        return "Deze gegevens voldoen niet aan de vereisten.";
+      }
       default: {
         const message = (error as { message?: string }).message;
         if (message) return message;

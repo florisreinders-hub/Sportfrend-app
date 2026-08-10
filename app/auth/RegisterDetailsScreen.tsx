@@ -7,7 +7,10 @@ import { Input } from "@/components/Input";
 import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { getAuthErrorMessage, resendConfirmationEmail, signUpWithEmail } from "@/lib/auth";
+import { calculateAge, getDataErrorMessage } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
+
+const MINIMUM_AGE = 18;
 
 const RESEND_COOLDOWN_SECONDS = 60;
 
@@ -71,7 +74,8 @@ export default function RegisterDetailsScreen({ navigation }: Props) {
     }
   };
 
-  const canSubmit = email.trim().length > 0 && password.length > 0 && repeatPassword.length > 0 && !loading;
+  const canSubmit =
+    email.trim().length > 0 && password.length > 0 && repeatPassword.length > 0 && birthdate.trim().length > 0 && !loading;
 
   const onSubmit = async () => {
     if (!canSubmit) return;
@@ -83,13 +87,20 @@ export default function RegisterDetailsScreen({ navigation }: Props) {
       return;
     }
 
-    let isoBirthdate: string | null = null;
-    if (birthdate.trim()) {
-      isoBirthdate = parseDutchBirthdate(birthdate);
-      if (!isoBirthdate) {
-        setError("Vul een geldige geboortedatum in (DD-MM-JJJJ).");
-        return;
-      }
+    // Required (not just validated-when-present) - a minimum age that can
+    // be skipped by simply not filling in a birthdate isn't a minimum age
+    // check at all. The database backstops this too (see
+    // supabase/migrations/0015_profiles_min_age_check.sql) for any client
+    // that skips this screen's own check entirely.
+    const isoBirthdate = parseDutchBirthdate(birthdate);
+    if (!isoBirthdate) {
+      setError("Vul een geldige geboortedatum in (DD-MM-JJJJ).");
+      return;
+    }
+    const age = calculateAge(isoBirthdate);
+    if (age !== null && age < MINIMUM_AGE) {
+      setError(`Je moet minimaal ${MINIMUM_AGE} jaar zijn om je te registreren.`);
+      return;
     }
 
     setLoading(true);
@@ -130,7 +141,11 @@ export default function RegisterDetailsScreen({ navigation }: Props) {
             { onConflict: "id" }
           );
         if (profileError) {
-          setError(getAuthErrorMessage(profileError));
+          // profileError is a Postgrest/data error (e.g. the birthdate
+          // check constraint below), not an auth error - getAuthErrorMessage
+          // only recognizes AuthError instances and would fall through to a
+          // generic message for this.
+          setError(getDataErrorMessage(profileError));
           return;
         }
       }

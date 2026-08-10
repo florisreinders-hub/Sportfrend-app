@@ -34,7 +34,7 @@ Eén rij per gebruiker; bevat het overgrote deel van de persoonsgegevens in de a
 | Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
 |---|---|---|---|
 | `full_name` | Ja | - | Tot accountverwijdering of handmatige wijziging |
-| `birthdate` | Ja (herleidbaar tot leeftijd, geboortedatum) | Ja | Tot accountverwijdering |
+| `birthdate` | Ja (herleidbaar tot leeftijd, geboortedatum) | Ja | Tot accountverwijdering. Verplicht bij registratie; de database weigert (check constraint `profiles_birthdate_min_age_check`, zie `0015_profiles_min_age_check.sql`) elke waarde die op een leeftijd onder de 18 wijst, ongeacht welke client het schrijft. |
 | `gender` | Ja | Ja | Tot accountverwijdering of handmatige wijziging |
 | `bio` | Ja (vrije tekst, kan alles bevatten) | Potentieel | Tot accountverwijdering of handmatige wijziging |
 | `sport`, `level` | Ja (voorkeuren) | - | Tot accountverwijdering of handmatige wijziging |

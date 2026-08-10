@@ -45,6 +45,22 @@ create table if not exists public.profiles (
 -- for the same reason - that file also sets up the database webhooks that
 -- actually send the notifications, which 0001 intentionally does not
 -- (they embed a project-specific secret, see that file's own comments).
+--
+-- On an existing database, the minimum-age check constraint below needs
+-- supabase/migrations/0015_profiles_min_age_check.sql for the same reason
+-- (an inline `create table` constraint only applies when the table is
+-- first created).
+
+-- Registration requires a birthdate implying at least 18 years old
+-- (RegisterDetailsScreen validates this client-side already; this is the
+-- backstop that can't be bypassed by a modified/malicious client calling
+-- the API directly). Nulls are still allowed - handle_new_user() below
+-- inserts a bare profile row with no birthdate yet before the client's
+-- own follow-up upsert fills it in, and this constraint only needs to
+-- block a *present but underage* birthdate, not require one to exist.
+alter table public.profiles drop constraint if exists profiles_birthdate_min_age_check;
+alter table public.profiles add constraint profiles_birthdate_min_age_check
+  check (birthdate is null or birthdate <= (current_date - interval '18 years'));
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- swipes: every like/skip a user performs on another profile

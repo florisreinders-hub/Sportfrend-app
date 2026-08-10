@@ -126,6 +126,32 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
 Alle tabellen hebben Row Level Security policies zodat gebruikers alleen hun
 eigen data kunnen wijzigen en alleen berichten van hun eigen matches kunnen lezen.
 
+## Minimumleeftijd bij registratie
+
+`RegisterDetailsScreen` (`app/auth/RegisterDetailsScreen.tsx`) vereist een
+geboortedatum (niet langer optioneel) en weigert door te gaan met een
+duidelijke foutmelding - "Je moet minimaal 18 jaar zijn om je te
+registreren." - zodra die datum een leeftijd onder de 18 oplevert, vóórdat
+er een e-mail/wachtwoord-account wordt aangemaakt. Zelfde plek en stijl als
+de bestaande "dit e-mailadres is al geregistreerd"-melding.
+
+Dat client-side check is voor directe feedback, niet de eigenlijke grens:
+`public.profiles` heeft een check constraint
+(`profiles_birthdate_min_age_check`, zie
+`supabase/migrations/0015_profiles_min_age_check.sql`) die elke
+geboortedatum onder de 18 weigert, ongeacht welke client de aanroep doet -
+ook een aangepaste app die dit scherm overslaat kan er niet omheen. De
+constraint staat `birthdate is null` nog wel toe (nodig voor het korte
+moment tussen het aanmaken van de auth-gebruiker en de daaropvolgende
+profiel-upsert die de geboortedatum invult), maar accepteert nooit een
+aanwezige, te jonge waarde.
+
+Draai `0015_profiles_min_age_check.sql` op je bestaande database -
+`0001_init.sql` is ook bijgewerkt voor nieuwe installaties. Geen Edge
+Function nodig, alleen deze migratie. Als de `alter table` faalt omdat er
+al een profiel met een te jonge geboortedatum bestaat, geeft het bestand
+zelf een query om die rij(en) eerst op te sporen.
+
 ## Moderatie (rapporteren & blokkeren)
 
 Op het "Sporters profiel bekijken"-scherm en in de chat (ChatDetailScreen)
