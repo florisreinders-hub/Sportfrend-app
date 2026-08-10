@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, FlatList, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 import { RootStackParamList } from "@/navigation/types";
@@ -10,10 +10,11 @@ import { SwipeCard } from "@/components/SwipeCard";
 import { Button } from "@/components/Button";
 import { PostComposer } from "@/components/PostComposer";
 import { PostCard } from "@/components/PostCard";
-import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
+import { BOTTOM_NAV_HEIGHT, colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { useDiscoverFilters } from "@/lib/FilterContext";
 import {
+  deletePost,
   fetchConnections,
   fetchDiscoverProfiles,
   fetchPosts,
@@ -82,6 +83,15 @@ export default function HomeScreen({ navigation, route }: Props) {
     loadPosts();
   };
 
+  const onDeletePost = async (post: any) => {
+    try {
+      await deletePost(post.id);
+      setPosts((prev) => prev.filter((p) => p.id !== post.id));
+    } catch (e) {
+      Alert.alert("Verwijderen mislukt", getDataErrorMessage(e));
+    }
+  };
+
   const handleSwipe = async (profile: Profile, direction: "like" | "skip") => {
     setProfiles((prev) => prev.filter((p) => p.id !== profile.id));
     if (!session?.user) return;
@@ -121,7 +131,10 @@ export default function HomeScreen({ navigation, route }: Props) {
           {loading ? (
             <ActivityIndicator color={colors.primary} size="large" />
           ) : error ? (
-            <Text style={styles.empty}>{error}</Text>
+            <View style={styles.errorState}>
+              <Text style={styles.empty}>{error}</Text>
+              <Button label="Opnieuw proberen" variant="outline" onPress={loadDiscover} style={styles.retryButton} />
+            </View>
           ) : profiles.length === 0 ? (
             <Text style={styles.empty}>Geen sporters gevonden. Pas je filters aan of kom later terug.</Text>
           ) : (
@@ -209,7 +222,7 @@ export default function HomeScreen({ navigation, route }: Props) {
             )
           }
           renderItem={({ item }) => (
-            <PostCard post={item} currentUserId={session?.user?.id} onToggleLike={onLikePost} />
+            <PostCard post={item} currentUserId={session?.user?.id} onToggleLike={onLikePost} onDelete={onDeletePost} />
           )}
         />
       )}
@@ -261,9 +274,19 @@ const styles = StyleSheet.create({
   },
   actionRow: {
     flexDirection: "row",
+    width: "100%",
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
+    paddingTop: spacing.md,
+    // BottomNav (components/BottomNav.tsx) is position:"absolute", bottom:0,
+    // height: BOTTOM_NAV_HEIGHT - it's painted as an overlay, not reserved
+    // as flex space, and ScreenContainer's own bottom padding is off for
+    // this screen (withBottomPadding={false}, needed so the Connecties
+    // tab's FlatList can scroll full-bleed). Without this, actionRow (the
+    // last flex child of deckArea) lands flush with the screen's bottom
+    // edge - exactly where BottomNav paints on top, hiding Skip/Connect
+    // underneath it and stealing their taps.
+    paddingBottom: BOTTOM_NAV_HEIGHT + spacing.md,
   },
   actionButton: {
     flex: 1,
@@ -275,6 +298,14 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: spacing.xxl,
     paddingHorizontal: spacing.lg,
+  },
+  errorState: {
+    alignItems: "center",
+    paddingHorizontal: spacing.lg,
+  },
+  retryButton: {
+    marginTop: spacing.md,
+    minWidth: 160,
   },
   connectionsList: {
     padding: spacing.md,

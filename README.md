@@ -212,6 +212,34 @@ supabase functions deploy delete-account
 (geen `--no-verify-jwt` hier, in tegenstelling tot de pushmeldingen-functies -
 zie hierboven waarom.)
 
+## Mijn gegevens opvragen (recht op inzage/dataportabiliteit)
+
+"Mijn gegevens opvragen" (Instellingen → Account) toont een volledig
+overzicht van alle gegevens die aan het account gekoppeld zijn - profiel,
+matches + berichten, posts, swipes, abonnement, klantenservice-aanvragen,
+ingediende rapportages en blokkades (zie ook `DATA_INVENTORY.md` voor de
+volledige achterliggende inventarisatie). Het overzicht wordt volledig
+client-side samengesteld (`lib/dataExport.ts`) met dezelfde RLS-beperkte
+queries die de rest van de app al gebruikt om een gebruiker zijn eigen
+rijen te laten lezen - er is geen service-role toegang voor nodig, RLS
+beperkt elke bronquery al tot "eigen data".
+
+Het overzicht wordt zowel in de app getoond als - via de knop "Verstuur
+naar mijn e-mail" - verstuurd naar het eigen, bij het account geregistreerde
+e-mailadres via de nieuwe `send-data-export-email` Edge Function. Die
+functie haalt het e-mailadres zelf op via het JWT van de aanroeper
+(`auth.getUser()`), niet uit iets dat de client meestuurt - zo kan dit
+nooit gebruikt worden om andermans gegevens naar een ander adres te sturen.
+
+**Belangrijk:** deze sandbox heeft geen netwerktoegang tot Supabase's API,
+dus de functie kon hier niet gedeployed of getest worden. Deploy 'm zelf
+(gebruikt dezelfde `RESEND_API_KEY`/`RESEND_FROM_EMAIL`-secrets als
+`send-support-email` - niets nieuws te configureren):
+
+```bash
+supabase functions deploy send-data-export-email
+```
+
 ## Pushmeldingen (Expo Notifications)
 
 Na inloggen/registreren vraagt de app om toestemming voor pushmeldingen

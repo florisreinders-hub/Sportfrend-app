@@ -31,6 +31,7 @@ import HelpdeskScreen from "@/app/settings/HelpdeskScreen";
 import FaqScreen from "@/app/settings/FaqScreen";
 import SupportScreen from "@/app/settings/SupportScreen";
 import ChangeEmailScreen from "@/app/settings/ChangeEmailScreen";
+import DataExportScreen from "@/app/settings/DataExportScreen";
 
 import PricingScreen from "@/app/premium/PricingScreen";
 import PaymentScreen from "@/app/premium/PaymentScreen";
@@ -87,6 +88,7 @@ export function RootNavigator() {
           <Stack.Screen name="Faq" component={FaqScreen} />
           <Stack.Screen name="Support" component={SupportScreen} />
           <Stack.Screen name="ChangeEmail" component={ChangeEmailScreen} />
+          <Stack.Screen name="DataExport" component={DataExportScreen} />
           <Stack.Screen name="Pricing" component={PricingScreen} />
           <Stack.Screen name="Payment" component={PaymentScreen} />
         </>

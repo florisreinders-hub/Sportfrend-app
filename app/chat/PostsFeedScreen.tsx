@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { ActivityIndicator, FlatList, StyleSheet, Text } from "react-native";
+import { ActivityIndicator, Alert, FlatList, StyleSheet, Text } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 import { RootStackParamList } from "@/navigation/types";
@@ -10,7 +10,7 @@ import { PostComposer } from "@/components/PostComposer";
 import { PostCard } from "@/components/PostCard";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
-import { fetchPosts, toggleLike } from "@/lib/api";
+import { deletePost, fetchPosts, getDataErrorMessage, toggleLike } from "@/lib/api";
 
 type Props = NativeStackScreenProps<RootStackParamList, "PostsFeed">;
 
@@ -42,6 +42,15 @@ export default function PostsFeedScreen(_props: Props) {
     load();
   };
 
+  const onDelete = async (post: any) => {
+    try {
+      await deletePost(post.id);
+      setPosts((prev) => prev.filter((p) => p.id !== post.id));
+    } catch (e) {
+      Alert.alert("Verwijderen mislukt", getDataErrorMessage(e));
+    }
+  };
+
   return (
     <ScreenContainer withBottomPadding={false}>
       <TopBar />
@@ -59,7 +68,7 @@ export default function PostsFeedScreen(_props: Props) {
           contentContainerStyle={styles.list}
           ListEmptyComponent={<Text style={styles.empty}>Nog geen berichten. Plaats de eerste!</Text>}
           renderItem={({ item }) => (
-            <PostCard post={item} currentUserId={session?.user?.id} onToggleLike={onLike} />
+            <PostCard post={item} currentUserId={session?.user?.id} onToggleLike={onLike} onDelete={onDelete} />
           )}
         />
       )}
