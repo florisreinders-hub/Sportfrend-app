@@ -516,6 +516,21 @@ export async function notifySupportRequest(subject: string, message: string) {
   if (error) throw error;
 }
 
+/**
+ * Sends the "Mijn gegevens opvragen" export (lib/dataExport.ts) to the
+ * caller's own registered e-mail address via the send-data-export-email
+ * Edge Function. The function resolves the recipient itself from the
+ * caller's JWT (auth.getUser()) rather than trusting a client-supplied
+ * address - same reasoning as delete-account not trusting a client-
+ * supplied user id.
+ */
+export async function sendDataExportEmail(text: string) {
+  const { error } = await supabase.functions.invoke("send-data-export-email", {
+    body: { text },
+  });
+  if (error) throw error;
+}
+
 export const REPORT_REASONS: { key: string; label: string }[] = [
   { key: "ongepast_gedrag", label: "Ongepast gedrag" },
   { key: "nepprofiel", label: "Nepprofiel" },
@@ -556,4 +571,70 @@ export async function blockUser(blockerId: string, blockedId: string) {
     .from("blocks")
     .upsert({ blocker_id: blockerId, blocked_id: blockedId }, { onConflict: "blocker_id,blocked_id" });
   if (error) throw error;
+}
+
+// The four fetchers below back the "Mijn gegevens opvragen" export
+// (lib/dataExport.ts, SettingsScreen -> DataExportScreen) - each is scoped
+// to rows RLS already lets this user read about themselves (own swipes,
+// own support requests, own filed reports, own blocks), so no service-role
+// access is needed to assemble a complete export.
+
+export type OwnSwipe = { swiped_id: string; direction: string; created_at: string; swiped: Profile | null };
+
+export async function fetchOwnSwipes(userId: string): Promise<OwnSwipe[]> {
+  const { data, error } = await supabase
+    .from("swipes")
+    .select(`swiped_id, direction, created_at, swiped:profiles!swipes_swiped_id_fkey(${PROFILE_COLUMNS})`)
+    .eq("swiper_id", userId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as unknown as OwnSwipe[];
+}
+
+export async function fetchOwnSupportRequests(userId: string) {
+  const { data, error } = await supabase
+    .from("support_requests")
+    .select("subject, message, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export type OwnReport = {
+  reported_id: string;
+  reason: string;
+  details: string | null;
+  status: string;
+  created_at: string;
+  reported: Profile | null;
+};
+
+export async function fetchOwnReports(userId: string): Promise<OwnReport[]> {
+  const { data, error } = await supabase
+    .from("reports")
+    .select(`reported_id, reason, details, status, created_at, reported:profiles!reports_reported_id_fkey(${PROFILE_COLUMNS})`)
+    .eq("reporter_id", userId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as unknown as OwnReport[];
+}
+
+export type OwnBlock = { blocked_id: string; created_at: string; blocked: Profile | null };
+
+/**
+ * `blocked` will come back null for every row here, not just some - once a
+ * block exists, the profiles RLS policy hides that profile from *both*
+ * sides (see 0013_rls_security_audit_fixes.sql), including from the
+ * blocker looking back at who they blocked. The export shows the raw id
+ * with a note instead of a name in that case (see formatDataExportText).
+ */
+export async function fetchOwnBlocks(userId: string): Promise<OwnBlock[]> {
+  const { data, error } = await supabase
+    .from("blocks")
+    .select(`blocked_id, created_at, blocked:profiles!blocks_blocked_id_fkey(${PROFILE_COLUMNS})`)
+    .eq("blocker_id", userId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as unknown as OwnBlock[];
 }

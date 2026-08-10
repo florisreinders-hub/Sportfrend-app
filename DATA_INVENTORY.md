@@ -6,6 +6,8 @@ Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend 
 
 Laatst bijgewerkt: bij commit `1702eaa` ("Let a post's own author delete it, with a confirmation step").
 
+Gebruikers kunnen zelf een overzicht van (vrijwel) alle onderstaande gegevens opvragen via **Instellingen → "Mijn gegevens opvragen"** - zie README.md §"Mijn gegevens opvragen (recht op inzage/dataportabiliteit)" en `lib/dataExport.ts`.
+
 ---
 
 ## 1. Supabase Auth (`auth.users`)

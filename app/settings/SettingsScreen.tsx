@@ -137,6 +137,11 @@ export default function SettingsScreen({ navigation }: Props) {
               <Text style={styles.rowLabel}>Abonnement beheren</Text>
               <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
             </Pressable>
+            <Pressable style={styles.row} onPress={() => navigation.navigate("DataExport")}>
+              <Ionicons name="download-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>Mijn gegevens opvragen</Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+            </Pressable>
           </View>
 
           <View style={styles.section}>
