@@ -294,6 +294,19 @@ Zie `DATA_INVENTORY.md` §5 voor de volledige achtergrond. Draai
 `0001_init.sql` is ook bijgewerkt voor nieuwe installaties. Geen Edge
 Function of secret nodig, alleen deze migratie.
 
+**Opvolgbug, gevonden en gefixt in `0016_discover_profiles_no_implicit_defaults.sql`:**
+die eerste versie van `discover_profiles()` viel bij een niet-aangepast
+sport-/afstandsfilter stilzwijgend terug op het eigen profiel van de
+aanroeper (eigen sport, eigen `search_radius_km`) - terwijl het Filter-scherm
+in precies die staat altijd "ALLE SPORTEN" en een concrete "NNKM"-waarde
+toont, nooit een hint dat er iets anders wordt toegepast. Hierdoor
+verschenen 10 nieuw aangemaakte testprofielen (zie
+`supabase/seed/test_profiles_seed.sql`) niet in Ontdekken, puur omdat de
+sport van het testende account toevallig niet overeenkwam met een van de
+testprofielen. `p_sport`/`p_distance_km` worden nu exact toegepast zoals
+het Filter-scherm ze laat zien, zonder impliciete substitutie. Draai ook
+deze migratie op je bestaande database.
+
 ## Pushmeldingen (Expo Notifications)
 
 Na inloggen/registreren vraagt de app om toestemming voor pushmeldingen

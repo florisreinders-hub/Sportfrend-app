@@ -550,13 +550,20 @@ grant execute on function public.get_my_location() to authenticated;
 -- never a parameter - a viewer id parameter would let anyone query
 -- distances relative to someone else's location instead of their own) so
 -- raw coordinates for any *other* profile never leave the database at
--- all, only the resulting distance_km. Mirrors fetchDiscoverProfiles's
--- previous client-side filtering exactly: same sport/search-radius
--- fallback to the caller's own profile, same "no location set = no
--- distance narrowing" degradation, same visibility/block/already-swiped
--- exclusions RLS would otherwise apply (this function runs SECURITY
--- DEFINER and so bypasses RLS internally - those checks are re-implemented
--- here by hand instead).
+-- all, only the resulting distance_km.
+--
+-- p_sport and p_distance_km are applied exactly as passed, with no
+-- implicit fallback to the caller's own profile's sport/search_radius_km
+-- (an earlier version of this function did fall back that way, which was
+-- a bug: the Filter screen's sport pill always reads "Alle sporten" and
+-- its distance slider always shows a concrete "NNKM" value, by default
+-- and whenever left untouched - silently substituting the caller's own
+-- sport/radius behind that displayed value, instead of actually applying
+-- "no sport filter" / the displayed distance, meant a user (or a freshly
+-- seeded test profile whose own sport happened not to match anyone's)
+-- could see zero results despite the screen showing no active narrowing
+-- at all). See 0016_discover_profiles_no_implicit_defaults.sql for the
+-- full writeup of the bug this fixed.
 create or replace function public.discover_profiles(
   p_sport text default null,
   p_level text default null,
@@ -585,12 +592,8 @@ stable
 as $$
 declare
   v_uid uuid := auth.uid();
-  v_my_sport text;
   v_my_lat double precision;
   v_my_lng double precision;
-  v_my_radius_km double precision;
-  v_sport text;
-  v_radius_km double precision;
   v_min_birthdate date;
   v_max_birthdate date;
 begin
@@ -598,13 +601,10 @@ begin
     raise exception 'Not authenticated';
   end if;
 
-  select p.sport, p.latitude, p.longitude, p.search_radius_km
-    into v_my_sport, v_my_lat, v_my_lng, v_my_radius_km
+  select p.latitude, p.longitude
+    into v_my_lat, v_my_lng
   from public.profiles p
   where p.id = v_uid;
-
-  v_sport := coalesce(p_sport, v_my_sport);
-  v_radius_km := coalesce(p_distance_km, v_my_radius_km);
 
   if p_max_age is not null then
     v_min_birthdate := (current_date - (p_max_age || ' years')::interval)::date;
@@ -623,7 +623,7 @@ begin
         where (b.blocker_id = v_uid and b.blocked_id = p.id)
            or (b.blocker_id = p.id and b.blocked_id = v_uid)
       )
-      and (v_sport is null or p.sport = v_sport)
+      and (p_sport is null or p.sport = p_sport)
       and (p_level is null or p.level = p_level)
       and (v_min_birthdate is null or p.birthdate >= v_min_birthdate)
       and (v_max_birthdate is null or p.birthdate <= v_max_birthdate)
@@ -650,9 +650,9 @@ begin
   where
     -- Only apply the radius cutoff when the viewer actually has a location
     -- and a radius to compare against - no location set means no
-    -- distance-based narrowing at all, same as before.
-    (v_my_lat is null or v_my_lng is null or v_radius_km is null)
-    or (w.distance_km is not null and w.distance_km <= v_radius_km)
+    -- distance-based narrowing at all.
+    (v_my_lat is null or v_my_lng is null or p_distance_km is null)
+    or (w.distance_km is not null and w.distance_km <= p_distance_km)
   order by (case when w.distance_km is null then 1 else 0 end), w.distance_km asc nulls last
   limit p_limit;
 end;

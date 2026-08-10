@@ -125,25 +125,31 @@ export function calculateAge(birthdate: string | null | undefined): number | nul
 export type DiscoverProfile = Profile & { distance_km: number | null };
 
 /**
- * Discover feed: same sport as the current user (when set) and within their
- * search radius (when they have a location set), excluding the user and
- * anyone they've already swiped on. Both filters degrade gracefully - a
- * user who skipped location setup or hasn't picked a sport yet still sees
- * a feed, just without that particular narrowing.
+ * Discover feed: within the selected distance and matching the selected
+ * sport/level/age filters (see lib/FilterContext.tsx), excluding the user
+ * and anyone they've already swiped on.
  *
- * `filters` (set on the Filter screen, see lib/FilterContext.tsx) layer on
- * top of / override those profile-based defaults: an explicit sport/level
- * choice takes precedence over the profile's own sport, a narrowed distance
- * overrides the profile's search_radius_km, and an age ceiling below the
- * default (90) adds a birthdate range. Left-at-default filter values are
- * treated as "not set" so a user who never opens the Filter screen still
- * gets the same profile-based feed as before.
+ * p_sport and p_distance_km are sent exactly as the Filter screen
+ * currently shows them - `filters.sport === null` ("Alle sporten", the
+ * screen's permanent default label whether touched or not) means no sport
+ * filter, and `filters.distanceKm` is the literal km the slider displays.
+ * An earlier version of this function (and of discover_profiles() itself)
+ * silently substituted the caller's own profile.sport/search_radius_km
+ * whenever a filter was left at its default instead - which meant the
+ * screen could say "Alle sporten" / "150KM" while the query actually
+ * narrowed to the caller's own sport and a stale 25km default, hiding
+ * results (including freshly seeded test profiles) with no visible reason
+ * why. See 0016_discover_profiles_no_implicit_defaults.sql for the fix.
  *
- * All of this - including the sport/search-radius fallback to the caller's
- * own profile - runs inside the discover_profiles() Postgres function
- * (supabase/migrations/0014_discover_profiles_location_privacy.sql) rather
- * than here, because computing distance requires reading raw coordinates,
- * which this app no longer lets any client (including this one) read for
+ * Only maxAge keeps a "left at default = no filter" convention
+ * (filters.maxAge at its max, 90, already reads "18-90" on screen, i.e.
+ * genuinely no additional narrowing beyond the app's own 18+ minimum) -
+ * there's no separate profile-level default it could be confused with.
+ *
+ * The actual distance computation happens inside the discover_profiles()
+ * Postgres function (supabase/migrations/0014_discover_profiles_location_privacy.sql)
+ * rather than here, because it requires reading raw coordinates, which
+ * this app no longer lets any client (including this one) read for
  * someone else's profile at all - see PROFILE_COLUMNS's comment. The
  * function runs SECURITY DEFINER (so it can read the coordinates
  * internally) but only ever returns a computed distance_km, never the
@@ -162,7 +168,7 @@ export async function fetchDiscoverProfiles(
     p_sport: filters.sport,
     p_level: filters.level,
     p_max_age: filters.maxAge < DEFAULT_FILTERS.maxAge ? filters.maxAge : null,
-    p_distance_km: filters.distanceKm < DEFAULT_FILTERS.distanceKm ? filters.distanceKm : null,
+    p_distance_km: filters.distanceKm,
     p_limit: 20,
   });
   if (error) throw error;
