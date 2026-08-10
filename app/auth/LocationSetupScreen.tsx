@@ -37,15 +37,24 @@ export default function LocationSetupScreen({ navigation }: Props) {
     // rows and succeeds with no error, silently writing nothing. That
     // exact failure mode is indistinguishable from a real save without
     // checking the returned row, which a bare .update() doesn't give you.
+    //
+    // Only selects id/city back, not latitude/longitude: the
+    // `authenticated` role's column-level SELECT on those two is revoked
+    // (supabase/migrations/0014_discover_profiles_location_privacy.sql) -
+    // even reading back your own just-written coordinates needs the
+    // get_my_location() function instead of a plain column read (see
+    // PROFILE_COLUMNS's comment in lib/api.ts). Not needed here anyway -
+    // an upsert with onConflict always affects exactly one row, so getting
+    // any row back at all already confirms the write succeeded.
     const { data: saved, error: saveError } = await supabase
       .from("profiles")
       .upsert({ id: userData.user.id, ...fields }, { onConflict: "id" })
-      .select("id, latitude, longitude, city")
+      .select("id, city")
       .single();
 
     if (saveError) throw saveError;
 
-    const actuallySaved = Boolean(saved && (saved.latitude != null || saved.longitude != null || saved.city));
+    const actuallySaved = Boolean(saved?.id);
     console.log("[LocationSetup] Locatie opslaan voor profiel", userData.user.id, "->", saved, "ok:", actuallySaved);
     if (!actuallySaved) {
       throw new Error("Locatie opslaan is niet gelukt: de database bevestigt geen opgeslagen locatie.");

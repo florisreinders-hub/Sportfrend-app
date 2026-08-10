@@ -19,18 +19,23 @@ const AuthContext = createContext<AuthContextValue>({
   checkingLocation: false,
 });
 
+// Reads via get_my_location() (see PROFILE_COLUMNS's comment in lib/api.ts)
+// instead of a plain `profiles` select - the `authenticated` role's
+// column-level SELECT on latitude/longitude is revoked entirely
+// (supabase/migrations/0014_discover_profiles_location_privacy.sql), so
+// even reading back your own coordinates needs this SECURITY DEFINER
+// function scoped to auth.uid()'s own row. `userId` is only used for the
+// log line below - the function itself always resolves to the calling
+// session's own user regardless of what's passed here.
 async function fetchHasLocation(userId: string): Promise<boolean> {
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("latitude, longitude, city")
-    .eq("id", userId)
-    .maybeSingle();
+  const { data, error } = await supabase.rpc("get_my_location");
   if (error) {
     console.warn("[AuthContext] Kon locatiestatus niet ophalen:", error);
     return false;
   }
-  const hasLocation = Boolean(data && (data.latitude != null || data.longitude != null || data.city));
-  console.log("[AuthContext] Locatiestatus voor", userId, "->", data, "hasLocation:", hasLocation);
+  const row = Array.isArray(data) ? data[0] : data;
+  const hasLocation = Boolean(row && (row.latitude != null || row.longitude != null || row.city));
+  console.log("[AuthContext] Locatiestatus voor", userId, "->", row, "hasLocation:", hasLocation);
   return hasLocation;
 }
 

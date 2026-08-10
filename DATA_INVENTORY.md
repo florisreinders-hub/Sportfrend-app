@@ -1,10 +1,10 @@
 # Data-inventaris: persoonsgegevens in Sportfrend
 
-Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0013_rls_security_audit_fixes.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest.
+Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0014_discover_profiles_location_privacy.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest.
 
 **Dit is een technische inventaris, geen juridisch document.** Voor een AVG/GDPR-verwerkersregister, verwerkersovereenkomsten met Supabase/Resend/Expo/RevenueCat, en een officiële bewaartermijnenbeleid is juridisch advies nodig - dit document is bedoeld als de feitelijke basis daarvoor.
 
-Laatst bijgewerkt: bij commit `1702eaa` ("Let a post's own author delete it, with a confirmation step").
+Laatst bijgewerkt: bij de migratie die exacte locatiegegevens afschermt (zie §5) - `0014_discover_profiles_location_privacy.sql`.
 
 Gebruikers kunnen zelf een overzicht van (vrijwel) alle onderstaande gegevens opvragen via **Instellingen → "Mijn gegevens opvragen"** - zie README.md §"Mijn gegevens opvragen (recht op inzage/dataportabiliteit)" en `lib/dataExport.ts`.
 
@@ -39,14 +39,14 @@ Eén rij per gebruiker; bevat het overgrote deel van de persoonsgegevens in de a
 | `bio` | Ja (vrije tekst, kan alles bevatten) | Potentieel | Tot accountverwijdering of handmatige wijziging |
 | `sport`, `level` | Ja (voorkeuren) | - | Tot accountverwijdering of handmatige wijziging |
 | `city` | Ja | Ja (locatie) | Tot accountverwijdering of handmatige wijziging |
-| `latitude`, `longitude` | Ja, **exacte GPS-coördinaten** | **Ja, hoog gevoelig** | Tot accountverwijdering of handmatige wijziging - zie §5 |
+| `latitude`, `longitude` | Ja, **exacte GPS-coördinaten** | **Ja, hoog gevoelig** | Tot accountverwijdering of handmatige wijziging - zie §5. Sinds `0014_discover_profiles_location_privacy.sql` **niet meer rechtstreeks uitleesbaar door wie dan ook**, ook niet de eigenaar zelf via een gewone kolom-select - alleen via `get_my_location()` (eigen rij) of als berekende `distance_km` via `discover_profiles()` voor anderen. |
 | `search_radius_km` | Nee (instelling, geen persoonsgegeven op zich) | - | - |
 | `avatar_url`, `photo_url` | Ja (foto van de gebruiker) | Ja (biometrisch-achtig beeldmateriaal) | Zie §3 (Storage) - oude foto's blijven staan tot accountverwijdering |
 | `is_onboarded`, `profile_visible`, `push_notifications_enabled`, `availability_days` | Nee (app-instellingen) | - | - |
 | `expo_push_token` | Ja (apparaat-identifier) | Ja - zie §5 | Tot accountverwijdering of nieuwe registratie (wordt overschreven) |
 | `created_at`, `updated_at` | Metadata | - | Tot accountverwijdering |
 
-RLS: elke rij is leesbaar door alle ingelogde gebruikers **behalve** `expo_push_token` (kolom-niveau geblokkeerd voor iedereen behalve de service-role) en behalve wanneer er een blokkade bestaat of `profile_visible = false` (dan alleen zichtbaar voor de eigenaar zelf of een bestaande match). Zie `supabase/migrations/0013_rls_security_audit_fixes.sql`.
+RLS + kolomrechten: elke rij is leesbaar door alle ingelogde gebruikers **behalve** `expo_push_token` en `latitude`/`longitude` (beide kolom-niveau geblokkeerd voor de `authenticated`-rol, alleen bereikbaar via de `SECURITY DEFINER`-functies hierboven) en behalve wanneer er een blokkade bestaat of `profile_visible = false` (dan alleen zichtbaar voor de eigenaar zelf of een bestaande match). Zie `supabase/migrations/0013_rls_security_audit_fixes.sql` en `0014_discover_profiles_location_privacy.sql`.
 
 ### `swipes`
 
@@ -137,7 +137,7 @@ Geen analytics-, crash-reporting- of trackingdiensten (bijv. Sentry, Amplitude, 
 
 ## 5. Specifiek gevoelige gegevens - aandachtspunten
 
-- **Exacte locatie (`profiles.latitude`/`longitude`)**: wordt clientside gebruikt voor afstandsberekening in Ontdekken (`fetchDiscoverProfiles`, `lib/api.ts`), en is daardoor **noodzakelijkerwijs ruw uitleesbaar** door elke gebruiker die een ander profiel mag zien (zie RLS in `profiles`) - er is geen server-side afstandsberekening die de ruwe coördinaten zou kunnen afschermen. Dit is een architecturale afweging, geen bug; het is wel de meest privacygevoelige kolom in de hele database en verdient expliciete aandacht in een privacyverklaring/DPIA.
+- **Exacte locatie (`profiles.latitude`/`longitude`) - opgelost**: tot `0014_discover_profiles_location_privacy.sql` werd afstand clientside berekend in Ontdekken (`fetchDiscoverProfiles`, `lib/api.ts`), wat ruwe coördinaten van elk profiel naar de client stuurde. Afstandsberekening gebeurt nu volledig server-side in de `discover_profiles()`-Postgres-functie, die alleen een berekende `distance_km` teruggeeft; de kolommen zelf zijn kolom-niveau afgeschermd voor de `authenticated`-rol (ook voor de eigenaar via het normale pad - die leest zijn eigen coördinaten voortaan via `get_my_location()`). Nog steeds de meest privacygevoelige kolom in de database en het verdient nog steeds expliciete aandacht in een privacyverklaring/DPIA, maar niet langer ruw uitleesbaar door andere gebruikers.
 - **`expo_push_token`**: sinds de RLS-beveiligingsaudit (`0013_rls_security_audit_fixes.sql`) alleen nog leesbaar voor de service-role, niet meer voor andere gebruikers - eerder kon elke ingelogde gebruiker andermans token uitlezen en daarmee (via Expo's ongeauthenticeerde push-API) willekeurige pushmeldingen naar dat toestel sturen.
 - **Berichtinhoud naar Expo's push-API**: de eerste 120 tekens van elk bericht verlaten Supabase's infrastructuur richting `exp.host` bij het versturen van een melding. Gebruikers worden hier nergens expliciet over geïnformeerd in de huidige UI.
 - **`reports`/`blocks`**: bevatten per definitie gegevens over een derde (de gerapporteerde/geblokkeerde persoon) die niet door die derde zelf zijn verstrekt - relevant voor een eventueel recht op inzage/verwijdering van die derde persoon, wat lastiger is dan bij gegevens die iemand over zichzelf invult.

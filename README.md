@@ -240,6 +240,34 @@ dus de functie kon hier niet gedeployed of getest worden. Deploy 'm zelf
 supabase functions deploy send-data-export-email
 ```
 
+## Locatieprivacy (exacte coördinaten niet meer ruw uitleesbaar)
+
+`profiles.latitude`/`longitude` (exacte GPS-coördinaten) waren tot voor kort
+ruw uitleesbaar door elke ingelogde gebruiker die een profiel mocht zien -
+Ontdekken (`fetchDiscoverProfiles`, `lib/api.ts`) haalde ze rechtstreeks op
+om de afstand client-side te berekenen. Sinds
+`supabase/migrations/0014_discover_profiles_location_privacy.sql` is dat
+niet meer mogelijk:
+
+- **`get_my_location()`** (SQL-functie, `SECURITY DEFINER`) geeft alleen de
+  eigen coördinaten van de aanroeper terug (`auth.uid()`) - gebruikt door
+  `lib/AuthContext.tsx` (locatiecheck) en "Mijn gegevens opvragen".
+- **`discover_profiles(...)`** (SQL-functie, `SECURITY DEFINER`) doet de
+  volledige Ontdekken-query server-side: dezelfde sport/niveau/leeftijd/
+  straal-filters als voorheen, maar geeft per kandidaat alleen een berekende
+  `distance_km` terug - nooit de ruwe coördinaten. `fetchDiscoverProfiles`
+  roept deze functie nu aan via `supabase.rpc(...)` in plaats van zelf
+  haversine-wiskunde te doen op ruwe kolommen.
+- Op tabelniveau is `select` op `latitude`/`longitude` volledig ingetrokken
+  voor de `authenticated`-rol (`revoke select ... / grant select (...)` op
+  `public.profiles`) - dit geldt ook voor de eigenaar zelf via een gewone
+  kolom-select; alleen de functies hierboven kunnen er nog bij.
+
+Zie `DATA_INVENTORY.md` §5 voor de volledige achtergrond. Draai
+`0014_discover_profiles_location_privacy.sql` op je bestaande database -
+`0001_init.sql` is ook bijgewerkt voor nieuwe installaties. Geen Edge
+Function of secret nodig, alleen deze migratie.
+
 ## Pushmeldingen (Expo Notifications)
 
 Na inloggen/registreren vraagt de app om toestemming voor pushmeldingen
