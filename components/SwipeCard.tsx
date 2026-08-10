@@ -1,23 +1,26 @@
 import React, { useRef } from "react";
-import { Animated, Image, PanResponder, Pressable, StyleSheet, Text, View, Dimensions } from "react-native";
+import { Animated, Image, PanResponder, StyleSheet, Text, View, Dimensions } from "react-native";
 import { fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { calculateAge, Profile } from "@/lib/api";
 import { sportPhotoPlaceholder } from "@/constants/placeholders";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.28;
-// Below this, a touch is treated as a tap (opens the profile) rather than a
-// drag (swipes the card) - lets both gestures live on the same card.
+// Minimum movement before a touch counts as a drag at all - without this,
+// a near-stationary touch could register as a tiny, jittery swipe attempt.
 const DRAG_CLAIM_THRESHOLD = 6;
 
 type Props = {
   profile: Profile;
   onSwiped: (direction: "like" | "skip") => void;
-  onPress?: () => void;
   isTop: boolean;
 };
 
-export function SwipeCard({ profile, onSwiped, onPress, isTop }: Props) {
+// Deliberately no onPress/tap-to-view-profile here - Ontdekken is the only
+// place this is used, and tapping a candidate there must never open their
+// full "Sporters profiel bekijken" screen (that's only reachable from an
+// actual match/connection, e.g. via Connecties).
+export function SwipeCard({ profile, onSwiped, isTop }: Props) {
   const position = useRef(new Animated.ValueXY()).current;
 
   const panResponder = useRef(
@@ -64,7 +67,7 @@ export function SwipeCard({ profile, onSwiped, onPress, isTop }: Props) {
       style={[styles.card, cardStyle]}
       {...(isTop ? panResponder.panHandlers : {})}
     >
-      <Pressable onPress={onPress} disabled={!isTop} style={styles.pressable}>
+      <View style={styles.pressable}>
         <Image
           source={{ uri: profile.photo_url ?? sportPhotoPlaceholder(profile.id) }}
           style={styles.photo}
@@ -76,7 +79,7 @@ export function SwipeCard({ profile, onSwiped, onPress, isTop }: Props) {
           <Text style={styles.overlayText}>Locatie:{profile.city ?? "-"}</Text>
           <Text style={styles.overlayText}>Niveau: {profile.level ?? "-"}</Text>
         </View>
-      </Pressable>
+      </View>
     </Animated.View>
   );
 }

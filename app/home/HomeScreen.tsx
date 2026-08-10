@@ -144,12 +144,18 @@ export default function HomeScreen({ navigation, route }: Props) {
                   .slice(0, 3)
                   .reverse()
                   .map((profile, index, arr) => (
+                    // isTop is true for the *last* item of this reversed,
+                    // sliced-to-3 copy - which is profiles[0] of the real
+                    // array (the nearest/first candidate), not
+                    // profiles[profiles.length - 1]. It's the card
+                    // rendered last (so painted on top) and the only one
+                    // with an active drag gesture (SwipeCard's own
+                    // isTop-gated PanResponder).
                     <SwipeCard
                       key={profile.id}
                       profile={profile}
                       isTop={index === arr.length - 1}
                       onSwiped={(direction) => handleSwipe(profile, direction)}
-                      onPress={() => navigation.navigate("SporterProfile", { sporterId: profile.id })}
                     />
                   ))}
               </View>
@@ -158,13 +164,13 @@ export default function HomeScreen({ navigation, route }: Props) {
                   label="Skip"
                   variant="danger"
                   style={styles.actionButton}
-                  onPress={() => handleSwipe(profiles[profiles.length - 1], "skip")}
+                  onPress={() => handleSwipe(profiles[0], "skip")}
                 />
                 <Button
                   label="Connect"
                   variant="primary"
                   style={styles.actionButton}
-                  onPress={() => handleSwipe(profiles[profiles.length - 1], "like")}
+                  onPress={() => handleSwipe(profiles[0], "like")}
                 />
               </View>
             </>
@@ -196,10 +202,22 @@ export default function HomeScreen({ navigation, route }: Props) {
                           })
                         }
                       >
-                        <Image
-                          source={{ uri: other?.photo_url ?? avatarPlaceholder(other?.id ?? item.id) }}
-                          style={styles.avatar}
-                        />
+                        {/* Its own nested Pressable (RN resolves this before the
+                            row's own onPress) - viewing a connection's full
+                            profile is only reachable from here, after an
+                            actual match, never from Ontdekken. Falls back to
+                            just opening the chat (the row's own onPress) when
+                            other's real id isn't available. */}
+                        {other?.id ? (
+                          <Pressable onPress={() => navigation.navigate("SporterProfile", { sporterId: other.id })}>
+                            <Image source={{ uri: other?.photo_url ?? avatarPlaceholder(other.id) }} style={styles.avatar} />
+                          </Pressable>
+                        ) : (
+                          <Image
+                            source={{ uri: other?.photo_url ?? avatarPlaceholder(item.id) }}
+                            style={styles.avatar}
+                          />
+                        )}
                         <View>
                           <Text style={styles.connectionName}>{other?.full_name ?? "Sportmaatje"}</Text>
                           <Text style={styles.connectionMeta}>{other?.sport ?? "Sport onbekend"}</Text>
