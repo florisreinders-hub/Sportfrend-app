@@ -348,6 +348,39 @@ export async function fetchPosts() {
   return data ?? [];
 }
 
+/**
+ * Posts for the Connecties tab: only the caller's own posts plus posts by
+ * an author they have an existing match with - never "everyone", unlike
+ * fetchPosts() (used by the public Berichten feed). `connections` is
+ * whatever fetchConnections(userId) already returned - the Connecties tab
+ * always fetches that first anyway, so this reuses it instead of a second
+ * round trip to resolve matched author ids.
+ *
+ * This mirrors the "Posts are readable by their author or a match" RLS
+ * policy (0017_posts_match_only.sql) exactly - that policy is the actual
+ * enforcement boundary (a hand-crafted API call bypassing this function
+ * entirely still can't read a stranger's post), this client-side filter
+ * just keeps the query's intent explicit rather than relying solely on
+ * rows silently disappearing.
+ */
+export async function fetchConnectionPosts(
+  userId: string,
+  connections: Awaited<ReturnType<typeof fetchConnections>>
+) {
+  const matchedAuthorIds = connections
+    .map((c: any) => (c.user_a_id === userId ? c.user_b?.id : c.user_a?.id))
+    .filter((id: string | undefined): id is string => Boolean(id));
+  const authorIds = [userId, ...matchedAuthorIds];
+
+  const { data, error } = await supabase
+    .from("posts")
+    .select(`*, author:profiles!posts_author_id_fkey(${PROFILE_COLUMNS}), post_likes(user_id)`)
+    .in("author_id", authorIds)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
 export async function fetchPostsByAuthor(authorId: string) {
   const { data, error } = await supabase
     .from("posts")

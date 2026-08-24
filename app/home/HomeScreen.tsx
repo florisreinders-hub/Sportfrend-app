@@ -15,9 +15,9 @@ import { useAuth } from "@/lib/AuthContext";
 import { useDiscoverFilters } from "@/lib/FilterContext";
 import {
   deletePost,
+  fetchConnectionPosts,
   fetchConnections,
   fetchDiscoverProfiles,
-  fetchPosts,
   getDataErrorMessage,
   recordSwipe,
   toggleLike,
@@ -51,23 +51,34 @@ export default function HomeScreen({ navigation, route }: Props) {
     }
   }, [session?.user, filters]);
 
-  const loadPosts = useCallback(async () => {
-    setPosts(await fetchPosts());
-  }, []);
+  // Posts here are deliberately restricted to the caller's own + matched
+  // authors' (fetchConnectionPosts, lib/api.ts) - the Connecties tab must
+  // never show everyone's posts, unlike the public Berichten feed
+  // (PostsFeedScreen, fetchPosts()). Needs `connections` to already be
+  // loaded (it derives matched author ids from it), so this always runs
+  // right after fetchConnections resolves rather than in parallel with it.
+  const loadConnectionPosts = useCallback(
+    async (connectionsData: Awaited<ReturnType<typeof fetchConnections>>) => {
+      if (!session?.user) return;
+      setPosts(await fetchConnectionPosts(session.user.id, connectionsData));
+    },
+    [session?.user]
+  );
 
   const loadConnectiesTab = useCallback(async () => {
     if (!session?.user) return;
     setLoading(true);
     setError(null);
     try {
-      const [connectionsData] = await Promise.all([fetchConnections(session.user.id), loadPosts()]);
+      const connectionsData = await fetchConnections(session.user.id);
       setConnections(connectionsData);
+      await loadConnectionPosts(connectionsData);
     } catch (e) {
       setError(getDataErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  }, [session?.user, loadPosts]);
+  }, [session?.user, loadConnectionPosts]);
 
   useFocusEffect(
     useCallback(() => {
@@ -80,7 +91,7 @@ export default function HomeScreen({ navigation, route }: Props) {
     if (!session?.user) return;
     const liked = post.post_likes?.some((l: any) => l.user_id === session.user.id);
     await toggleLike(post.id, session.user.id, liked);
-    loadPosts();
+    await loadConnectionPosts(connections);
   };
 
   const onDeletePost = async (post: any) => {

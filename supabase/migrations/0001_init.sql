@@ -393,10 +393,26 @@ create policy "Match participants can send messages"
     )
   );
 
-create policy "Posts are readable by authenticated users"
+-- A post is only readable by its own author or by someone with an
+-- existing match with that author - never "everyone". See
+-- 0017_posts_match_only.sql for the full writeup of why this replaced
+-- the previous `using (true)` (fully public) policy: fetchConnectionPosts()
+-- (lib/api.ts) mirrors this exact same restriction client-side for the
+-- Connecties tab, but this policy is the actual, unbypassable
+-- enforcement boundary. This also narrows fetchPosts() (the Berichten
+-- feed, PostsFeedScreen) to the same subset, since RLS applies uniformly
+-- regardless of which screen's query hits this table.
+create policy "Posts are readable by their author or a match"
   on public.posts for select
   to authenticated
-  using (true);
+  using (
+    auth.uid() = author_id
+    or exists (
+      select 1 from public.matches m
+      where (m.user_a_id = auth.uid() and m.user_b_id = posts.author_id)
+         or (m.user_b_id = auth.uid() and m.user_a_id = posts.author_id)
+    )
+  );
 
 create policy "Users manage their own posts"
   on public.posts for insert

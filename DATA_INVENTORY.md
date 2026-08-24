@@ -77,7 +77,7 @@ Berichttekst (eerste 120 tekens) verlaat de eigen infrastructuur richting Expo's
 
 | Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
 |---|---|---|---|
-| `author_id`, `body`, `image_url`, `sport`, `event_date` | Ja (openbare community-post) | - (bewust publiek zichtbaar voor alle ingelogde gebruikers) | Tot de auteur het bericht zelf verwijdert (sinds commit `1702eaa`) of accountverwijdering |
+| `author_id`, `body`, `image_url`, `sport`, `event_date` | Ja (community-post) | - (zichtbaar voor de auteur zelf en gebruikers waarmee de auteur een bestaande match heeft - sinds migratie `0017_posts_match_only.sql`; daarvoor publiek zichtbaar voor alle ingelogde gebruikers) | Tot de auteur het bericht zelf verwijdert (sinds commit `1702eaa`) of accountverwijdering |
 | `post_likes.user_id` | Ja (wie heeft wat geliked, publiek zichtbaar) | - | Tot unliken of accountverwijdering |
 
 ### `reports`
