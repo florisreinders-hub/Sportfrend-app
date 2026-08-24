@@ -1,6 +1,9 @@
--- Removes every test profile created by test_profiles_seed.sql, and
--- nothing else - matches only the @sportfrend-test.nl e-mail domain that
--- script deliberately used specifically so this cleanup is unambiguous.
+-- Removes every test profile created by test_profiles_seed.sql
+-- (test1-test10) AND test_profiles_11_30_seed.sql (test11-test30) in one
+-- go - matches only the @sportfrend-test.nl e-mail domain both scripts
+-- deliberately use specifically so this cleanup is unambiguous and covers
+-- any future test*@sportfrend-test.nl batch too, with no changes needed
+-- here.
 --
 -- Deleting the auth.users rows cascades (on delete cascade, via
 -- profiles.id -> auth.users(id), and every other table with personal
