@@ -1,15 +1,27 @@
 import React, { forwardRef } from "react";
-import { StyleSheet, Text, TextInput, TextInputProps, View } from "react-native";
+import { StyleSheet, Text, TextInput, TextInputProps, View, ViewStyle } from "react-native";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 
 type Props = TextInputProps & {
   label?: string;
   error?: string;
+  /**
+   * Style for the outer wrapping View (e.g. `flex: 1` to make the field
+   * share a row with a sibling). `style` only reaches the inner TextInput,
+   * so a caller that needs the *field itself* to grow within a row - not
+   * just its text box - must use this instead: `flex` only resolves against
+   * an item's immediate parent, and the wrapper here has no size of its own
+   * to hand a flexed TextInput.
+   */
+  containerStyle?: ViewStyle;
 };
 
-export const Input = forwardRef<TextInput, Props>(function Input({ label, error, style, ...rest }, ref) {
+export const Input = forwardRef<TextInput, Props>(function Input(
+  { label, error, style, containerStyle, ...rest },
+  ref
+) {
   return (
-    <View style={styles.wrapper}>
+    <View style={[styles.wrapper, containerStyle]}>
       {label ? <Text style={styles.label}>{label}</Text> : null}
       <TextInput
         ref={ref}

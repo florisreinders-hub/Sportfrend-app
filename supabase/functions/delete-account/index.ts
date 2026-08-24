@@ -68,6 +68,27 @@ Deno.serve(async (req) => {
       await admin.storage.from("profile-photos").remove(files.map((file) => `${user.id}/${file.name}`));
     }
 
+    // Same orphaning problem for chat images (0018_chat_images.sql), except
+    // that bucket is keyed by match_id, not by this user's own id (both
+    // participants need to reach a shared image), so there's no single
+    // "<user_id>/" folder to just list and wipe. Look up every match this
+    // user is (still, pre-cascade) part of, and remove only the objects
+    // this user themself uploaded into each one - path convention
+    // "<match_id>/<sender_id>-<timestamp>.<ext>", so a "<sender_id>-"
+    // prefix match is exactly this user's own uploads, leaving the other
+    // participant's images (if any) untouched.
+    const { data: ownMatches } = await admin
+      .from("matches")
+      .select("id")
+      .or(`user_a_id.eq.${user.id},user_b_id.eq.${user.id}`);
+    for (const match of ownMatches ?? []) {
+      const { data: matchFiles } = await admin.storage.from("chat-images").list(match.id);
+      const ownFiles = (matchFiles ?? []).filter((file) => file.name.startsWith(`${user.id}-`));
+      if (ownFiles.length > 0) {
+        await admin.storage.from("chat-images").remove(ownFiles.map((file) => `${match.id}/${file.name}`));
+      }
+    }
+
     // public.profiles.id references auth.users(id) on delete cascade, and
     // every other table with personal data (swipes, matches, messages,
     // posts, post_likes, subscriptions, support_requests, reports, blocks)

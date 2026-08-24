@@ -11,15 +11,16 @@ import {
   Text,
   View,
 } from "react-native";
+import * as ImagePicker from "expo-image-picker";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { Input } from "@/components/Input";
-import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
+import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { blockUser, fetchMessages, getDataErrorMessage, Message, sendMessage } from "@/lib/api";
+import { blockUser, fetchMessages, getDataErrorMessage, Message, sendMessage, uploadChatImage } from "@/lib/api";
 import { ReportModal } from "@/components/ReportModal";
 
 type Props = NativeStackScreenProps<RootStackParamList, "ChatDetail">;
@@ -31,6 +32,7 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [reportVisible, setReportVisible] = useState(false);
   const listRef = useRef<FlatList>(null);
 
@@ -81,6 +83,27 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
       Alert.alert("Versturen mislukt", getDataErrorMessage(e));
     } finally {
       setSending(false);
+    }
+  };
+
+  const onPickImage = async () => {
+    if (!session?.user || uploadingImage || sending) return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.7,
+    });
+    if (result.canceled || !result.assets[0]) return;
+
+    setUploadingImage(true);
+    try {
+      const imageUrl = await uploadChatImage(chatId, session.user.id, result.assets[0].uri);
+      const inserted = await sendMessage(chatId, session.user.id, draft.trim(), imageUrl);
+      setMessages((prev) => (prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]));
+      setDraft("");
+    } catch (e) {
+      Alert.alert("Versturen mislukt", getDataErrorMessage(e));
+    } finally {
+      setUploadingImage(false);
     }
   };
 
@@ -159,7 +182,10 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
               const isMine = item.sender_id === session?.user?.id;
               return (
                 <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleTheirs]}>
-                  <Text style={styles.bubbleText}>{item.body}</Text>
+                  {item.image_url ? (
+                    <Image source={{ uri: item.image_url }} style={styles.bubbleImage} resizeMode="cover" />
+                  ) : null}
+                  {item.body ? <Text style={styles.bubbleText}>{item.body}</Text> : null}
                   <Text style={[styles.bubbleTime, isMine ? styles.bubbleTimeMine : styles.bubbleTimeTheirs]}>
                     {new Date(item.created_at).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}
                   </Text>
@@ -171,13 +197,25 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
         )}
 
         <View style={styles.inputRow}>
+          <Pressable
+            onPress={onPickImage}
+            hitSlop={8}
+            disabled={uploadingImage || sending}
+            style={[styles.imageButton, (uploadingImage || sending) && styles.sendButtonDisabled]}
+          >
+            {uploadingImage ? (
+              <ActivityIndicator color={colors.black} size="small" />
+            ) : (
+              <Ionicons name="image-outline" size={22} color={colors.black} />
+            )}
+          </Pressable>
           <Input
             placeholder="Typ een bericht"
             value={draft}
             onChangeText={setDraft}
             onSubmitEditing={onSend}
             returnKeyType="send"
-            style={styles.input}
+            containerStyle={styles.inputContainer}
           />
           <Pressable
             onPress={onSend}
@@ -247,6 +285,13 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.md,
     color: colors.black,
   },
+  bubbleImage: {
+    width: 200,
+    height: 200,
+    borderRadius: radii.sm,
+    marginBottom: spacing.xs,
+    backgroundColor: colors.border,
+  },
   bubbleTime: {
     fontFamily: fonts.body,
     fontSize: 10,
@@ -265,13 +310,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
   },
-  input: {
+  inputContainer: {
     flex: 1,
-    marginBottom: spacing.md,
+    marginBottom: 0,
+  },
+  imageButton: {
+    width: 32,
+    justifyContent: "center",
+    alignItems: "center",
   },
   sendButton: {
-    marginBottom: spacing.md,
+    justifyContent: "center",
+    alignItems: "center",
   },
   sendButtonDisabled: {
     opacity: 0.4,

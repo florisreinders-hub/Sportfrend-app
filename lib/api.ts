@@ -241,6 +241,7 @@ export type Message = {
   match_id: string;
   sender_id: string;
   body: string;
+  image_url: string | null;
   created_at: string;
   read_at: string | null;
 };
@@ -255,14 +256,39 @@ export async function fetchMessages(matchId: string): Promise<Message[]> {
   return data ?? [];
 }
 
-export async function sendMessage(matchId: string, senderId: string, body: string) {
+export async function sendMessage(matchId: string, senderId: string, body: string, imageUrl?: string | null) {
   const { data, error } = await supabase
     .from("messages")
-    .insert({ match_id: matchId, sender_id: senderId, body })
+    .insert({ match_id: matchId, sender_id: senderId, body, image_url: imageUrl ?? null })
     .select("*")
     .single();
   if (error) throw error;
   return data as Message;
+}
+
+/**
+ * Uploads a picked image to the "chat-images" bucket under
+ * "<matchId>/<senderId>-<timestamp>.<ext>" (0018_chat_images.sql - the
+ * match_id-keyed path is what the storage RLS policies check to allow
+ * both participants, not just the sender, to read/manage it) and returns
+ * its public URL. Caller is responsible for then passing that URL into
+ * sendMessage.
+ */
+export async function uploadChatImage(matchId: string, senderId: string, localUri: string): Promise<string> {
+  const response = await fetch(localUri);
+  const arrayBuffer = await response.arrayBuffer();
+  const extMatch = localUri.match(/\.(\w+)$/);
+  const ext = (extMatch?.[1] ?? "jpg").toLowerCase();
+  const contentType = ext === "png" ? "image/png" : "image/jpeg";
+  const path = `${matchId}/${senderId}-${Date.now()}.${ext}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("chat-images")
+    .upload(path, arrayBuffer, { contentType, upsert: true });
+  if (uploadError) throw uploadError;
+
+  const { data } = supabase.storage.from("chat-images").getPublicUrl(path);
+  return data.publicUrl;
 }
 
 export type Conversation = {

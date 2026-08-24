@@ -12,7 +12,7 @@ beschikbaar.
 - **Connecties**: overzicht van je matches
 - **Filter**: leeftijd, afstand, sport, niveau, beschikbaarheid
 - **Profielen**: sporters bekijken, je eigen profiel bekijken en bewerken
-- **Berichten**: community-feed ("Bericht plaatsen", alleen zichtbaar voor de auteur zelf en diens matches) en realtime 1-op-1 chat
+- **Berichten**: community-feed ("Bericht plaatsen", alleen zichtbaar voor de auteur zelf en diens matches) en realtime 1-op-1 chat, inclusief het versturen van foto's
 - **Instellingen**: account, voorkeuren, e-mail wijzigen
 - **Premium & Elite**: Basis (gratis), Premium (€4,99/mnd), Elite (€9,99/mnd) + betaalscherm
 - **Ondersteuning**: Helpdesk, veelgestelde vragen, klantenservice
@@ -115,7 +115,9 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
 - `profiles` — sport, niveau, locatie, geboortedatum, geslacht, etc. (1:1 met `auth.users`)
 - `swipes` — like/skip acties tussen profielen
 - `matches` — ontstaat automatisch wanneer twee profielen elkaar liken
-- `messages` — 1-op-1 chatberichten per match, met Supabase Realtime
+- `messages` — 1-op-1 chatberichten per match, met Supabase Realtime;
+  kunnen optioneel een `image_url` dragen (foto's, `chat-images`-bucket,
+  zie 0018)
 - `posts` / `post_likes` — de "Bericht plaatsen" community-feed, alleen
   zichtbaar voor de auteur en diens matches (RLS, zie 0017)
 - `subscriptions` — Basis / Premium / Elite abonnement per gebruiker
@@ -208,9 +210,11 @@ Die functie draait met de service-role key (nodig om zowel de
 `auth.users`-rij als de opgeslagen profielfoto's te verwijderen - dat kan
 niet met een gewone gebruikerssessie) en verwijdert, in deze volgorde:
 
-1. De bestanden van de gebruiker in de `profile-photos`-storage-bucket
-   (die worden niet automatisch opgeruimd - er loopt geen foreign key van
-   `storage.objects` naar `auth.users`).
+1. De bestanden van de gebruiker in de `profile-photos`-storage-bucket,
+   en de door de gebruiker zelf geüploade chatafbeeldingen in de
+   `chat-images`-bucket (per match waar de gebruiker deel van was) - die
+   worden niet automatisch opgeruimd, er loopt geen foreign key van
+   `storage.objects` naar `auth.users`.
 2. De `auth.users`-rij zelf, via `auth.admin.deleteUser()`. Omdat
    `profiles.id` verwijst naar `auth.users(id)` met `on delete cascade`, en
    elke andere tabel met persoonlijke gegevens (`swipes`, `matches`,

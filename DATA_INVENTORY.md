@@ -69,6 +69,7 @@ Nooit rechtstreeks leesbaar voor de andere partij (behalve een gerichte 'like', 
 |---|---|---|---|
 | `sender_id` | Ja | - | Tot verwijdering van het bijbehorende match of accountverwijdering |
 | `body` | Ja, **kan alle inhoud bevatten die gebruikers uitwisselen** | Potentieel hoog (afhankelijk van inhoud) | idem - geen aparte verwijderfunctie per bericht |
+| `image_url` | Ja, indien gezet - link naar een door de gebruiker verstuurde foto (sinds migratie `0018_chat_images.sql`), opgeslagen in de publieke Storage-bucket `chat-images` onder `<match_id>/<sender_id>-<timestamp>.<ext>` | Potentieel hoog (afhankelijk van de foto-inhoud) | Bij accountverwijdering wordt het bestand in Storage nu ook expliciet verwijderd (net als profielfoto's, zie `delete-account`); bij het losstaand verwijderen van alléén het match ("Vriend verwijderen") blijft het bestand in Storage wel achter, ook al verdwijnt de berichtrij zelf |
 | `created_at`, `read_at` | Metadata | - | idem |
 
 Berichttekst (eerste 120 tekens) verlaat de eigen infrastructuur richting Expo's push-API bij het versturen van een pushmelding - zie §4.
@@ -110,13 +111,14 @@ Alleen de melder zelf kan zijn eigen rapportages lezen; er is geen moderator-rol
 
 ---
 
-## 3. Supabase Storage (`profile-photos`-bucket)
+## 3. Supabase Storage (`profile-photos`- en `chat-images`-buckets)
 
 | Gegeven | Gevoelig | Bewaartermijn |
 |---|---|---|
 | Profielfoto's, pad `{user_id}/{timestamp}.{ext}` | Ja (beeldmateriaal van de gebruiker) | **Elke upload krijgt een nieuw bestand; de vorige foto wordt niet automatisch verwijderd** - oude foto's blijven dus staan totdat het hele account verwijderd wordt (`delete-account` ruimt dan de volledige map van die gebruiker op) |
+| Chatafbeeldingen (`chat-images`-bucket), pad `{match_id}/{sender_id}-{timestamp}.{ext}` (sinds `0018_chat_images.sql`) | Ja (beeldmateriaal dat de gebruiker in een chat verstuurt) | Blijft staan zolang het match bestaat; `delete-account` ruimt bij accountverwijdering alle door die gebruiker geüploade chatafbeeldingen op (in elk match waar diegene deel van was) - het losstaand verwijderen van één match ("Vriend verwijderen") ruimt de bijbehorende afbeeldingen echter niet op |
 
-De bucket is publiek leesbaar (`public: true`) - elke URL is opvraagbaar door iedereen die hem kent, ingelogd of niet, zolang het account niet verwijderd is.
+Beide buckets zijn publiek leesbaar (`public: true`) - elke URL is opvraagbaar door iedereen die hem kent, ingelogd of niet, zolang het bestand niet verwijderd is. Voor `chat-images` is het pad (met een niet te raden `match_id` en timestamp) de facto de enige bescherming tegen willekeurige toegang; wie mag *uploaden* of *verwijderen* wordt wél afgedwongen via RLS-policies op `storage.objects`, die controleren of de aanvrager daadwerkelijk deelnemer is van het match in het pad.
 
 ---
 
@@ -152,6 +154,6 @@ Er is **geen automatische verwijdering/expiratie** op enige tabel (geen TTL, gee
 |---|---|
 | Gebruiker verwijdert een match ("Vriend verwijderen") | Verwijdert alleen die `matches`-rij (en daarmee, via RLS, de zichtbaarheid van bijbehorende `messages` - de berichtrijen zelf blijven fysiek bestaan tenzij `on delete cascade` alsnog via een accountverwijdering wordt getriggerd) |
 | Gebruiker verwijdert een eigen post | Verwijdert die `posts`-rij en cascadeert naar `post_likes` op die post |
-| Gebruiker verwijdert zijn account (Instellingen → "Account verwijderen") | Verwijdert **alles**: `auth.users`-rij → cascadeert naar `profiles` → cascadeert naar `swipes`, `matches`, `messages`, `posts`, `post_likes`, `subscriptions`, `support_requests`, `reports`, `blocks`; plus alle bestanden in `profile-photos/{user_id}/` worden expliciet verwijderd door `delete-account` |
+| Gebruiker verwijdert zijn account (Instellingen → "Account verwijderen") | Verwijdert **alles**: `auth.users`-rij → cascadeert naar `profiles` → cascadeert naar `swipes`, `matches`, `messages`, `posts`, `post_likes`, `subscriptions`, `support_requests`, `reports`, `blocks`; plus alle bestanden in `profile-photos/{user_id}/` en alle eigen geüploade chatafbeeldingen in `chat-images/{match_id}/{user_id}-*` (voor elk match van deze gebruiker) worden expliciet verwijderd door `delete-account` |
 
 Gegevens waarvoor **geen** verwijderfunctie in de app bestaat, en die dus alleen via accountverwijdering (van zichzelf óf van de tegenpartij) verdwijnen: individuele berichten, swipes, rapportages, blokkades, support-aanvragen, abonnementsgeschiedenis.

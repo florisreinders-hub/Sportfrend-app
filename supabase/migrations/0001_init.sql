@@ -93,6 +93,7 @@ create table if not exists public.messages (
   match_id uuid not null references public.matches (id) on delete cascade,
   sender_id uuid not null references public.profiles (id) on delete cascade,
   body text not null,
+  image_url text,
   created_at timestamptz not null default now(),
   read_at timestamptz
 );
@@ -534,6 +535,60 @@ create policy "Users can delete their own profile photos"
   on storage.objects for delete
   to authenticated
   using (bucket_id = 'profile-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Storage: chat image attachments (ChatDetailScreen)
+-- ─────────────────────────────────────────────────────────────────────────
+-- Note: if this project already existed before this bucket/these policies
+-- were added to this file, run
+-- supabase/migrations/0018_chat_images.sql to patch it - the statements
+-- below are otherwise identical and safe to run again.
+--
+-- Path convention: "<match_id>/<sender_id>-<timestamp>.<ext>" - unlike
+-- profile-photos (scoped per-user), an uploaded chat image must be
+-- readable by BOTH participants of the match, not just its sender, so the
+-- folder is keyed by match_id and the read/write policies check match
+-- membership via public.matches rather than "the uploader's own id". The
+-- bucket is public for reads (consistent with every other photo URL in
+-- this app - profile photos, post images - none of which use signed
+-- URLs); the real access boundary is that the path itself is only ever
+-- handed to the two match participants, same trust model as those.
+
+insert into storage.buckets (id, name, public)
+values ('chat-images', 'chat-images', true)
+on conflict (id) do nothing;
+
+drop policy if exists "Chat images are publicly readable" on storage.objects;
+create policy "Chat images are publicly readable"
+  on storage.objects for select
+  to public
+  using (bucket_id = 'chat-images');
+
+drop policy if exists "Match participants can upload chat images" on storage.objects;
+create policy "Match participants can upload chat images"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'chat-images'
+    and exists (
+      select 1 from public.matches m
+      where m.id::text = (storage.foldername(name))[1]
+        and (m.user_a_id = auth.uid() or m.user_b_id = auth.uid())
+    )
+  );
+
+drop policy if exists "Match participants can delete chat images" on storage.objects;
+create policy "Match participants can delete chat images"
+  on storage.objects for delete
+  to authenticated
+  using (
+    bucket_id = 'chat-images'
+    and exists (
+      select 1 from public.matches m
+      where m.id::text = (storage.foldername(name))[1]
+        and (m.user_a_id = auth.uid() or m.user_b_id = auth.uid())
+    )
+  );
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- Location privacy: exact coordinates are never readable via a plain
