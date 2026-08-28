@@ -53,6 +53,19 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
      (of gebruik `supabase db push` als je de Supabase CLI gebruikt)
    - Ga naar **Project Settings → API** en kopieer de `Project URL` en `anon public` key
 
+   **Heb je al een bestaand project?** Elke keer dat er een nieuw bestand
+   in `supabase/migrations/` bijkomt, moet dat bestand ook los op je
+   *bestaande* database gedraaid worden - dit gebeurt niet automatisch (er
+   is geen omgeving hier met netwerktoegang tot Supabase om dat voor je te
+   doen). Wordt dit overgeslagen, dan loopt de app op een schema dat achterloopt
+   bij de code, wat zich meestal uit als een PostgREST-foutmelding zoals
+   *"Could not find the 'X' column of 'Y' in the schema cache"* zodra de
+   code een kolom/tabel/functie gebruikt die het migratiebestand toevoegt
+   maar die nog niet op de database staat (zo brak het versturen van
+   chatberichten toen `0018_chat_images.sql`'s `messages.image_url`-kolom
+   wel in de code maar nog niet in de database stond). Elk migratiebestand
+   is veilig om meerdere keren te draaien.
+
 3. **Configureer environment variables**
 
    ```bash

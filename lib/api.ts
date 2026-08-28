@@ -285,11 +285,29 @@ export async function fetchMessages(matchId: string): Promise<Message[]> {
 }
 
 export async function sendMessage(matchId: string, senderId: string, body: string, imageUrl?: string | null) {
-  const { data, error } = await supabase
-    .from("messages")
-    .insert({ match_id: matchId, sender_id: senderId, body, image_url: imageUrl ?? null })
-    .select("*")
-    .single();
+  // `image_url` is only ever included in the insert payload when an image
+  // is actually being sent - never as an explicit `null`. PostgREST
+  // validates every column named in the request body against its cached
+  // schema, so if a project's live database hasn't had
+  // 0018_chat_images.sql applied yet (this app has no way to run
+  // migrations against Supabase itself - every migration in this repo
+  // has always required running it manually via `supabase db push` or the
+  // SQL editor), sending that column unconditionally broke plain-text
+  // sending too, not just image sending - see the "Could not find the
+  // 'image_url' column" bug this fixed. Omitting the key entirely when
+  // there's no image keeps ordinary text messages working regardless of
+  // whether that migration has been applied; only an actual image send
+  // still requires it.
+  const row: { match_id: string; sender_id: string; body: string; image_url?: string } = {
+    match_id: matchId,
+    sender_id: senderId,
+    body,
+  };
+  if (imageUrl) {
+    row.image_url = imageUrl;
+  }
+
+  const { data, error } = await supabase.from("messages").insert(row).select("*").single();
   if (error) throw error;
   return data as Message;
 }
