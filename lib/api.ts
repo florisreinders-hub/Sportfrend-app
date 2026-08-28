@@ -284,6 +284,35 @@ export async function fetchMessages(matchId: string): Promise<Message[]> {
   return data ?? [];
 }
 
+export type MessagesDailyStatus = {
+  plan: "basis" | "premium" | "elite";
+  dailyLimit: number | null;
+  usedToday: number | null;
+  remaining: number | null;
+};
+
+/**
+ * The caller's daily message-sending quota (Pricing screen: Basis
+ * "3 Berichten per dag sturen", Premium/Elite "Onbeperkt chatten" -
+ * 0020_messages_daily_limit.sql). `dailyLimit`/`usedToday`/`remaining` are
+ * all null for Premium/Elite (unlimited). The "Match participants can send
+ * messages" RLS policy enforces the actual limit server-side regardless of
+ * whether this is ever called - this exists purely so ChatDetailScreen can
+ * show a clear "limit reached" message instead of a bare RLS-violation
+ * error, which looks identical to "you got blocked" otherwise.
+ */
+export async function fetchMessagesDailyStatus(): Promise<MessagesDailyStatus> {
+  const { data, error } = await supabase.rpc("messages_daily_status");
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    plan: row?.plan ?? "basis",
+    dailyLimit: row?.daily_limit ?? null,
+    usedToday: row?.used_today ?? null,
+    remaining: row?.remaining ?? null,
+  };
+}
+
 export async function sendMessage(matchId: string, senderId: string, body: string, imageUrl?: string | null) {
   // `image_url` is only ever included in the insert payload when an image
   // is actually being sent - never as an explicit `null`. PostgREST

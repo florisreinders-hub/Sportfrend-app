@@ -12,7 +12,7 @@ beschikbaar.
 - **Connecties**: overzicht van je matches
 - **Filter**: leeftijd, afstand, sport, niveau, beschikbaarheid
 - **Profielen**: sporters bekijken, je eigen profiel bekijken en bewerken
-- **Berichten**: community-feed ("Bericht plaatsen", alleen zichtbaar voor de auteur zelf en diens matches) en realtime 1-op-1 chat, inclusief het versturen van foto's
+- **Berichten**: community-feed ("Bericht plaatsen", alleen zichtbaar voor de auteur zelf en diens matches) en realtime 1-op-1 chat, inclusief het versturen van foto's en een dagelijkse berichtenlimiet per abonnement (zie "Dagelijkse berichtenlimiet" hieronder)
 - **Instellingen**: account, voorkeuren, e-mail wijzigen
 - **Premium & Elite**: Basis (gratis), Premium (€4,99/mnd), Elite (€9,99/mnd) + betaalscherm
 - **Ondersteuning**: Helpdesk, veelgestelde vragen, klantenservice
@@ -211,6 +211,45 @@ overslaat):
   te omzeilen.
 
 Draai `0019_discover_daily_limit.sql` op je bestaande database -
+`0001_init.sql` is ook bijgewerkt voor nieuwe installaties.
+
+## Dagelijkse berichtenlimiet (chat)
+
+Zelfde soort belofte, zelfde soort gat: de Pricing-tabel zegt Basis
+"3 Berichten per dag sturen", Premium/Elite "Onbeperkt chatten", maar tot
+migratie `0020_messages_daily_limit.sql` kon iedereen onbeperkt chatten.
+
+Anders dan de Ontdekken-limiet hoeft hier geen aparte "al gezien"-tabel
+bijgehouden te worden - een verstuurd bericht is een eenmalige actie
+zonder het "opnieuw getoond, mag niet dubbel tellen"-probleem dat
+`discover_daily_views` oplost, dus telt `can_send_message_today()`
+gewoon rechtstreeks `messages` (`sender_id` + `created_at::date =
+current_date`):
+
+- `messages_plan_daily_limit(plan)` is de bron van waarheid voor de
+  aantallen per plan (Basis 3, Premium/Elite onbeperkt/null) - zelfde
+  patroon als `discover_plan_daily_limit(plan)`.
+- `can_send_message_today()` (`SECURITY DEFINER`, scoped op `auth.uid()`)
+  is de daadwerkelijke afdwinging: toegevoegd als extra voorwaarde aan de
+  bestaande "Match participants can send messages" INSERT-policy op
+  `public.messages`, dus elk bericht - via de app of een hand-gebouwde
+  API-aanroep - loopt hier doorheen. Alleen een `subscriptions`-rij met
+  `status = 'active'` telt mee (een `pending`-plan telt als Basis).
+- `messages_daily_status()` (RPC) geeft `{ plan, daily_limit, used_today,
+  remaining }` terug, zodat `ChatDetailScreen` een duidelijke "dagelijkse
+  limiet bereikt"-melding met upgradeknop naar het Pricing-scherm kan
+  tonen in plaats van het invoerveld, zodra `remaining` op 0 staat - een
+  kale RLS-weigering is anders client-side niet te onderscheiden van "je
+  bent geblokkeerd" of "dit is niet jouw match", die dezelfde generieke
+  Postgres-foutmelding geven.
+- Bekende beperking, met opzet niet opgelost: een INSERT met meerdere
+  rijen tegelijk (een batch) toetst elke rij aan dezelfde snapshot van
+  vóór het statement, dus zo'n batch zou in theorie de limiet kunnen
+  omzeilen. De app zelf (`sendMessage()`, `lib/api.ts`) verstuurt altijd
+  precies één bericht per keer, dus dit is alleen een gat voor een
+  hand-gebouwde batch-aanroep, niet voor normaal app-gebruik.
+
+Draai `0020_messages_daily_limit.sql` op je bestaande database -
 `0001_init.sql` is ook bijgewerkt voor nieuwe installaties.
 
 ## Moderatie (rapporteren & blokkeren)

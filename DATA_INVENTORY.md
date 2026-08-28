@@ -82,6 +82,8 @@ Houdt bij hoeveel/welke profielen een gebruiker vandaag al te zien heeft gekrege
 
 Berichttekst (eerste 120 tekens) verlaat de eigen infrastructuur richting Expo's push-API bij het versturen van een pushmelding - zie §4.
 
+Sinds migratie `0020_messages_daily_limit.sql` telt `created_at` ook mee voor de dagelijkse berichtenlimiet per abonnement (Basis 3/dag, Premium/Elite onbeperkt, zie §"subscriptions"): de "Match participants can send messages"-RLS-policy telt hoeveel rijen deze afzender vandaag al heeft, en weigert een nieuw bericht zodra dat aantal het planlimiet bereikt.
+
 ### `posts` / `post_likes`
 
 | Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
@@ -111,7 +113,7 @@ Alleen de melder zelf kan zijn eigen rapportages lezen; er is geen moderator-rol
 |---|---|---|---|
 | `user_id`, `plan`, `status`, `price_cents`, `current_period_end` | Ja (financiële/abonnementsgegevens) | Ja (financieel) | Tot accountverwijdering - geen betalingsgegevens (kaartnummers e.d.) worden hier of elders in de eigen database opgeslagen |
 
-Sinds migratie `0019_discover_daily_limit.sql` is `plan` niet langer alleen informatief: `discover_profiles()` leest deze kolom (alleen een rij met `status = 'active'` telt mee, dus een gekozen-maar-niet-"betaald" `pending`-plan telt als Basis) om de dagelijkse Ontdekken-aanbevelingslimiet te bepalen (Basis 5/dag, Premium 15/dag, Elite onbeperkt).
+Sinds migratie `0019_discover_daily_limit.sql` is `plan` niet langer alleen informatief: `discover_profiles()` leest deze kolom (alleen een rij met `status = 'active'` telt mee, dus een gekozen-maar-niet-"betaald" `pending`-plan telt als Basis) om de dagelijkse Ontdekken-aanbevelingslimiet te bepalen (Basis 5/dag, Premium 15/dag, Elite onbeperkt). Sinds migratie `0020_messages_daily_limit.sql` geldt hetzelfde voor de dagelijkse berichtenlimiet (Basis 3/dag, Premium/Elite onbeperkt), afgedwongen op de INSERT-policy van `messages`.
 
 ### `support_requests`
 

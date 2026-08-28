@@ -17,10 +17,20 @@ import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { Input } from "@/components/Input";
+import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { blockUser, fetchMessages, getDataErrorMessage, Message, sendMessage, uploadChatImage } from "@/lib/api";
+import {
+  blockUser,
+  fetchMessages,
+  fetchMessagesDailyStatus,
+  getDataErrorMessage,
+  Message,
+  MessagesDailyStatus,
+  sendMessage,
+  uploadChatImage,
+} from "@/lib/api";
 import { ReportModal } from "@/components/ReportModal";
 
 type Props = NativeStackScreenProps<RootStackParamList, "ChatDetail">;
@@ -34,6 +44,7 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
   const [sending, setSending] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [reportVisible, setReportVisible] = useState(false);
+  const [dailyStatus, setDailyStatus] = useState<MessagesDailyStatus | null>(null);
   const listRef = useRef<FlatList>(null);
 
   const load = useCallback(async () => {
@@ -47,8 +58,23 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
     }
   }, [chatId]);
 
+  // Refetched after every successful send (not decremented locally) so it
+  // stays correct even if the same account is also chatting from another
+  // device/tab. Failures are swallowed - this is only ever used for the
+  // "limit reached" message, never the actual enforcement (that's the
+  // "Match participants can send messages" RLS policy, unaffected by
+  // whether this call succeeds).
+  const refreshDailyStatus = useCallback(async () => {
+    try {
+      setDailyStatus(await fetchMessagesDailyStatus());
+    } catch {
+      // leave the previous status in place
+    }
+  }, []);
+
   useEffect(() => {
     load();
+    refreshDailyStatus();
 
     // Realtime: any message another participant inserts into this match
     // shows up immediately, no refresh needed. Our own sends are appended
@@ -68,7 +94,7 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [chatId, load]);
+  }, [chatId, load, refreshDailyStatus]);
 
   const onSend = async () => {
     if (!draft.trim() || !session?.user || sending) return;
@@ -78,8 +104,16 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
     try {
       const inserted = await sendMessage(chatId, session.user.id, body);
       setMessages((prev) => (prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]));
+      refreshDailyStatus();
     } catch (e) {
       setDraft(body);
+      // The daily limit is the one send-failure with a message worth
+      // getting right - a bare "new row violates row-level security
+      // policy" is indistinguishable client-side from "you got blocked" or
+      // "this isn't your match" otherwise. Refresh the status first so a
+      // limit-triggered failure renders the dedicated banner below instead
+      // of (or alongside) this generic alert.
+      await refreshDailyStatus();
       Alert.alert("Versturen mislukt", getDataErrorMessage(e));
     } finally {
       setSending(false);
@@ -100,7 +134,9 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
       const inserted = await sendMessage(chatId, session.user.id, draft.trim(), imageUrl);
       setMessages((prev) => (prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]));
       setDraft("");
+      refreshDailyStatus();
     } catch (e) {
+      await refreshDailyStatus();
       Alert.alert("Versturen mislukt", getDataErrorMessage(e));
     } finally {
       setUploadingImage(false);
@@ -137,6 +173,11 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
       { text: "Annuleren", style: "cancel" },
     ]);
   };
+
+  // dailyLimit is null for Premium/Elite (onbeperkt chatten) - only Basis
+  // can ever actually hit this.
+  const messageLimitReached =
+    dailyStatus != null && dailyStatus.dailyLimit != null && (dailyStatus.remaining ?? 0) <= 0;
 
   return (
     <ScreenContainer withBottomPadding={false} edges={["top", "left", "right"]}>
@@ -196,36 +237,51 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
           />
         )}
 
-        <View style={styles.inputRow}>
-          <Pressable
-            onPress={onPickImage}
-            hitSlop={8}
-            disabled={uploadingImage || sending}
-            style={[styles.imageButton, (uploadingImage || sending) && styles.sendButtonDisabled]}
-          >
-            {uploadingImage ? (
-              <ActivityIndicator color={colors.black} size="small" />
-            ) : (
-              <Ionicons name="image-outline" size={22} color={colors.black} />
-            )}
-          </Pressable>
-          <Input
-            placeholder="Typ een bericht"
-            value={draft}
-            onChangeText={setDraft}
-            onSubmitEditing={onSend}
-            returnKeyType="send"
-            containerStyle={styles.inputContainer}
-          />
-          <Pressable
-            onPress={onSend}
-            hitSlop={8}
-            disabled={!draft.trim() || sending}
-            style={[styles.sendButton, (!draft.trim() || sending) && styles.sendButtonDisabled]}
-          >
-            <Ionicons name="send" size={22} color={colors.black} />
-          </Pressable>
-        </View>
+        {messageLimitReached ? (
+          <View style={styles.limitBanner}>
+            <Text style={styles.limitBannerText}>
+              Je hebt je dagelijkse limiet van {dailyStatus!.dailyLimit} berichten bereikt. Upgrade naar Premium voor
+              onbeperkt chatten.
+            </Text>
+            <Button
+              label="Bekijk Premium"
+              variant="primary"
+              onPress={() => navigation.navigate("Pricing")}
+              style={styles.limitBannerButton}
+            />
+          </View>
+        ) : (
+          <View style={styles.inputRow}>
+            <Pressable
+              onPress={onPickImage}
+              hitSlop={8}
+              disabled={uploadingImage || sending}
+              style={[styles.imageButton, (uploadingImage || sending) && styles.sendButtonDisabled]}
+            >
+              {uploadingImage ? (
+                <ActivityIndicator color={colors.black} size="small" />
+              ) : (
+                <Ionicons name="image-outline" size={22} color={colors.black} />
+              )}
+            </Pressable>
+            <Input
+              placeholder="Typ een bericht"
+              value={draft}
+              onChangeText={setDraft}
+              onSubmitEditing={onSend}
+              returnKeyType="send"
+              containerStyle={styles.inputContainer}
+            />
+            <Pressable
+              onPress={onSend}
+              hitSlop={8}
+              disabled={!draft.trim() || sending}
+              style={[styles.sendButton, (!draft.trim() || sending) && styles.sendButtonDisabled]}
+            >
+              <Ionicons name="send" size={22} color={colors.black} />
+            </Pressable>
+          </View>
+        )}
       </KeyboardAvoidingView>
     </ScreenContainer>
   );
@@ -327,5 +383,20 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     opacity: 0.4,
+  },
+  limitBanner: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+    paddingTop: spacing.sm,
+    gap: spacing.sm,
+  },
+  limitBannerText: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.textSecondary,
+    textAlign: "center",
+  },
+  limitBannerButton: {
+    alignSelf: "center",
   },
 });
