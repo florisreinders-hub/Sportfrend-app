@@ -75,6 +75,23 @@ create table if not exists public.swipes (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────
+-- discover_daily_views: which profiles a user has already been shown
+-- today - powers the daily recommendation limit (Pricing screen: Basis 5/
+-- Premium 15/Elite onbeperkt), enforced inside discover_profiles(). See
+-- 0019_discover_daily_limit.sql for the full writeup of why this is a
+-- separate table from `swipes` (a shown-but-unswiped card must keep
+-- counting as "already shown", not re-consume the daily quota on every
+-- refetch).
+-- ─────────────────────────────────────────────────────────────────────────
+create table if not exists public.discover_daily_views (
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  profile_id uuid not null references public.profiles (id) on delete cascade,
+  view_date date not null default current_date,
+  created_at timestamptz not null default now(),
+  primary key (user_id, profile_id, view_date)
+);
+
+-- ─────────────────────────────────────────────────────────────────────────
 -- matches: created when two profiles both swipe 'like' on each other
 -- ─────────────────────────────────────────────────────────────────────────
 create table if not exists public.matches (
@@ -229,6 +246,7 @@ create trigger on_auth_user_created
 -- ─────────────────────────────────────────────────────────────────────────
 alter table public.profiles enable row level security;
 alter table public.swipes enable row level security;
+alter table public.discover_daily_views enable row level security;
 alter table public.matches enable row level security;
 alter table public.messages enable row level security;
 alter table public.posts enable row level security;
@@ -318,6 +336,17 @@ create policy "Users can see likes directed at them"
   on public.swipes for select
   to authenticated
   using (auth.uid() = swiped_id and direction = 'like');
+
+-- No insert/update/delete policy at all, deliberately - every write to
+-- this table happens inside discover_profiles() (SECURITY DEFINER, runs
+-- as the function owner, not subject to this RLS). A user able to
+-- insert/delete their own rows here could reset or fabricate their own
+-- "already shown today" history and dodge the daily recommendation limit
+-- entirely - see 0019_discover_daily_limit.sql.
+create policy "Users can read their own discover view history"
+  on public.discover_daily_views for select
+  to authenticated
+  using (auth.uid() = user_id);
 
 -- A blocked match is hidden from both participants - this also hides its
 -- messages, since "Match participants can read messages" below re-checks
@@ -616,6 +645,70 @@ $$;
 
 grant execute on function public.get_my_location() to authenticated;
 
+-- discover_plan_daily_limit: single source of truth for each plan's daily
+-- Ontdekken recommendation limit (Pricing screen: Basis 5/Premium 15/
+-- Elite onbeperkt), shared by discover_profiles() and
+-- discover_daily_status() below so the two can't drift apart. null means
+-- "unlimited". See 0019_discover_daily_limit.sql for the full writeup.
+create or replace function public.discover_plan_daily_limit(p_plan text)
+returns int
+language sql
+immutable
+as $$
+  select case p_plan
+    when 'premium' then 15
+    when 'elite' then null
+    else 5 -- 'basis', and the fallback for a user with no active subscription row at all
+  end;
+$$;
+
+-- Lets the client show a clear "daily limit reached" message (with an
+-- upgrade link), distinctly from "no candidates match your filters" -
+-- discover_profiles() alone can't tell those two apart from an empty
+-- result set. SECURITY DEFINER + auth.uid()-scoped, same reasoning as
+-- get_my_location()/discover_profiles(): callers only ever see their own
+-- status.
+create or replace function public.discover_daily_status()
+returns table (plan text, daily_limit int, used_today int, remaining int)
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_plan text;
+  v_daily_limit int;
+  v_used_today int;
+begin
+  if v_uid is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select s.plan into v_plan
+  from public.subscriptions s
+  where s.user_id = v_uid and s.status = 'active';
+
+  v_plan := coalesce(v_plan, 'basis');
+  v_daily_limit := public.discover_plan_daily_limit(v_plan);
+
+  if v_daily_limit is not null then
+    select count(*) into v_used_today
+    from public.discover_daily_views d
+    where d.user_id = v_uid and d.view_date = current_date;
+  end if;
+
+  return query select
+    v_plan,
+    v_daily_limit,
+    v_used_today,
+    case when v_daily_limit is null then null else greatest(v_daily_limit - coalesce(v_used_today, 0), 0) end;
+end;
+$$;
+
+grant execute on function public.discover_plan_daily_limit(text) to authenticated;
+grant execute on function public.discover_daily_status() to authenticated;
+
 -- Powers the Ontdekken feed (fetchDiscoverProfiles, lib/api.ts): computes
 -- distance server-side from the caller's own coordinates (via auth.uid(),
 -- never a parameter - a viewer id parameter would let anyone query
@@ -635,6 +728,14 @@ grant execute on function public.get_my_location() to authenticated;
 -- could see zero results despite the screen showing no active narrowing
 -- at all). See 0016_discover_profiles_no_implicit_defaults.sql for the
 -- full writeup of the bug this fixed.
+--
+-- Also enforces the daily recommendation limit (0019_discover_daily_limit.sql):
+-- resolves how many *new* (never-shown-today) candidates the caller may
+-- still see, records exactly those as shown in discover_daily_views, then
+-- lets both those and any already-shown-but-unswiped candidates through
+-- the normal filtered/ordered/distance query below - a shown-but-unswiped
+-- card must never re-consume quota, since HomeScreen refetches on every
+-- Ontdekken tab focus (useFocusEffect).
 create or replace function public.discover_profiles(
   p_sport text default null,
   p_level text default null,
@@ -659,7 +760,6 @@ returns table (
 language plpgsql
 security definer
 set search_path = public
-stable
 as $$
 declare
   v_uid uuid := auth.uid();
@@ -667,6 +767,11 @@ declare
   v_my_lng double precision;
   v_min_birthdate date;
   v_max_birthdate date;
+  v_plan text;
+  v_daily_limit int;
+  v_used_today int;
+  v_remaining int;
+  v_new_ids uuid[];
 begin
   if v_uid is null then
     raise exception 'Not authenticated';
@@ -680,6 +785,64 @@ begin
   if p_max_age is not null then
     v_min_birthdate := (current_date - (p_max_age || ' years')::interval)::date;
     v_max_birthdate := (current_date - interval '18 years')::date;
+  end if;
+
+  select s.plan into v_plan
+  from public.subscriptions s
+  where s.user_id = v_uid and s.status = 'active';
+
+  v_daily_limit := public.discover_plan_daily_limit(coalesce(v_plan, 'basis'));
+
+  if v_daily_limit is not null then
+    select count(*) into v_used_today
+    from public.discover_daily_views d
+    where d.user_id = v_uid and d.view_date = current_date;
+
+    v_remaining := greatest(v_daily_limit - v_used_today, 0);
+
+    -- Pick the closest `v_remaining` candidates the caller has never been
+    -- shown today, and record them as shown - this is the one place the
+    -- daily quota is actually spent. Ordering matches the final query's
+    -- own "closest first" order, so the quota is spent on the same
+    -- profiles that would be shown first anyway.
+    select array_agg(sub.id) into v_new_ids
+    from (
+      select p.id,
+        case
+          when v_my_lat is not null and v_my_lng is not null and p.latitude is not null and p.longitude is not null
+          then 6371 * 2 * asin(least(1.0, sqrt(
+                 sin(radians((p.latitude - v_my_lat) / 2)) ^ 2
+                 + cos(radians(v_my_lat)) * cos(radians(p.latitude))
+                 * sin(radians((p.longitude - v_my_lng) / 2)) ^ 2
+               )))
+          else null
+        end as distance_km
+      from public.profiles p
+      where p.id <> v_uid
+        and p.profile_visible = true
+        and not exists (select 1 from public.swipes s where s.swiper_id = v_uid and s.swiped_id = p.id)
+        and not exists (
+          select 1 from public.blocks b
+          where (b.blocker_id = v_uid and b.blocked_id = p.id)
+             or (b.blocker_id = p.id and b.blocked_id = v_uid)
+        )
+        and (p_sport is null or p.sport = p_sport)
+        and (p_level is null or p.level = p_level)
+        and (v_min_birthdate is null or p.birthdate >= v_min_birthdate)
+        and (v_max_birthdate is null or p.birthdate <= v_max_birthdate)
+        and not exists (
+          select 1 from public.discover_daily_views d
+          where d.user_id = v_uid and d.profile_id = p.id and d.view_date = current_date
+        )
+      order by (case when distance_km is null then 1 else 0 end), distance_km asc nulls last
+      limit least(v_remaining, p_limit)
+    ) sub;
+
+    if v_new_ids is not null and array_length(v_new_ids, 1) > 0 then
+      insert into public.discover_daily_views (user_id, profile_id, view_date)
+      select v_uid, new_id, current_date from unnest(v_new_ids) as new_id
+      on conflict do nothing;
+    end if;
   end if;
 
   return query
@@ -698,6 +861,18 @@ begin
       and (p_level is null or p.level = p_level)
       and (v_min_birthdate is null or p.birthdate >= v_min_birthdate)
       and (v_max_birthdate is null or p.birthdate <= v_max_birthdate)
+      -- Only profiles genuinely allowed today: no daily limit at all
+      -- (Elite), just picked as one of this call's fresh quota slots, or
+      -- already shown earlier today (still allowed - re-showing an
+      -- unswiped card never costs extra quota).
+      and (
+        v_daily_limit is null
+        or (v_new_ids is not null and p.id = any(v_new_ids))
+        or exists (
+          select 1 from public.discover_daily_views d
+          where d.user_id = v_uid and d.profile_id = p.id and d.view_date = current_date
+        )
+      )
     limit 50
   ),
   with_distance as (

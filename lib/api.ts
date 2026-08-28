@@ -175,6 +175,34 @@ export async function fetchDiscoverProfiles(
   return (data ?? []) as DiscoverProfile[];
 }
 
+export type DiscoverDailyStatus = {
+  plan: "basis" | "premium" | "elite";
+  dailyLimit: number | null;
+  usedToday: number | null;
+  remaining: number | null;
+};
+
+/**
+ * The caller's daily Ontdekken recommendation quota (Pricing screen:
+ * Basis 5/dag, Premium 15/dag, Elite onbeperkt - 0019_discover_daily_limit.sql).
+ * `dailyLimit`/`usedToday`/`remaining` are all null for Elite (unlimited).
+ * discover_profiles() enforces the actual limit server-side regardless of
+ * whether this is ever called - this exists purely so HomeScreen can show
+ * a clear "limit reached" message instead of a bare empty result, which
+ * looks identical to "no candidates match your filters" otherwise.
+ */
+export async function fetchDiscoverDailyStatus(): Promise<DiscoverDailyStatus> {
+  const { data, error } = await supabase.rpc("discover_daily_status");
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    plan: row?.plan ?? "basis",
+    dailyLimit: row?.daily_limit ?? null,
+    usedToday: row?.used_today ?? null,
+    remaining: row?.remaining ?? null,
+  };
+}
+
 export type SwipeResult = { matched: false } | { matched: true; matchId: string };
 
 export async function recordSwipe(swiperId: string, swipedId: string, direction: "like" | "skip"): Promise<SwipeResult> {

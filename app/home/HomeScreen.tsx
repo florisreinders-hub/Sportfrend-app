@@ -17,10 +17,12 @@ import {
   deletePost,
   fetchConnectionPosts,
   fetchConnections,
+  fetchDiscoverDailyStatus,
   fetchDiscoverProfiles,
   getDataErrorMessage,
   recordSwipe,
   toggleLike,
+  DiscoverDailyStatus,
   Profile,
 } from "@/lib/api";
 import { avatarPlaceholder } from "@/constants/placeholders";
@@ -36,14 +38,25 @@ export default function HomeScreen({ navigation, route }: Props) {
   const [posts, setPosts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dailyStatus, setDailyStatus] = useState<DiscoverDailyStatus | null>(null);
 
+  // The daily quota is actually spent inside discover_profiles() at fetch
+  // time, not when a card is swiped (see 0019_discover_daily_limit.sql) -
+  // so this status, fetched once alongside the candidates themselves,
+  // already reflects "0 remaining" as soon as the day's full allotment has
+  // been served, even before the user has swiped through the local stack.
+  // No need to re-fetch it per swipe.
   const loadDiscover = useCallback(async () => {
     if (!session?.user) return;
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchDiscoverProfiles(session.user.id, filters);
+      const [data, status] = await Promise.all([
+        fetchDiscoverProfiles(session.user.id, filters),
+        fetchDiscoverDailyStatus().catch(() => null),
+      ]);
       setProfiles(data);
+      setDailyStatus(status);
     } catch (e) {
       setError(getDataErrorMessage(e));
     } finally {
@@ -121,6 +134,12 @@ export default function HomeScreen({ navigation, route }: Props) {
     }
   };
 
+  // dailyLimit is null for Elite (unlimited) - only Basis/Premium can ever
+  // actually hit this.
+  const dailyLimitReached =
+    dailyStatus != null && dailyStatus.dailyLimit != null && (dailyStatus.remaining ?? 0) <= 0;
+  const upgradeTarget = dailyStatus?.plan === "premium" ? "Elite" : "Premium";
+
   return (
     <ScreenContainer withBottomPadding={false}>
       <TopBar />
@@ -145,6 +164,19 @@ export default function HomeScreen({ navigation, route }: Props) {
             <View style={styles.errorState}>
               <Text style={styles.empty}>{error}</Text>
               <Button label="Opnieuw proberen" variant="outline" onPress={loadDiscover} style={styles.retryButton} />
+            </View>
+          ) : profiles.length === 0 && dailyLimitReached ? (
+            <View style={styles.errorState}>
+              <Text style={styles.empty}>
+                Je hebt je dagelijkse limiet van {dailyStatus!.dailyLimit} aanbevelingen bereikt. Upgrade naar{" "}
+                {upgradeTarget} voor {upgradeTarget === "Premium" ? "meer" : "onbeperkte"} aanbevelingen.
+              </Text>
+              <Button
+                label={`Bekijk ${upgradeTarget}`}
+                variant="primary"
+                onPress={() => navigation.navigate("Pricing")}
+                style={styles.retryButton}
+              />
             </View>
           ) : profiles.length === 0 ? (
             <Text style={styles.empty}>Geen sporters gevonden. Pas je filters aan of kom later terug.</Text>

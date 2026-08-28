@@ -8,7 +8,7 @@ beschikbaar.
 ## Functionaliteit
 
 - **Onboarding**: inloggen, registreren (2 stappen), wachtwoord vergeten, locatie instellen
-- **Ontdekken**: swipe-kaarten om sportmaatjes te vinden (Skip / Connect), met match-scherm
+- **Ontdekken**: swipe-kaarten om sportmaatjes te vinden (Skip / Connect), met match-scherm en een dagelijkse aanbevelingslimiet per abonnement (zie "Dagelijkse aanbevelingslimiet" hieronder)
 - **Connecties**: overzicht van je matches
 - **Filter**: leeftijd, afstand, sport, niveau, beschikbaarheid
 - **Profielen**: sporters bekijken, je eigen profiel bekijken en bewerken
@@ -114,6 +114,9 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
 
 - `profiles` — sport, niveau, locatie, geboortedatum, geslacht, etc. (1:1 met `auth.users`)
 - `swipes` — like/skip acties tussen profielen
+- `discover_daily_views` — welke profielen een gebruiker vandaag al te zien
+  heeft gekregen in Ontdekken; voedt de dagelijkse aanbevelingslimiet per
+  abonnement (zie 0019, "Dagelijkse aanbevelingslimiet" hieronder)
 - `matches` — ontstaat automatisch wanneer twee profielen elkaar liken
 - `messages` — 1-op-1 chatberichten per match, met Supabase Realtime;
   kunnen optioneel een `image_url` dragen (foto's, `chat-images`-bucket,
@@ -154,6 +157,48 @@ Draai `0015_profiles_min_age_check.sql` op je bestaande database -
 Function nodig, alleen deze migratie. Als de `alter table` faalt omdat er
 al een profiel met een te jonge geboortedatum bestaat, geeft het bestand
 zelf een query om die rij(en) eerst op te sporen.
+
+## Dagelijkse aanbevelingslimiet (Ontdekken)
+
+De Pricing-tabel belooft per abonnement een ander aantal dagelijkse
+aanbevelingen (Basis 5/dag, Premium 15/dag, Elite onbeperkt) - tot
+migratie `0019_discover_daily_limit.sql` was dat puur tekst op het
+betaalscherm: `discover_profiles()` gaf altijd dezelfde resultaten terug,
+ongeacht `subscriptions.plan`.
+
+Nu wordt dit server-side afgedwongen, in `discover_profiles()` zelf (dus
+niet te omzeilen met een hand-gebouwde API-aanroep die de client
+overslaat):
+
+- `discover_daily_views` houdt per gebruiker bij welke profielen vandaag
+  al getoond zijn. Dit is expres een aparte tabel, niet `swipes` - een
+  getoond-maar-nog-niet-geswipete kaart moet bij elke herlaadbeurt van het
+  Ontdekken-tabblad (`HomeScreen`'s `useFocusEffect` herlaadt altijd bij
+  focus) als "al gezien" blijven tellen, anders zou alleen maar heen-en-
+  weer wisselen tussen tabbladen al de hele dagelijkse limiet opsouperen
+  aan kaarten waarop nog niet eens geswiped is.
+- Alleen écht nieuwe (nog niet vandaag getoonde) kandidaten verbruiken een
+  eenheid van de limiet; al eerder vandaag getoonde, nog ongeswipete
+  kandidaten blijven altijd zichtbaar.
+- `discover_plan_daily_limit(plan)` is de ene bron van waarheid voor de
+  aantallen per plan; alleen een `subscriptions`-rij met `status =
+  'active'` telt mee (een gekozen-maar-nooit-"betaald" `pending`-plan
+  telt als Basis), en een gebruiker zonder rij telt ook als Basis.
+- `discover_daily_status()` (RPC) geeft de client `{ plan, daily_limit,
+  used_today, remaining }` terug, zodat `HomeScreen` een duidelijke
+  "dagelijkse limiet bereikt"-melding met upgradeknop naar het
+  Pricing-scherm kan tonen zodra `remaining` op 0 staat, in plaats van
+  dezelfde generieke lege-staat als "geen kandidaten die aan je filters
+  voldoen".
+- RLS op `discover_daily_views` staat alleen `select` toe aan de eigenaar
+  zelf; er is helemaal geen insert/update/delete-policy voor de
+  `authenticated`-rol. Elke schrijfactie loopt uitsluitend via
+  `discover_profiles()` (`SECURITY DEFINER`), dus een gebruiker kan zijn
+  eigen "al gezien"-geschiedenis niet resetten of vervalsen om de limiet
+  te omzeilen.
+
+Draai `0019_discover_daily_limit.sql` op je bestaande database -
+`0001_init.sql` is ook bijgewerkt voor nieuwe installaties.
 
 ## Moderatie (rapporteren & blokkeren)
 

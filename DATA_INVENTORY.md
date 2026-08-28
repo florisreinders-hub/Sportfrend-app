@@ -57,6 +57,14 @@ RLS + kolomrechten: elke rij is leesbaar door alle ingelogde gebruikers **behalv
 
 Nooit rechtstreeks leesbaar voor de andere partij (behalve een gerichte 'like', nodig om een match te kunnen detecteren) - een 'skip' is alleen zichtbaar voor wie hem gaf.
 
+### `discover_daily_views`
+
+| Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
+|---|---|---|---|
+| `user_id`, `profile_id`, `view_date` | Ja (welke profielen op welke dag aan wie zijn getoond in Ontdekken) | Beperkt | Tot accountverwijdering - geen eigen verwijderfunctie, en groeit dagelijks (één rij per getoond profiel per dag) sinds migratie `0019_discover_daily_limit.sql` |
+
+Houdt bij hoeveel/welke profielen een gebruiker vandaag al te zien heeft gekregen in Ontdekken, om de dagelijkse aanbevelingslimiet per abonnement (zie §"subscriptions" hieronder) server-side af te dwingen. Alleen leesbaar door de eigenaar zelf (RLS); er is helemaal geen insert/update/delete-policy voor de `authenticated`-rol - elke schrijfactie loopt uitsluitend via de `SECURITY DEFINER`-functie `discover_profiles()`, zodat een gebruiker zijn eigen "al gezien"-historie niet kan resetten of vervalsen om de limiet te omzeilen.
+
 ### `matches`
 
 | Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
@@ -102,6 +110,8 @@ Alleen de melder zelf kan zijn eigen rapportages lezen; er is geen moderator-rol
 | Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
 |---|---|---|---|
 | `user_id`, `plan`, `status`, `price_cents`, `current_period_end` | Ja (financiële/abonnementsgegevens) | Ja (financieel) | Tot accountverwijdering - geen betalingsgegevens (kaartnummers e.d.) worden hier of elders in de eigen database opgeslagen |
+
+Sinds migratie `0019_discover_daily_limit.sql` is `plan` niet langer alleen informatief: `discover_profiles()` leest deze kolom (alleen een rij met `status = 'active'` telt mee, dus een gekozen-maar-niet-"betaald" `pending`-plan telt als Basis) om de dagelijkse Ontdekken-aanbevelingslimiet te bepalen (Basis 5/dag, Premium 15/dag, Elite onbeperkt).
 
 ### `support_requests`
 
