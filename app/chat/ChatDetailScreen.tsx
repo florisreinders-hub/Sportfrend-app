@@ -60,15 +60,22 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
 
   // Refetched after every successful send (not decremented locally) so it
   // stays correct even if the same account is also chatting from another
-  // device/tab. Failures are swallowed - this is only ever used for the
-  // "limit reached" message, never the actual enforcement (that's the
-  // "Match participants can send messages" RLS policy, unaffected by
-  // whether this call succeeds).
+  // device/tab. A failure here doesn't block sending - that's still fully
+  // enforced by the "Match participants can send messages" RLS policy
+  // regardless of whether this call succeeds - but it's logged, not
+  // silently dropped: the same silent-catch shape on Ontdekken's daily
+  // status (discover_daily_status(), HomeScreen.tsx) was exactly what
+  // made "daily limit reached" indistinguishable from "no candidates" when
+  // that RPC wasn't deployed yet on a project's live database. A failure
+  // here is the equivalent symptom for chat - most likely
+  // messages_daily_status()/0020_messages_daily_limit.sql not actually
+  // applied yet (every migration in this repo has to be run manually, see
+  // README.md) - so leaving it invisible would hide the same class of bug.
   const refreshDailyStatus = useCallback(async () => {
     try {
       setDailyStatus(await fetchMessagesDailyStatus());
-    } catch {
-      // leave the previous status in place
+    } catch (e) {
+      console.warn("[ChatDetailScreen] Kon dagelijkse berichtenlimiet-status niet ophalen:", e);
     }
   }, []);
 
