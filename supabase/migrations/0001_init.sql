@@ -845,6 +845,12 @@ grant execute on function public.discover_daily_status() to authenticated;
 -- the normal filtered/ordered/distance query below - a shown-but-unswiped
 -- card must never re-consume quota, since HomeScreen refetches on every
 -- Ontdekken tab focus (useFocusEffect).
+--
+-- Also enforces which filters a plan may use at all
+-- (0021_discover_profiles_plan_filters.sql): Basis only gets Sport +
+-- Afstand (capped at 50km), Premium/Elite get all four filters (Afstand
+-- up to 150km). A disallowed p_level/p_max_age/p_distance_km is clamped
+-- here, not just hidden client-side on FilterScreen.tsx.
 create or replace function public.discover_profiles(
   p_sport text default null,
   p_level text default null,
@@ -891,16 +897,28 @@ begin
   from public.profiles p
   where p.id = v_uid;
 
+  select s.plan into v_plan
+  from public.subscriptions s
+  where s.user_id = v_uid and s.status = 'active';
+  v_plan := coalesce(v_plan, 'basis');
+
+  -- Filter access per plan (Pricing screen: Basis = Sport + Afstand only,
+  -- max 50km; Premium/Elite = all filters, Afstand up to 150km). A
+  -- disallowed value is clamped/ignored here, not rejected - a Basis
+  -- caller that sends p_level/p_max_age/a >50km p_distance_km simply gets
+  -- those narrowed to what Basis is actually allowed.
+  if v_plan = 'basis' then
+    p_level := null;
+    p_max_age := null;
+    p_distance_km := least(coalesce(p_distance_km, 50), 50);
+  end if;
+
   if p_max_age is not null then
     v_min_birthdate := (current_date - (p_max_age || ' years')::interval)::date;
     v_max_birthdate := (current_date - interval '18 years')::date;
   end if;
 
-  select s.plan into v_plan
-  from public.subscriptions s
-  where s.user_id = v_uid and s.status = 'active';
-
-  v_daily_limit := public.discover_plan_daily_limit(coalesce(v_plan, 'basis'));
+  v_daily_limit := public.discover_plan_daily_limit(v_plan);
 
   if v_daily_limit is not null then
     select count(*) into v_used_today

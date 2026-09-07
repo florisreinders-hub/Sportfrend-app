@@ -10,7 +10,10 @@ beschikbaar.
 - **Onboarding**: inloggen, registreren (2 stappen), wachtwoord vergeten, locatie instellen
 - **Ontdekken**: swipe-kaarten om sportmaatjes te vinden (Skip / Connect), met match-scherm en een dagelijkse aanbevelingslimiet per abonnement (zie "Dagelijkse aanbevelingslimiet" hieronder)
 - **Connecties**: overzicht van je matches
-- **Filter**: leeftijd, afstand, sport, niveau, beschikbaarheid
+- **Filter**: leeftijd, afstand, sport, niveau, beschikbaarheid - leeftijd
+  en niveau zijn alleen bruikbaar voor Premium/Elite, en de afstand is voor
+  Basis begrensd op 50km (zie "Welke Ontdekken-filters een abonnement mag
+  gebruiken" hieronder)
 - **Profielen**: sporters bekijken, je eigen profiel bekijken en bewerken
 - **Berichten**: community-feed ("Bericht plaatsen", alleen zichtbaar voor de auteur zelf en diens matches) en realtime 1-op-1 chat, inclusief het versturen van foto's en een dagelijkse berichtenlimiet per abonnement (zie "Dagelijkse berichtenlimiet" hieronder)
 - **Instellingen**: account, voorkeuren, e-mail wijzigen
@@ -212,6 +215,49 @@ overslaat):
 
 Draai `0019_discover_daily_limit.sql` op je bestaande database -
 `0001_init.sql` is ook bijgewerkt voor nieuwe installaties.
+
+## Welke Ontdekken-filters een abonnement mag gebruiken
+
+Weer dezelfde soort belofte: de Pricing-tabel zegt Basis "Basisfilters"
+(alleen Sport + Afstand, tot nu toe nooit ergens begrensd), Premium/Elite
+"Uitgebreide filters" (Sport, Afstand, Leeftijd, Niveau). Migratie
+`0021_discover_profiles_plan_filters.sql` dwingt dit af in
+`discover_profiles()` zelf, niet alleen in de UI:
+
+- Voor een Basis-account (of iemand zonder actieve `subscriptions`-rij)
+  worden `p_level` en `p_max_age` genegeerd (op `null` gezet, dus geen
+  filter) en wordt `p_distance_km` begrensd op 50km - ook als de
+  aanroeper `null` ("onbeperkt") of een hogere waarde meestuurt. Dit is
+  bewust een *clamp*, geen fout: een verouderde/gemanipuleerde
+  filterwaarde degradeert netjes naar wat Basis wél mag, in plaats van de
+  hele aanvraag te laten mislukken.
+- Voor Premium/Elite blijft alles zoals het was: alle vier de filters
+  werken, Afstand tot 150km.
+- `FilterScreen.tsx` grijst Leeftijd en Niveau uit voor een Basis-account
+  (met een hangslotje/"PREMIUM"-badge, tikken erop opent het
+  Pricing-scherm) en begrenst de Afstand-slider zelf ook tot 50km - maar
+  dat is puur UX. De echte grens is `discover_profiles()`: een
+  hand-gebouwde RPC-aanroep die deze UI overslaat en toch `p_level`/
+  `p_max_age`/een `p_distance_km` boven 50km meestuurt voor een
+  Basis-account krijgt die waarden nog steeds genegeerd/begrensd.
+- Het scherm haalt het huidige plan op via dezelfde
+  `discover_daily_status()`-RPC als de aanbevelingslimiet hierboven (die
+  geeft toch al `plan` terug, dus geen aparte RPC nodig). Een mislukte
+  aanroep hier blijft niet stil - zie de `console.warn` in
+  `FilterScreen.tsx` - en laat het scherm gewoon niets vergrendelen
+  (`discover_profiles()` handhaaft de echte Basis-grenzen sowieso, ongeacht
+  of deze aanroep lukt).
+
+Draai `0021_discover_profiles_plan_filters.sql` op je bestaande database -
+`0001_init.sql` is ook bijgewerkt voor nieuwe installaties. Controleer na
+het draaien met:
+
+```sql
+select prosrc ilike '%v_plan = ''basis''%' as has_plan_filter_clamp
+from pg_proc
+where proname = 'discover_profiles' and pronamespace = 'public'::regnamespace;
+-- verwacht: true
+```
 
 ## Dagelijkse berichtenlimiet (chat)
 
