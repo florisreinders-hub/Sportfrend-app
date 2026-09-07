@@ -247,6 +247,16 @@ Weer dezelfde soort belofte: de Pricing-tabel zegt Basis "Basisfilters"
   `FilterScreen.tsx` - en laat het scherm gewoon niets vergrendelen
   (`discover_profiles()` handhaaft de echte Basis-grenzen sowieso, ongeacht
   of deze aanroep lukt).
+- Die plan-aanroep zit in een `useFocusEffect`, niet een gewone
+  mount-only `useEffect`: `BottomNav` bereikt dit scherm via
+  `navigation.navigate("Filter")`, en React Navigation's native-stack
+  `navigate()` remount een scherm dat al in de stack zit niet - het
+  brengt de bestaande instantie gewoon terug in focus. Een mount-only
+  fetch zou dus maar één keer per app-sessie draaien (bij het allereerste
+  bezoek) en daarna nooit meer, waardoor een plan dat pas ná dat eerste
+  bezoek naar Basis wordt gezet (of gewoon nog niet compleet was
+  ingesteld) op elk later bezoek stil de verouderde, niet-vergrendelde
+  staat bleef tonen - exact het gerapporteerde symptoom.
 
 Draai `0021_discover_profiles_plan_filters.sql` op je bestaande database -
 `0001_init.sql` is ook bijgewerkt voor nieuwe installaties. Controleer na

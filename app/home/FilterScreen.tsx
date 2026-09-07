@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Slider from "@react-native-community/slider";
 import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
@@ -36,22 +37,35 @@ export default function FilterScreen({ navigation }: Props) {
   const [levelPickerVisible, setLevelPickerVisible] = useState(false);
   const [plan, setPlan] = useState<"basis" | "premium" | "elite" | null>(null);
 
-  useEffect(() => {
-    fetchDiscoverDailyStatus()
-      .then((status) => setPlan(status.plan))
-      .catch((e) => {
-        // Not silently dropped, same reasoning as the fix applied to
-        // HomeScreen/ChatDetailScreen's own daily-status fetches: a failure
-        // here most likely means this RPC (or the plan-filter clamp inside
-        // discover_profiles() itself) isn't deployed to this project's
-        // database yet - see 0021_discover_profiles_plan_filters.sql. Plan
-        // stays null, which this screen treats as "don't lock anything" -
-        // discover_profiles() still enforces the real Basis limits
-        // server-side regardless, so this only affects whether the UI
-        // *shows* the lock, never whether it's actually enforced.
-        console.warn("[FilterScreen] Kon abonnement niet ophalen:", e);
-      });
-  }, []);
+  // useFocusEffect, not a plain mount-only useEffect: BottomNav reaches
+  // this screen via navigation.navigate("Filter"), and React Navigation's
+  // native-stack navigate() does NOT remount a screen already sitting in
+  // the stack - it just brings the existing instance back into focus. A
+  // mount-only fetch here would run exactly once per app session (on the
+  // very first visit) and never again, so a plan that changes afterwards -
+  // or simply wasn't fully set up yet on that very first visit - would
+  // silently keep showing the stale result on every later visit, with the
+  // UI never actually locking despite the account genuinely being Basis.
+  useFocusEffect(
+    useCallback(() => {
+      fetchDiscoverDailyStatus()
+        .then((status) => setPlan(status.plan))
+        .catch((e) => {
+          // Not silently dropped, same reasoning as the fix applied to
+          // HomeScreen/ChatDetailScreen's own daily-status fetches: a
+          // failure here most likely means this RPC (or the plan-filter
+          // clamp inside discover_profiles() itself) isn't deployed to
+          // this project's database yet - see
+          // 0021_discover_profiles_plan_filters.sql. Plan stays at
+          // whatever it was before (or null on first load), which this
+          // screen treats as "don't lock anything" - discover_profiles()
+          // still enforces the real Basis limits server-side regardless,
+          // so this only affects whether the UI *shows* the lock, never
+          // whether it's actually enforced.
+          console.warn("[FilterScreen] Kon abonnement niet ophalen:", e);
+        });
+    }, [])
+  );
 
   // A stale cached distance above the Basis cap (e.g. from before a
   // downgrade, or simply this screen's default of 150) must not keep
