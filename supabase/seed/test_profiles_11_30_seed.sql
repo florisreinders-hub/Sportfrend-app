@@ -83,7 +83,9 @@ begin
     insert into auth.users (
       instance_id, id, aud, role, email, encrypted_password,
       email_confirmed_at, created_at, updated_at,
-      raw_app_meta_data, raw_user_meta_data, is_super_admin
+      raw_app_meta_data, raw_user_meta_data, is_super_admin,
+      confirmation_token, recovery_token, email_change, email_change_token_new,
+      email_change_token_current, phone_change, phone_change_token, reauthentication_token
     ) values (
       '00000000-0000-0000-0000-000000000000',
       gen_random_uuid(),
@@ -94,7 +96,16 @@ begin
       now(), now(), now(),
       '{"provider":"email","providers":["email"]}'::jsonb,
       '{}'::jsonb,
-      false
+      false,
+      -- Supabase's own signup flow always writes '' here, never leaves
+      -- these NULL - GoTrue's Go code scans them into a plain (non-
+      -- nullable) string, so a NULL in any of these makes every future
+      -- /auth/v1/token request for this account fail with a 500 ("Scan
+      -- error ... converting NULL to string is unsupported"). Omitting
+      -- them from the insert (the previous version of this script) left
+      -- them at the column's default, which for confirmation_token/
+      -- recovery_token/email_change/email_change_token_new is NULL, not ''.
+      '', '', '', '', '', '', '', ''
     )
     returning id into v_user_id;
 
