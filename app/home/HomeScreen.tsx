@@ -53,7 +53,17 @@ export default function HomeScreen({ navigation, route }: Props) {
     try {
       const [data, status] = await Promise.all([
         fetchDiscoverProfiles(session.user.id, filters),
-        fetchDiscoverDailyStatus().catch(() => null),
+        fetchDiscoverDailyStatus().catch((e) => {
+          // Swallowed on purpose (the candidate list above is the critical
+          // path, not this) - but logged, not silent, because a failure
+          // here is exactly what makes "limit reached" indistinguishable
+          // from "genuinely no candidates" below: it's the most likely
+          // symptom of discover_daily_status()/0019_discover_daily_limit.sql
+          // not actually being applied to this Supabase project yet (every
+          // migration in this repo has to be run manually - see README.md).
+          console.warn("[HomeScreen] Kon dagelijkse Ontdekken-limiet niet ophalen:", e);
+          return null;
+        }),
       ]);
       setProfiles(data);
       setDailyStatus(status);
