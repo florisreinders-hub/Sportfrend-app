@@ -170,6 +170,10 @@ export async function fetchDiscoverProfiles(
     p_max_age: filters.maxAge < DEFAULT_FILTERS.maxAge ? filters.maxAge : null,
     p_distance_km: filters.distanceKm,
     p_limit: 20,
+    // "Slimme beschikbaarheids match" - Elite-only, ignored server-side for
+    // anyone else (0023_discover_profiles_availability_filter.sql), sent
+    // exactly as picked here same as every other filter in this function.
+    p_availability_days: filters.availabilityDays && filters.availabilityDays.length > 0 ? filters.availabilityDays : null,
   });
   if (error) throw error;
   return (data ?? []) as DiscoverProfile[];

@@ -9,6 +9,14 @@ export type DiscoverFilters = {
   sport: string | null;
   /** null = no level filter ("Alle niveaus"). */
   level: string | null;
+  /**
+   * "Slimme beschikbaarheids match" (Elite-only, Pricing screen) - the
+   * weekday keys (WEEKDAY_OPTIONS, lib/api.ts) the viewer picked on
+   * FilterScreen. null/empty = no filter. Ignored server-side for
+   * anyone but an active Elite account, see
+   * 0023_discover_profiles_availability_filter.sql.
+   */
+  availabilityDays: string[] | null;
 };
 
 export const DEFAULT_FILTERS: DiscoverFilters = {
@@ -16,6 +24,7 @@ export const DEFAULT_FILTERS: DiscoverFilters = {
   distanceKm: 150,
   sport: null,
   level: null,
+  availabilityDays: null,
 };
 
 const STORAGE_KEY = "sportfrend.discoverFilters";

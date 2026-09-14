@@ -885,12 +885,19 @@ grant execute on function public.discover_daily_status() to authenticated;
 -- Afstand (capped at 50km), Premium/Elite get all four filters (Afstand
 -- up to 150km). A disallowed p_level/p_max_age/p_distance_km is clamped
 -- here, not just hidden client-side on FilterScreen.tsx.
+--
+-- Also enforces "Slimme beschikbaarheids match" (Elite-only,
+-- 0023_discover_profiles_availability_filter.sql): p_availability_days is
+-- clamped to null for anyone but an active Elite plan, and otherwise
+-- narrows candidates to those whose own availability_days overlaps with
+-- at least one of the picked weekday keys.
 create or replace function public.discover_profiles(
   p_sport text default null,
   p_level text default null,
   p_max_age int default null,
   p_distance_km double precision default null,
-  p_limit int default 20
+  p_limit int default 20,
+  p_availability_days text[] default null
 )
 returns table (
   id uuid,
@@ -947,6 +954,12 @@ begin
     p_distance_km := least(coalesce(p_distance_km, 50), 50);
   end if;
 
+  -- "Slimme beschikbaarheids match" is Elite-only - Basis AND Premium
+  -- both get it ignored, not just Basis.
+  if v_plan <> 'elite' then
+    p_availability_days := null;
+  end if;
+
   if p_max_age is not null then
     v_min_birthdate := (current_date - (p_max_age || ' years')::interval)::date;
     v_max_birthdate := (current_date - interval '18 years')::date;
@@ -991,6 +1004,7 @@ begin
         and (p_level is null or p.level = p_level)
         and (v_min_birthdate is null or p.birthdate >= v_min_birthdate)
         and (v_max_birthdate is null or p.birthdate <= v_max_birthdate)
+        and (p_availability_days is null or p.availability_days && p_availability_days)
         and not exists (
           select 1 from public.discover_daily_views d
           where d.user_id = v_uid and d.profile_id = p.id and d.view_date = current_date
@@ -1022,6 +1036,7 @@ begin
       and (p_level is null or p.level = p_level)
       and (v_min_birthdate is null or p.birthdate >= v_min_birthdate)
       and (v_max_birthdate is null or p.birthdate <= v_max_birthdate)
+      and (p_availability_days is null or p.availability_days && p_availability_days)
       -- Only profiles genuinely allowed today: no daily limit at all
       -- (Elite), just picked as one of this call's fresh quota slots, or
       -- already shown earlier today (still allowed - re-showing an
@@ -1065,4 +1080,4 @@ begin
 end;
 $$;
 
-grant execute on function public.discover_profiles(text, text, int, double precision, int) to authenticated;
+grant execute on function public.discover_profiles(text, text, int, double precision, int, text[]) to authenticated;

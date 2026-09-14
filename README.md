@@ -11,9 +11,11 @@ beschikbaar.
 - **Ontdekken**: swipe-kaarten om sportmaatjes te vinden (Skip / Connect), met match-scherm en een dagelijkse aanbevelingslimiet per abonnement (zie "Dagelijkse aanbevelingslimiet" hieronder)
 - **Connecties**: overzicht van je matches
 - **Filter**: leeftijd, afstand, sport, niveau, beschikbaarheid - leeftijd
-  en niveau zijn alleen bruikbaar voor Premium/Elite, en de afstand is voor
+  en niveau zijn alleen bruikbaar voor Premium/Elite, de afstand is voor
   Basis begrensd op 50km (zie "Welke Ontdekken-filters een abonnement mag
-  gebruiken" hieronder)
+  gebruiken" hieronder), en beschikbaarheid ("Slimme beschikbaarheids
+  match") is exclusief voor Elite (zie "Slimme beschikbaarheids match
+  (Elite-only)" hieronder)
 - **Profielen**: sporters bekijken, je eigen profiel bekijken en bewerken
 - **Berichten**: community-feed ("Bericht plaatsen", alleen zichtbaar voor de auteur zelf en diens matches, en alleen bruikbaar voor Premium/Elite - zie "Prikbord" hieronder) en realtime 1-op-1 chat, inclusief het versturen van foto's en een dagelijkse berichtenlimiet per abonnement (zie "Dagelijkse berichtenlimiet" hieronder)
 - **Instellingen**: account, voorkeuren, e-mail wijzigen
@@ -268,6 +270,74 @@ from pg_proc
 where proname = 'discover_profiles' and pronamespace = 'public'::regnamespace;
 -- verwacht: true
 ```
+
+## Slimme beschikbaarheids match (Elite-only)
+
+Zelfde soort belofte als hierboven, maar dan voor de Pricing-regel
+"Slimme beschikbaarheids match" die alleen bij Elite staat. Migratie
+`0023_discover_profiles_availability_filter.sql` voegt op het
+Filter-scherm een nieuwe "Beschikbaarheid"-filter toe (dagen van de
+week, gebruikmakend van het bestaande `profiles.availability_days`-veld)
+en dwingt af dat die alleen werkt voor een actief Elite-account:
+
+- Een Elite-gebruiker kan op het Filter-scherm een of meerdere dagen
+  selecteren. Ontdekken toont dan alleen nog kandidaten van wie
+  `availability_days` op minstens één van die dagen overlapt met de
+  gekozen dagen (`profiles.availability_days && p_availability_days` in
+  `discover_profiles()`) - geen overlap, geen match qua beschikbaarheid.
+- Voor Basis én Premium wordt `p_availability_days` genegeerd (op `null`
+  gezet), ook als een hand-gebouwde RPC-aanroep buiten de UI om een
+  waarde meestuurt - net als bij de Leeftijd/Niveau-clamp hierboven,
+  maar dan voor alle plannen behalve Elite.
+- `FilterScreen.tsx` grijst de dagen-chips uit voor Basis/Premium (met
+  hetzelfde hangslotje, nu met een "ELITE"-badge in plaats van
+  "PREMIUM" - `LockBadge` accepteert nu een `label`-prop), tikken erop
+  opent het Pricing-scherm. Zelfde `useFocusEffect` + `console.warn` bij
+  een mislukte `discover_daily_status()`-aanroep als bij de
+  Leeftijd/Niveau-clamp - een mislukte statusaanroep vergrendelt dus
+  nooit stilletjes niets extra, en laat de echte afdwinging aan
+  `discover_profiles()` over.
+- **Belangrijk voor wie deze migratie zelf toepast**: dit is de eerste
+  migratie die een parameter *toevoegt* aan `discover_profiles()` (5 →
+  6 argumenten). Postgres identificeert een functie via zijn volledige
+  parameterlijst, dus `create or replace function` met een extra
+  parameter vervangt de oude 5-argumenten-versie niet - het maakt er een
+  *tweede*, overloaded functie naast. Elke aanroep met precies de oude 5
+  argumenten (zoals een client die deze update nog niet heeft) krijgt
+  dan `... is not unique` in plaats van gewoon te werken. Daarom bevat
+  deze migratie een expliciete `drop function if exists
+  public.discover_profiles(text, text, int, double precision, int);`
+  vóór de `create or replace` - zonder die drop blijven er twee
+  overloads bestaan.
+
+Draai `0023_discover_profiles_availability_filter.sql` op je bestaande
+database - `0001_init.sql` is ook bijgewerkt voor nieuwe installaties.
+Controleer na het draaien met:
+
+```sql
+select
+  (select count(*) from pg_proc where proname = 'discover_profiles'
+     and pronamespace = 'public'::regnamespace) as overload_count,
+  (select count(*) from pg_proc where proname = 'discover_profiles'
+     and pronamespace = 'public'::regnamespace
+     and pg_get_function_identity_arguments(oid) ilike '%p_availability_days%') as has_availability_param,
+  (select prosrc ilike '%availability_days && p_availability_days%' from pg_proc
+     where proname = 'discover_profiles' and pronamespace = 'public'::regnamespace
+     and pg_get_function_identity_arguments(oid) ilike '%p_availability_days%') as has_overlap_check,
+  (select prosrc ilike '%v_plan <> ''elite''%' from pg_proc
+     where proname = 'discover_profiles' and pronamespace = 'public'::regnamespace
+     and pg_get_function_identity_arguments(oid) ilike '%p_availability_days%') as has_elite_clamp;
+-- verwacht: 1, 1, true, true (overload_count moet precies 1 zijn - staat er
+-- 2, dan is de oude 5-argumenten-versie niet verwijderd en krijgt elke
+-- 5-argumenten-aanroeper "is not unique"; draai dit bestand dan nogmaals,
+-- de drop hierboven lost het op)
+```
+
+De migratie zelf bevat ook een zelfcontrolerend `do $$ ... $$`-blok
+onderaan (zelfde aanpak als `0022_posts_premium_only.sql`) dat bij het
+draaien zelf al een specifieke `EXCEPTION` opwerpt zodra iets hiervan
+niet klopt, in plaats van een dubbelzinnige "Success" die achteraf niet
+overeenkomt met een losse controlequery.
 
 ## Dagelijkse berichtenlimiet (chat)
 
