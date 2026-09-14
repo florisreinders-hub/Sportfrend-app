@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -23,36 +23,65 @@ import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
 import {
   blockUser,
+  createTraining,
+  fetchDiscoverDailyStatus,
   fetchMessages,
   fetchMessagesDailyStatus,
+  fetchSharedSport,
+  fetchTrainings,
   getDataErrorMessage,
   Message,
   MessagesDailyStatus,
+  respondToTraining,
   sendMessage,
+  Training,
+  TrainingProposalFields,
+  updateTrainingProposal,
   uploadChatImage,
 } from "@/lib/api";
 import { ReportModal } from "@/components/ReportModal";
+import { TrainingCard } from "@/components/TrainingCard";
+import { TrainingFormModal } from "@/components/TrainingFormModal";
 
 type Props = NativeStackScreenProps<RootStackParamList, "ChatDetail">;
+
+type ChatItem = { kind: "message"; data: Message } | { kind: "training"; data: Training };
 
 export default function ChatDetailScreen({ route, navigation }: Props) {
   const { chatId, name, photo, otherUserId } = route.params;
   const { session } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
+  const [trainings, setTrainings] = useState<Training[]>([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [reportVisible, setReportVisible] = useState(false);
   const [dailyStatus, setDailyStatus] = useState<MessagesDailyStatus | null>(null);
+  // "Trainings & Buddy Planner" (Elite-only, requirement: "Plan een
+  // training" is alleen zichtbaar/bruikbaar voor Elite-gebruikers). null
+  // until refreshPlan() resolves - deliberately NOT treated as "locked" in
+  // the meantime (see onOpenTrainingForm below), same fail-open reasoning
+  // as FilterScreen.tsx's plan-gated filters: discover_profiles()-style
+  // server-side enforcement (here: the "Elite match participants can
+  // propose trainings" RLS policy) is the real gate regardless of whether
+  // this status call ever succeeds.
+  const [plan, setPlan] = useState<"basis" | "premium" | "elite" | null>(null);
+  const [defaultSport, setDefaultSport] = useState<string | null>(null);
+  const [trainingFormVisible, setTrainingFormVisible] = useState(false);
+  const [editingTraining, setEditingTraining] = useState<Training | null>(null);
+  const [respondingTrainingId, setRespondingTrainingId] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setMessages(await fetchMessages(chatId));
+      const [msgs, trns] = await Promise.all([fetchMessages(chatId), fetchTrainings(chatId)]);
+      setMessages(msgs);
+      setTrainings(trns);
     } catch {
       setMessages([]);
+      setTrainings([]);
     } finally {
       setLoading(false);
     }
@@ -79,9 +108,29 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
     }
   }, []);
 
+  // Reuses the same discover_daily_status() RPC as HomeScreen/FilterScreen
+  // purely for its `plan` field - no new RPC needed, same as how
+  // FilterScreen already piggybacks on it for its own plan-gated filters.
+  const refreshPlan = useCallback(async () => {
+    try {
+      const status = await fetchDiscoverDailyStatus();
+      setPlan(status.plan);
+    } catch (e) {
+      console.warn("[ChatDetailScreen] Kon abonnementsstatus niet ophalen:", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!session?.user) return;
+    fetchSharedSport(session.user.id, otherUserId)
+      .then(setDefaultSport)
+      .catch((e) => console.warn("[ChatDetailScreen] Kon gedeelde sport niet ophalen:", e));
+  }, [session?.user, otherUserId]);
+
   useEffect(() => {
     load();
     refreshDailyStatus();
+    refreshPlan();
 
     // Realtime: any message another participant inserts into this match
     // shows up immediately, no refresh needed. Our own sends are appended
@@ -98,10 +147,90 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
       )
       .subscribe();
 
+    // Same idea for trainings - a new proposal, an accept/decline, or a
+    // "voorstel wijzigen" edit (all of which are INSERT/UPDATE, never
+    // DELETE - there's no delete policy on trainings) needs to reach
+    // *both* participants live, not just the one who triggered it.
+    const trainingsChannel = supabase
+      .channel(`trainings-${chatId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "trainings", filter: `match_id=eq.${chatId}` },
+        (payload) => {
+          const inserted = payload.new as Training;
+          setTrainings((prev) => (prev.some((t) => t.id === inserted.id) ? prev : [...prev, inserted]));
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "trainings", filter: `match_id=eq.${chatId}` },
+        (payload) => {
+          const updated = payload.new as Training;
+          setTrainings((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+        }
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(channel);
+      supabase.removeChannel(trainingsChannel);
     };
-  }, [chatId, load, refreshDailyStatus]);
+  }, [chatId, load, refreshDailyStatus, refreshPlan]);
+
+  const chatItems = useMemo<ChatItem[]>(() => {
+    const items: ChatItem[] = [
+      ...messages.map((m) => ({ kind: "message" as const, data: m })),
+      ...trainings.map((t) => ({ kind: "training" as const, data: t })),
+    ];
+    return items.sort((a, b) => new Date(a.data.created_at).getTime() - new Date(b.data.created_at).getTime());
+  }, [messages, trainings]);
+
+  const onOpenTrainingForm = () => {
+    // Fail-open on an unresolved/failed plan fetch (plan === null) - same
+    // reasoning as the comment on the `plan` state above. A genuinely
+    // non-Elite account that slips past this still gets rejected by the
+    // "Elite match participants can propose trainings" RLS policy on
+    // submit, surfaced via the Alert in onSubmitTrainingForm below.
+    if (plan !== null && plan !== "elite") {
+      navigation.navigate("Pricing");
+      return;
+    }
+    setEditingTraining(null);
+    setTrainingFormVisible(true);
+  };
+
+  const onOpenChangeProposal = (training: Training) => {
+    setEditingTraining(training);
+    setTrainingFormVisible(true);
+  };
+
+  const onSubmitTrainingForm = async (fields: TrainingProposalFields) => {
+    if (!session?.user) return;
+    try {
+      if (editingTraining) {
+        const updated = await updateTrainingProposal(editingTraining.id, session.user.id, fields);
+        setTrainings((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      } else {
+        const created = await createTraining(chatId, session.user.id, fields);
+        setTrainings((prev) => (prev.some((t) => t.id === created.id) ? prev : [...prev, created]));
+      }
+    } catch (e) {
+      Alert.alert("Versturen mislukt", getDataErrorMessage(e));
+      throw e;
+    }
+  };
+
+  const onRespondTraining = async (training: Training, status: "accepted" | "declined") => {
+    setRespondingTrainingId(training.id);
+    try {
+      const updated = await respondToTraining(training.id, status);
+      setTrainings((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+    } catch (e) {
+      Alert.alert("Reageren mislukt", getDataErrorMessage(e));
+    } finally {
+      setRespondingTrainingId(null);
+    }
+  };
 
   const onSend = async () => {
     if (!draft.trim() || !session?.user || sending) return;
@@ -222,20 +351,34 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
         ) : (
           <FlatList
             ref={listRef}
-            data={messages}
-            keyExtractor={(item) => item.id}
+            data={chatItems}
+            keyExtractor={(item) => `${item.kind}-${item.data.id}`}
             contentContainerStyle={styles.messages}
             onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
             renderItem={({ item }) => {
-              const isMine = item.sender_id === session?.user?.id;
+              if (item.kind === "training") {
+                return (
+                  <TrainingCard
+                    training={item.data}
+                    viewerId={session?.user?.id ?? ""}
+                    otherName={name}
+                    busy={respondingTrainingId === item.data.id}
+                    onAccept={() => onRespondTraining(item.data, "accepted")}
+                    onDecline={() => onRespondTraining(item.data, "declined")}
+                    onChangeProposal={() => onOpenChangeProposal(item.data)}
+                  />
+                );
+              }
+              const message = item.data;
+              const isMine = message.sender_id === session?.user?.id;
               return (
                 <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleTheirs]}>
-                  {item.image_url ? (
-                    <Image source={{ uri: item.image_url }} style={styles.bubbleImage} resizeMode="cover" />
+                  {message.image_url ? (
+                    <Image source={{ uri: message.image_url }} style={styles.bubbleImage} resizeMode="cover" />
                   ) : null}
-                  {item.body ? <Text style={styles.bubbleText}>{item.body}</Text> : null}
+                  {message.body ? <Text style={styles.bubbleText}>{message.body}</Text> : null}
                   <Text style={[styles.bubbleTime, isMine ? styles.bubbleTimeMine : styles.bubbleTimeTheirs]}>
-                    {new Date(item.created_at).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}
+                    {new Date(message.created_at).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}
                   </Text>
                 </View>
               );
@@ -271,6 +414,19 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
                 <Ionicons name="image-outline" size={22} color={colors.black} />
               )}
             </Pressable>
+            {/*
+              "Plan een training" - Elite-only (requirement 2). Locked for
+              Basis/Premium: a plain lock icon here, tapping it goes
+              straight to Pricing rather than opening a form that would
+              just get rejected server-side - see onOpenTrainingForm.
+            */}
+            <Pressable onPress={onOpenTrainingForm} hitSlop={8} style={styles.trainingButton}>
+              <Ionicons
+                name={plan === "elite" ? "calendar-outline" : "lock-closed-outline"}
+                size={22}
+                color={colors.black}
+              />
+            </Pressable>
             <Input
               placeholder="Typ een bericht"
               value={draft}
@@ -290,6 +446,25 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
           </View>
         )}
       </KeyboardAvoidingView>
+
+      <TrainingFormModal
+        visible={trainingFormVisible}
+        title={editingTraining ? "Voorstel wijzigen" : "Plan een training"}
+        submitLabel={editingTraining ? "Voorstel bijwerken" : "Versturen"}
+        initialValues={
+          editingTraining
+            ? {
+                date: editingTraining.date,
+                time: editingTraining.time.slice(0, 5),
+                sport: editingTraining.sport,
+                location: editingTraining.location,
+                note: editingTraining.note,
+              }
+            : { sport: defaultSport }
+        }
+        onSubmit={onSubmitTrainingForm}
+        onClose={() => setTrainingFormVisible(false)}
+      />
     </ScreenContainer>
   );
 }
@@ -380,6 +555,11 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   imageButton: {
+    width: 32,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  trainingButton: {
     width: 32,
     justifyContent: "center",
     alignItems: "center",

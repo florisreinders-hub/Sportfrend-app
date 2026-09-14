@@ -17,8 +17,8 @@ beschikbaar.
   match") is exclusief voor Elite (zie "Slimme beschikbaarheids match
   (Elite-only)" hieronder)
 - **Profielen**: sporters bekijken, je eigen profiel bekijken en bewerken
-- **Berichten**: community-feed ("Bericht plaatsen", alleen zichtbaar voor de auteur zelf en diens matches, en alleen bruikbaar voor Premium/Elite - zie "Prikbord" hieronder) en realtime 1-op-1 chat, inclusief het versturen van foto's en een dagelijkse berichtenlimiet per abonnement (zie "Dagelijkse berichtenlimiet" hieronder)
-- **Instellingen**: account, voorkeuren, e-mail wijzigen
+- **Berichten**: community-feed ("Bericht plaatsen", alleen zichtbaar voor de auteur zelf en diens matches, en alleen bruikbaar voor Premium/Elite - zie "Prikbord" hieronder) en realtime 1-op-1 chat, inclusief het versturen van foto's, een "Plan een training"-knop (Elite-only - zie "Trainings & Buddy Planner" hieronder) en een dagelijkse berichtenlimiet per abonnement (zie "Dagelijkse berichtenlimiet" hieronder)
+- **Instellingen**: account, voorkeuren, e-mail wijzigen, "Mijn trainingen" (zie "Trainings & Buddy Planner" hieronder)
 - **Premium & Elite**: Basis (gratis), Premium (€4,99/mnd), Elite (€9,99/mnd) + betaalscherm
 - **Ondersteuning**: Helpdesk, veelgestelde vragen, klantenservice
 
@@ -662,6 +662,125 @@ en een melding te ontvangen, is een **custom development build** nodig
    worden; de Expo Push API werkt ook zonder.
 5. **Test pas echt via een development build**, niet via Expo Go (zie de
    beperking hierboven).
+
+## Trainings & Buddy Planner (Elite-only)
+
+Pricing-tabel: Elite heeft als enige "Slimme trainingsplanner". Een Elite-
+gebruiker kan vanuit een chat (naast het berichtenveld, via de knop met het
+kalender-icoon) een concreet trainingsvoorstel doen aan zijn/haar match -
+datum, tijd, sport (voorgevuld met de gedeelde sport, zie `fetchSharedSport()`
+in `lib/api.ts`), en optioneel locatie/opmerking. Dat voorstel verschijnt in
+de chat als een aparte kaart (`components/TrainingCard.tsx`, ingevoegd
+tussen de berichten op tijdstip - zie `ChatDetailScreen.tsx`'s
+`chatItems`), niet als los tekstbericht, met "Accepteren"/"Voorstel
+wijzigen" (en een kleinere "Afwijzen") voor wie het voorstel niet zelf
+deed. Geaccepteerde trainingen staan ook onder Instellingen →
+"Mijn trainingen" (`app/settings/MyTrainingsScreen.tsx`), voor beide
+deelnemers, ongeacht ieders eigen abonnement.
+
+Migratie `supabase/migrations/0024_trainings_planner.sql` (en, voor nieuwe
+installaties, hetzelfde blok in `0001_init.sql`) legt dit vast:
+
+- Nieuwe tabel `public.trainings` (`match_id`, `created_by`, `date`,
+  `time`, `sport`, `location`, `note`, `status`
+  `'pending'`/`'accepted'`/`'declined'`, `created_at`, plus
+  `reminder_sent_at` - zie hieronder).
+- **`has_elite_access()`** (mirrort `has_posts_access()` uit
+  `0022_posts_premium_only.sql` één-op-één, alleen met `plan = 'elite'` in
+  plaats van `plan in ('premium', 'elite')`) is de echte afdwinging van
+  requirement 6: de "Elite match participants can propose trainings"
+  RLS-policy op de INSERT staat een rij alleen toe als
+  `has_elite_access()` waar is én de aanroeper een deelnemer van
+  `match_id` is - een hand-gebouwde INSERT die de UI overslaat komt hier
+  op precies dezelfde manier vast te zitten als de UI zelf (die het
+  kalender-icoon vervangt door een hangslotje en naar Pricing linkt voor
+  Basis/Premium).
+- **Reageren is bewust niet Elite-only**: de UPDATE-policy ("Accepteren"/
+  "Voorstel wijzigen"/"Afwijzen", en de daadwerkelijke rij-wijziging bij
+  "Voorstel wijzigen") staat elke deelnemer toe, niet alleen Elite-
+  accounts - een Basis/Premium-gebruiker die een voorstel van een Elite-
+  match ontvangt, moet erop kunnen reageren. "Voorstel wijzigen" wijzigt
+  de bestaande rij (geen nieuwe kaart, geen geschiedenis van
+  overschreven voorstellen) en zet `created_by` op wie het laatst
+  bijwerkte, zodat de ander weer "Accepteren"/"Voorstel wijzigen" te zien
+  krijgt.
+- **`reminder_sent_at`** staat niet letterlijk in de opgegeven
+  kolommenlijst, maar is noodzakelijk: zonder een "al herinnerd?"-markering
+  zou de periodieke herinneringsjob (hieronder) bij elke tik van zijn
+  schema een dubbele push sturen zolang een training binnen het
+  "begint over 2 uur"-venster valt.
+- **`claim_training_reminders(p_window_minutes)`** (niet `security
+  definer` - dit moet over de trainings/matches van *alle* gebruikers
+  heen kunnen kijken, dus er is geen zinnig per-gebruiker bereik om het
+  tot te beperken) claimt atomisch (één `update ... returning`) elke
+  geaccepteerde, nog niet herinnerde training die over 2 tot 2+5 minuten
+  begint, en zet meteen `reminder_sent_at`, zodat twee overlappende
+  cron-ticks nooit dezelfde training dubbel melden. Alleen `service_role`
+  mag deze aanroepen - Postgres geeft `EXECUTE` op een nieuwe functie
+  standaard aan `PUBLIC`, dus de migratie trekt dat expliciet weer in
+  (`revoke execute ... from public`) vóór de `grant ... to service_role`,
+  anders zou elke ingelogde gebruiker (weliswaar begrensd door de
+  UPDATE-RLS-policy tot zijn eigen trainings) deze functie rechtstreeks
+  kunnen aanroepen.
+- Datum/tijd worden ingevoerd als Europe/Amsterdam-kloktijd (de app doet
+  nergens anders iets met tijdzones) - `claim_training_reminders()`
+  interpreteert `(date + time)` expliciet als die tijdzone
+  (`at time zone 'Europe/Amsterdam'`) vóór de vergelijking met `now()`
+  (altijd UTC), zodat dit ook correct blijft rond de CET/CEST-omschakeling.
+
+**Postgres-eigenaardigheid, ontdekt tijdens het lokaal testen:** in een
+`create table`-kolomlijst is `time time` een geldige kolomdefinitie, maar
+in een `returns table(...)`-clausule van een functie geeft `time time`
+(in tegenstelling tot `date date`) een `syntax error at or near "time"` -
+dit is opgelost door de kolomnaam daar te quoten (`"time" time`), verder
+overal een gewone ongequote `time`-identifier.
+
+**Hergebruikt de pushmeldingen-infrastructuur** (requirement 5) in plaats
+van iets nieuws te bouwen: de Edge Function `send-training-reminder-push`
+importeert dezelfde `_shared/push.ts`-helpers
+(`createServiceRoleClient`/`sendExpoPushNotifications`/`jsonResponse`/
+`verifyWebhookSecret`) als `send-message-push`/`send-match-push`, en
+hergebruikt hetzelfde `DB_WEBHOOK_SECRET` (0011_push_notifications.sql).
+Het enige echte verschil: er is geen rij-event ("training begint over 2
+uur" is geen INSERT/UPDATE) om een trigger op te zetten, dus
+`supabase/migrations/0025_training_reminder_cron.sql` gebruikt in plaats
+daarvan pg_cron + pg_net (`cron.schedule(...)` met `net.http_post(...)`)
+om de functie elke 5 minuten aan te roepen - dezelfde
+`x-webhook-secret`-header, alleen tijdgestuurd in plaats van
+event-gestuurd.
+
+**Handmatige stappen die jij zelf moet zetten** (bovenop de stappen bij
+"Pushmeldingen" hierboven, die dit hergebruikt):
+
+1. Draai `0024_trainings_planner.sql` (tabel/RLS/functies) - zie de
+   controlequery bovenaan dat bestand.
+2. **Deploy de Edge Function**:
+   ```bash
+   supabase functions deploy send-training-reminder-push --no-verify-jwt
+   ```
+3. **Zet pg_cron en pg_net aan**: Supabase-dashboard → Database →
+   Extensions, zoek "pg_cron" en "pg_net", zet beide aan.
+4. **Voer `0025_training_reminder_cron.sql` uit**, na het invullen van
+   `REPLACE_WITH_YOUR_DB_WEBHOOK_SECRET` met dezelfde waarde als bij
+   Pushmeldingen stap 2 (niets nieuws te genereren). Controleer met:
+   ```sql
+   select jobname, schedule, active from cron.job where jobname = 'training-reminder-push';
+   -- verwacht: één rij, schedule = '*/5 * * * *', active = true
+   ```
+
+**Getest**: lokaal (los Postgres-schema, geen netwerktoegang tot Supabase
+vanuit deze omgeving) met een Elite- en een Basis-testaccount op dezelfde
+match - Elite kan een voorstel aanmaken, Basis niet (RLS-weigering, ook
+voor een match waar de Elite-gebruiker zelf geen deelnemer van is); beide
+deelnemers kunnen het voorstel lezen, een buitenstaander niet; de Basis-
+ontvanger kan accepteren/"voorstel wijzigen" (en daarbij `created_by` naar
+zichzelf laten verspringen) zonder zelf Elite te zijn; een buitenstaander
+kan niet updaten; `claim_training_reminders()` claimt exact de
+geaccepteerde, nog-niet-herinnerde training binnen het 2u-venster, negeert
+er buiten liggende/`pending`/al-herinnerde trainingen, claimt bij een
+tweede aanroep niets dubbel, en is voor het `authenticated`-account
+volledig ontoegankelijk (`permission denied`) - alleen `service_role` kan
+hem aanroepen.
 
 ## Klantenservice-e-mail (Resend)
 

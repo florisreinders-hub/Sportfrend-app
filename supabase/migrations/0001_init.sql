@@ -1081,3 +1081,128 @@ end;
 $$;
 
 grant execute on function public.discover_profiles(text, text, int, double precision, int, text[]) to authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- trainings: "Trainings & Buddy Planner" (Elite-only) - see
+-- 0024_trainings_planner.sql for the full writeup. Only mirrored here for
+-- new installs; the pg_cron reminder schedule in
+-- 0025_training_reminder_cron.sql is project-specific (needs your own
+-- DB_WEBHOOK_SECRET and the pg_cron/pg_net extensions enabled) and stays
+-- its own migration, same as how 0011_push_notifications.sql's webhook
+-- triggers were never merged back into this file either.
+-- ─────────────────────────────────────────────────────────────────────────
+create table if not exists public.trainings (
+  id uuid primary key default uuid_generate_v4(),
+  match_id uuid not null references public.matches (id) on delete cascade,
+  created_by uuid not null references public.profiles (id) on delete cascade,
+  date date not null,
+  time time not null,
+  sport text,
+  location text,
+  note text,
+  status text not null default 'pending' check (status in ('pending', 'accepted', 'declined')),
+  created_at timestamptz not null default now(),
+  reminder_sent_at timestamptz
+);
+
+alter table public.trainings enable row level security;
+
+create or replace function public.has_elite_access()
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null then
+    return false;
+  end if;
+
+  return exists (
+    select 1 from public.subscriptions s
+    where s.user_id = v_uid and s.status = 'active' and s.plan = 'elite'
+  );
+end;
+$$;
+
+grant execute on function public.has_elite_access() to authenticated;
+
+create policy "Match participants can read trainings"
+  on public.trainings for select
+  to authenticated
+  using (
+    exists (
+      select 1 from public.matches m
+      where m.id = trainings.match_id
+        and (m.user_a_id = auth.uid() or m.user_b_id = auth.uid())
+    )
+  );
+
+create policy "Elite match participants can propose trainings"
+  on public.trainings for insert
+  to authenticated
+  with check (
+    created_by = auth.uid()
+    and public.has_elite_access()
+    and exists (
+      select 1 from public.matches m
+      where m.id = match_id
+        and (m.user_a_id = auth.uid() or m.user_b_id = auth.uid())
+    )
+  );
+
+create policy "Match participants can respond to trainings"
+  on public.trainings for update
+  to authenticated
+  using (
+    exists (
+      select 1 from public.matches m
+      where m.id = trainings.match_id
+        and (m.user_a_id = auth.uid() or m.user_b_id = auth.uid())
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.matches m
+      where m.id = match_id
+        and (m.user_a_id = auth.uid() or m.user_b_id = auth.uid())
+        and (created_by = m.user_a_id or created_by = m.user_b_id)
+    )
+  );
+
+create or replace function public.claim_training_reminders(p_window_minutes int default 5)
+returns table (
+  id uuid,
+  match_id uuid,
+  date date,
+  -- "time" needs quoting here (unlike "date") - see
+  -- 0024_trainings_planner.sql's comment on the identical RETURNS TABLE
+  -- clause for why.
+  "time" time,
+  sport text,
+  location text,
+  user_a_id uuid,
+  user_b_id uuid
+)
+language sql
+set search_path = public
+as $$
+  update public.trainings t
+  set reminder_sent_at = now()
+  from public.matches m
+  where m.id = t.match_id
+    and t.status = 'accepted'
+    and t.reminder_sent_at is null
+    and ((t.date + t.time) at time zone 'Europe/Amsterdam')
+        between now() + interval '2 hours'
+            and now() + interval '2 hours' + make_interval(mins => p_window_minutes)
+  returning t.id, t.match_id, t.date, t.time, t.sport, t.location, m.user_a_id, m.user_b_id;
+$$;
+
+revoke execute on function public.claim_training_reminders(int) from public;
+grant execute on function public.claim_training_reminders(int) to service_role;
+
+alter publication supabase_realtime add table public.trainings;

@@ -370,6 +370,157 @@ export async function uploadChatImage(matchId: string, senderId: string, localUr
   return data.publicUrl;
 }
 
+// ───────────────────────────────────────────────────────────────────────
+// "Trainings & Buddy Planner" (Elite-only) - a training proposal shows up
+// as a special card inline in the chat, not as a plain message row (see
+// ChatDetailScreen.tsx merging messages + trainings into one sorted list).
+// Server-side enforcement (only an active Elite account may INSERT a row
+// here) lives in the "Elite match participants can propose trainings" RLS
+// policy - see supabase/migrations/0024_trainings_planner.sql. This client
+// code never checks the plan itself before calling createTraining(); it's
+// only used to decide whether to show the "Plan een training" button
+// enabled or locked in the first place.
+// ───────────────────────────────────────────────────────────────────────
+
+export type Training = {
+  id: string;
+  match_id: string;
+  created_by: string;
+  date: string; // "YYYY-MM-DD"
+  time: string; // "HH:MM:SS" as returned by PostgREST for a `time` column
+  sport: string | null;
+  location: string | null;
+  note: string | null;
+  status: "pending" | "accepted" | "declined";
+  created_at: string;
+};
+
+export type TrainingProposalFields = {
+  date: string; // "YYYY-MM-DD"
+  time: string; // "HH:MM"
+  sport: string | null;
+  location: string | null;
+  note: string | null;
+};
+
+export async function fetchTrainings(matchId: string): Promise<Training[]> {
+  const { data, error } = await supabase
+    .from("trainings")
+    .select("*")
+    .eq("match_id", matchId)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function createTraining(
+  matchId: string,
+  createdBy: string,
+  fields: TrainingProposalFields
+): Promise<Training> {
+  const { data, error } = await supabase
+    .from("trainings")
+    .insert({
+      match_id: matchId,
+      created_by: createdBy,
+      date: fields.date,
+      time: fields.time,
+      sport: fields.sport,
+      location: fields.location,
+      note: fields.note,
+    })
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data as Training;
+}
+
+/**
+ * "Voorstel wijzigen": the recipient edits the proposed date/time/etc and
+ * resubmits on the *same* row (no new card, no history of superseded
+ * proposals) - `created_by` flips to whoever just submitted the change, so
+ * the other participant becomes the one who sees "Accepteren"/"Voorstel
+ * wijzigen" next, and `status` resets to 'pending' since an edited
+ * proposal needs a fresh response.
+ */
+export async function updateTrainingProposal(
+  trainingId: string,
+  updatedBy: string,
+  fields: TrainingProposalFields
+): Promise<Training> {
+  const { data, error } = await supabase
+    .from("trainings")
+    .update({
+      created_by: updatedBy,
+      date: fields.date,
+      time: fields.time,
+      sport: fields.sport,
+      location: fields.location,
+      note: fields.note,
+      status: "pending",
+    })
+    .eq("id", trainingId)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data as Training;
+}
+
+export async function respondToTraining(trainingId: string, status: "accepted" | "declined"): Promise<Training> {
+  const { data, error } = await supabase.from("trainings").update({ status }).eq("id", trainingId).select("*").single();
+  if (error) throw error;
+  return data as Training;
+}
+
+/**
+ * Both participants' current `sport` - used purely to prefill the "Plan
+ * een training" form (requirement: "sport voorgevuld met de gedeelde
+ * sport van de match"). When both happen to have the same sport set,
+ * that's the obvious prefill; otherwise falls back to the caller's own
+ * sport, then the other participant's, then null (the picker is always
+ * editable regardless).
+ */
+export async function fetchSharedSport(myId: string, otherId: string): Promise<string | null> {
+  const { data, error } = await supabase.from("profiles").select("id, sport").in("id", [myId, otherId]);
+  if (error) throw error;
+  const mine = data?.find((p) => p.id === myId)?.sport ?? null;
+  const theirs = data?.find((p) => p.id === otherId)?.sport ?? null;
+  if (mine && mine === theirs) return mine;
+  return mine ?? theirs ?? null;
+}
+
+export type TrainingWithMatch = Training & {
+  match: {
+    id: string;
+    user_a_id: string;
+    user_b_id: string;
+    user_a: Profile | null;
+    user_b: Profile | null;
+  };
+};
+
+/**
+ * "Mijn trainingen" (Instellingen): every training this account has
+ * accepted, across all matches - not plan-gated itself (a Basis/Premium
+ * account can be the recipient of a training an Elite match proposed, and
+ * should still be able to see it here). RLS's "Match participants can
+ * read trainings" policy already restricts this to rows the caller is a
+ * participant of, so no extra user-id filter is needed client-side - same
+ * trust pattern as fetchMessages().
+ */
+export async function fetchMyAcceptedTrainings(): Promise<TrainingWithMatch[]> {
+  const { data, error } = await supabase
+    .from("trainings")
+    .select(
+      `*, match:matches(id, user_a_id, user_b_id, user_a:profiles!matches_user_a_id_fkey(${PROFILE_COLUMNS}), user_b:profiles!matches_user_b_id_fkey(${PROFILE_COLUMNS}))`
+    )
+    .eq("status", "accepted")
+    .order("date", { ascending: true })
+    .order("time", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as unknown as TrainingWithMatch[];
+}
+
 export type Conversation = {
   id: string;
   created_at: string;

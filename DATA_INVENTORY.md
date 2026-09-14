@@ -84,6 +84,19 @@ Berichttekst (eerste 120 tekens) verlaat de eigen infrastructuur richting Expo's
 
 Sinds migratie `0020_messages_daily_limit.sql` telt `created_at` ook mee voor de dagelijkse berichtenlimiet per abonnement (Basis 3/dag, Premium/Elite onbeperkt, zie §"subscriptions"): de "Match participants can send messages"-RLS-policy telt hoeveel rijen deze afzender vandaag al heeft, en weigert een nieuw bericht zodra dat aantal het planlimiet bereikt.
 
+### `trainings`
+
+Sinds migratie `0024_trainings_planner.sql` ("Trainings & Buddy Planner", zie README.md).
+
+| Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
+|---|---|---|---|
+| `match_id`, `created_by` | Ja (wie stelt een training voor aan wie) | Matig | Tot verwijdering van het bijbehorende match (`on delete cascade`) of accountverwijdering |
+| `date`, `time`, `sport`, `location`, `note` | Ja, indien gezet - wanneer/waar/met wie iemand traint, plus een vrij invulveld (`note`) | Potentieel (`location`/`note` kunnen adres- of andere herleidbare informatie bevatten) | idem |
+| `status`, `created_at` | Metadata | - | idem |
+| `reminder_sent_at` | Nee (alleen "is de 2-uur-van-tevoren-pushmelding al verstuurd", geen inhoud) | - | idem |
+
+Alleen een actief Elite-abonnement (`has_elite_access()`, zie §"subscriptions") mag een rij *aanmaken* (RLS INSERT-policy) - reageren (accepteren/afwijzen/"voorstel wijzigen") mag elke deelnemer van het match, ongeacht diens eigen plan. `claim_training_reminders()` (alleen aanroepbaar door `service_role`, nooit door een ingelogde gebruiker) stuurt via dezelfde Expo Push API als berichten/matches (§4) een herinnering circa 2 uur voor een geaccepteerde training.
+
 ### `posts` / `post_likes`
 
 | Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
@@ -113,7 +126,7 @@ Alleen de melder zelf kan zijn eigen rapportages lezen; er is geen moderator-rol
 |---|---|---|---|
 | `user_id`, `plan`, `status`, `price_cents`, `current_period_end` | Ja (financiële/abonnementsgegevens) | Ja (financieel) | Tot accountverwijdering - geen betalingsgegevens (kaartnummers e.d.) worden hier of elders in de eigen database opgeslagen |
 
-Sinds migratie `0019_discover_daily_limit.sql` is `plan` niet langer alleen informatief: `discover_profiles()` leest deze kolom (alleen een rij met `status = 'active'` telt mee, dus een gekozen-maar-niet-"betaald" `pending`-plan telt als Basis) om de dagelijkse Ontdekken-aanbevelingslimiet te bepalen (Basis 5/dag, Premium 15/dag, Elite onbeperkt). Sinds migratie `0020_messages_daily_limit.sql` geldt hetzelfde voor de dagelijkse berichtenlimiet (Basis 3/dag, Premium/Elite onbeperkt), afgedwongen op de INSERT-policy van `messages`. Sinds migratie `0021_discover_profiles_plan_filters.sql` bepaalt `plan` ook welke Ontdekken-filters bruikbaar zijn (Basis: alleen Sport + Afstand, tot 50km; Premium/Elite: ook Leeftijd en Niveau, Afstand tot 150km) - eveneens afgedwongen binnen `discover_profiles()` zelf. Sinds migratie `0022_posts_premium_only.sql` bepaalt `plan` ook of het "prikbord" (`posts`/`post_likes`) toegankelijk is: alleen een actief Premium- of Elite-abonnement mag posts lezen, plaatsen of liken - een Basis-account ziet niets van deze tabellen, afgedwongen via `has_posts_access()` in de RLS-policies zelf. Sinds migratie `0023_discover_profiles_availability_filter.sql` bepaalt `plan` ook of de "Slimme beschikbaarheids match"-filter (overlap met `profiles.availability_days`) in `discover_profiles()` wordt toegepast: uitsluitend voor een actief Elite-abonnement - voor Basis én Premium wordt de meegestuurde `p_availability_days`-waarde genegeerd.
+Sinds migratie `0019_discover_daily_limit.sql` is `plan` niet langer alleen informatief: `discover_profiles()` leest deze kolom (alleen een rij met `status = 'active'` telt mee, dus een gekozen-maar-niet-"betaald" `pending`-plan telt als Basis) om de dagelijkse Ontdekken-aanbevelingslimiet te bepalen (Basis 5/dag, Premium 15/dag, Elite onbeperkt). Sinds migratie `0020_messages_daily_limit.sql` geldt hetzelfde voor de dagelijkse berichtenlimiet (Basis 3/dag, Premium/Elite onbeperkt), afgedwongen op de INSERT-policy van `messages`. Sinds migratie `0021_discover_profiles_plan_filters.sql` bepaalt `plan` ook welke Ontdekken-filters bruikbaar zijn (Basis: alleen Sport + Afstand, tot 50km; Premium/Elite: ook Leeftijd en Niveau, Afstand tot 150km) - eveneens afgedwongen binnen `discover_profiles()` zelf. Sinds migratie `0022_posts_premium_only.sql` bepaalt `plan` ook of het "prikbord" (`posts`/`post_likes`) toegankelijk is: alleen een actief Premium- of Elite-abonnement mag posts lezen, plaatsen of liken - een Basis-account ziet niets van deze tabellen, afgedwongen via `has_posts_access()` in de RLS-policies zelf. Sinds migratie `0023_discover_profiles_availability_filter.sql` bepaalt `plan` ook of de "Slimme beschikbaarheids match"-filter (overlap met `profiles.availability_days`) in `discover_profiles()` wordt toegepast: uitsluitend voor een actief Elite-abonnement - voor Basis én Premium wordt de meegestuurde `p_availability_days`-waarde genegeerd. Sinds migratie `0024_trainings_planner.sql` bepaalt `plan` ook of een rij in `trainings` mag worden *aangemaakt* (`has_elite_access()`, uitsluitend een actief Elite-abonnement) - reageren op een al bestaande training is niet aan `plan` gebonden.
 
 ### `support_requests`
 
@@ -140,7 +153,7 @@ Beide buckets zijn publiek leesbaar (`public: true`) - elke URL is opvraagbaar d
 |---|---|---|---|
 | **Supabase** (database, auth, storage, edge functions, realtime) | Alle bovenstaande gegevens - dit ís de primaire opslag | Kernfunctionaliteit van de app | - |
 | **Resend** (`send-support-email`) | Naam, e-mailadres, gebruikers-ID, onderwerp en volledige tekst van een Klantenservice-bericht | E-mail naar `info.sportfrend@gmail.com` sturen bij een support-aanvraag | README.md §"Klantenservice-e-mail (Resend)" |
-| **Expo / EAS** (Push-API, `exp.host`) | Expo push-token, verzendernaam (`full_name`), **eerste 120 tekens van een berichttekst**, of "Je hebt een match met {naam}" | Pushmeldingen bij nieuwe berichten/matches | README.md §"Pushmeldingen (Expo Notifications)" |
+| **Expo / EAS** (Push-API, `exp.host`) | Expo push-token, verzendernaam (`full_name`), **eerste 120 tekens van een berichttekst**, "Je hebt een match met {naam}", of sport/locatie van een geaccepteerde training (herinnering 2 uur van tevoren) | Pushmeldingen bij nieuwe berichten/matches/trainingsherinneringen | README.md §"Pushmeldingen (Expo Notifications)", §"Trainings & Buddy Planner (Elite-only)" |
 | **Expo / EAS** (Update-hosting, `u.expo.dev`) | Geen gebruikersgegevens - alleen de gecompileerde JS-bundle (code, geen userdata) wordt gehost | OTA-updates van de preview build | - |
 | **RevenueCat** (nog niet live - sandbox-modus) | **Nog niet van toepassing.** Bij een echte integratie: de gebruikers-ID (als RevenueCat `app_user_id`), aankoopgeschiedenis en abonnementsstatus, gedeeld met Apple/Google's eigen betaalinfrastructuur via de store zelf | Toekomstige verwerking van echte betalingen voor Premium/Elite | README.md §"RevenueCat (Betalen-scherm)", `lib/purchases.ts` |
 | **Apple / Google** (locatietoestemming, pushregistratie, toekomstige in-app-aankopen) | Locatietoestemming en pushregistratie lopen via het besturingssysteem zelf; app-storegegevens zodra RevenueCat live gaat | Platform-services | - |
