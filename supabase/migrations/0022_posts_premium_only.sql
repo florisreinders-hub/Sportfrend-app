@@ -42,6 +42,43 @@
 --   (select count(*) from pg_policies where schemaname = 'public' and tablename = 'post_likes'
 --      and policyname = 'Users manage their own likes' and qual ilike '%has_posts_access%' and with_check ilike '%has_posts_access%') as likes_all_gated;
 -- -- expect: 1, 1, 1, 1, 1, 1
+--
+-- If any of those come back 0 despite the script above reporting
+-- "Success", this file's own trailing `do $$ ... $$` self-check block
+-- (bottom of this file) will raise a specific exception naming exactly
+-- which piece is missing the next time you run the whole file - re-run it
+-- and read that error rather than guessing. To see the *current* raw
+-- state without re-running anything:
+--
+-- select 'function exists' as check, (exists (
+--   select 1 from pg_proc where proname = 'has_posts_access' and pronamespace = 'public'::regnamespace
+-- ))::text as result
+-- union all
+-- select 'posts SELECT qual', coalesce((select qual from pg_policies
+--   where schemaname='public' and tablename='posts' and policyname='Posts are readable by their author or a match'), '<policy not found>')
+-- union all
+-- select 'posts INSERT with_check', coalesce((select with_check from pg_policies
+--   where schemaname='public' and tablename='posts' and policyname='Users manage their own posts'), '<policy not found>')
+-- union all
+-- select 'posts DELETE qual', coalesce((select qual from pg_policies
+--   where schemaname='public' and tablename='posts' and policyname='Users can delete their own posts'), '<policy not found>')
+-- union all
+-- select 'post_likes SELECT qual', coalesce((select qual from pg_policies
+--   where schemaname='public' and tablename='post_likes' and policyname='Likes are readable by authenticated users'), '<policy not found>')
+-- union all
+-- select 'post_likes ALL qual', coalesce((select qual from pg_policies
+--   where schemaname='public' and tablename='post_likes' and policyname='Users manage their own likes'), '<policy not found>')
+-- union all
+-- select 'post_likes ALL with_check', coalesce((select with_check from pg_policies
+--   where schemaname='public' and tablename='post_likes' and policyname='Users manage their own likes'), '<policy not found>');
+--
+-- This prints the actual policy text (or "<policy not found>") for each
+-- check instead of a bare 0/1 - if a policy's text is the *old* condition
+-- without "has_posts_access" in it, the DROP POLICY/CREATE POLICY pair for
+-- it never actually ran (most likely cause: only part of this file got
+-- executed - e.g. a highlighted selection in the SQL editor runs only the
+-- selection, not the whole pasted script - or this ran against a
+-- different Supabase project/branch than the one this check queries).
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- has_posts_access: single source of truth for "may this caller use the
@@ -122,3 +159,73 @@ create policy "Users manage their own likes"
   to authenticated
   using (auth.uid() = user_id and public.has_posts_access())
   with check (auth.uid() = user_id and public.has_posts_access());
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Self-check: raises a specific error if anything above didn't actually
+-- take effect, instead of the SQL editor's generic "Success" leaving that
+-- ambiguous. Added after a report where running this file showed
+-- "Success" yet the separate verification query below still returned all
+-- 0s - most likely explanation is that only part of a pasted script
+-- executed (e.g. a highlighted selection in the SQL editor only runs the
+-- selection, not the whole buffer) or it ran against a different
+-- project/branch than the one being verified afterwards; this block
+-- can't detect *which* of those happened, but it does guarantee that
+-- silently doing nothing is no longer possible for this migration itself
+-- - either every check below passes and it prints a NOTICE, or it raises
+-- an EXCEPTION naming exactly what's missing.
+-- ─────────────────────────────────────────────────────────────────────────
+do $$
+begin
+  if not exists (
+    select 1 from pg_proc where proname = 'has_posts_access' and pronamespace = 'public'::regnamespace
+  ) then
+    raise exception 'has_posts_access() does not exist - the CREATE FUNCTION statement above did not run (or ran against a different database than this check).';
+  end if;
+
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'posts'
+      and policyname = 'Posts are readable by their author or a match'
+      and qual ilike '%has_posts_access%'
+  ) then
+    raise exception 'posts SELECT policy ("Posts are readable by their author or a match") does not reference has_posts_access() - it was not updated.';
+  end if;
+
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'posts'
+      and policyname = 'Users manage their own posts'
+      and with_check ilike '%has_posts_access%'
+  ) then
+    raise exception 'posts INSERT policy ("Users manage their own posts") does not reference has_posts_access() - it was not updated.';
+  end if;
+
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'posts'
+      and policyname = 'Users can delete their own posts'
+      and qual ilike '%has_posts_access%'
+  ) then
+    raise exception 'posts DELETE policy ("Users can delete their own posts") does not reference has_posts_access() - it was not updated.';
+  end if;
+
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'post_likes'
+      and policyname = 'Likes are readable by authenticated users'
+      and qual ilike '%has_posts_access%'
+  ) then
+    raise exception 'post_likes SELECT policy ("Likes are readable by authenticated users") does not reference has_posts_access() - it was not updated.';
+  end if;
+
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'post_likes'
+      and policyname = 'Users manage their own likes'
+      and qual ilike '%has_posts_access%' and with_check ilike '%has_posts_access%'
+  ) then
+    raise exception 'post_likes ALL policy ("Users manage their own likes") does not reference has_posts_access() in both its using and with check clauses - it was not updated.';
+  end if;
+
+  raise notice 'has_posts_access() and all 5 posts/post_likes policies are correctly in place.';
+end $$;

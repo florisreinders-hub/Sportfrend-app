@@ -366,6 +366,20 @@ select
 Draai `0022_posts_premium_only.sql` op je bestaande database -
 `0001_init.sql` is ook bijgewerkt voor nieuwe installaties.
 
+**Als de SQL editor "Success" toont maar de controlequery toch overal 0
+geeft**: het bestand zelf eindigt met een `do $$ ... $$`-blok dat exact
+diezelfde zes checks herhaalt en een specifieke `EXCEPTION` opwerpt zodra
+er ook maar één ontbreekt (in plaats van de dubbelzinnige "Success" van
+de losse controlequery) - draai het bestand nogmaals en lees die
+foutmelding. De meest waarschijnlijke oorzaak is dat er maar een deel van
+het geplakte bestand daadwerkelijk is uitgevoerd (bijvoorbeeld: in de SQL
+editor voert "Run" alleen de *geselecteerde* tekst uit als er iets
+gemarkeerd is, niet per se het hele plakvenster) of dat het tegen een
+ander Supabase-project/branch draaide dan waarop de controlequery
+daarna liep. Zie de kop van `0022_posts_premium_only.sql` zelf voor een
+uitgebreidere diagnostequery die de daadwerkelijke policy-tekst toont in
+plaats van alleen 0/1.
+
 ## Moderatie (rapporteren & blokkeren)
 
 Op het "Sporters profiel bekijken"-scherm en in de chat (ChatDetailScreen)
