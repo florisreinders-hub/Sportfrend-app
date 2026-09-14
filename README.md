@@ -15,7 +15,7 @@ beschikbaar.
   Basis begrensd op 50km (zie "Welke Ontdekken-filters een abonnement mag
   gebruiken" hieronder)
 - **Profielen**: sporters bekijken, je eigen profiel bekijken en bewerken
-- **Berichten**: community-feed ("Bericht plaatsen", alleen zichtbaar voor de auteur zelf en diens matches) en realtime 1-op-1 chat, inclusief het versturen van foto's en een dagelijkse berichtenlimiet per abonnement (zie "Dagelijkse berichtenlimiet" hieronder)
+- **Berichten**: community-feed ("Bericht plaatsen", alleen zichtbaar voor de auteur zelf en diens matches, en alleen bruikbaar voor Premium/Elite - zie "Prikbord" hieronder) en realtime 1-op-1 chat, inclusief het versturen van foto's en een dagelijkse berichtenlimiet per abonnement (zie "Dagelijkse berichtenlimiet" hieronder)
 - **Instellingen**: account, voorkeuren, e-mail wijzigen
 - **Premium & Elite**: Basis (gratis), Premium (€4,99/mnd), Elite (€9,99/mnd) + betaalscherm
 - **Ondersteuning**: Helpdesk, veelgestelde vragen, klantenservice
@@ -306,6 +306,64 @@ current_date`):
   hand-gebouwde batch-aanroep, niet voor normaal app-gebruik.
 
 Draai `0020_messages_daily_limit.sql` op je bestaande database -
+`0001_init.sql` is ook bijgewerkt voor nieuwe installaties.
+
+## Prikbord ("Bericht plaatsen") is Premium/Elite-only
+
+Anders dan de vorige twee secties gaat dit niet om een *aantal* dat
+begrensd wordt, maar om de hele feature: Basis mag het prikbord
+(`posts`/`post_likes` - "Bericht plaatsen" op de Connecties-tab én de
+publieke Berichten-feed) helemaal niet gebruiken, noch lezen noch
+schrijven. Dit staat volledig los van 1-op-1 chat (`messages`), die voor
+elk abonnement beschikbaar blijft (met zijn eigen dagelijkse limiet
+hierboven).
+
+Migratie `0022_posts_premium_only.sql` voegt `has_posts_access()` toe
+(`SECURITY DEFINER`, `true` alleen bij een `subscriptions`-rij met
+`status = 'active'` en `plan in ('premium', 'elite')`) en AND't die in elke
+bestaande policy op `posts` en `post_likes` (select/insert/delete op
+`posts`, select/all op `post_likes`) - een Basis-account krijgt dus
+letterlijk nul toegang tot deze twee tabellen, niet een narrowed view.
+
+Zelfde soort onvermijdelijk neveneffect als `0017_posts_match_only.sql`:
+RLS geldt voor élke lezer/schrijver van deze tabellen, ongeacht welk
+scherm de query doet. Dit raakt dus ook:
+- De publieke Berichten-feed (`PostsFeedScreen.tsx`, `fetchPosts()`) -
+  kreeg dezelfde vergrendel-UI als de Connecties-tab.
+- Een andermans profiel bekijken (`SporterProfileScreen.tsx`,
+  `fetchPostsByAuthor()`) - toont voor een Basis-viewer gewoon de
+  bestaande "Nog geen berichten geplaatst"-lege-staat, ook als die
+  persoon wél iets geplaatst heeft. Niet onveilig (er lekt niets), wel
+  een tekstueel onnauwkeurige melding - bewust buiten scope gelaten voor
+  deze taak, maar het waard om te weten.
+
+Beide geraakte schermen (`HomeScreen.tsx`'s Connecties-tab en
+`PostsFeedScreen.tsx`) halen het huidige plan op via dezelfde
+`discover_daily_status()`-RPC als de andere abonnementscontroles hierboven
+(geeft toch al `plan` terug) en tonen bij Basis een duidelijke
+"Premium-functie"-melding met knop naar het Pricing-scherm in plaats van
+de samensteller/berichtenlijst. Een mislukte aanroep hier blijft niet
+stil - zie de `console.warn` in beide bestanden.
+
+Controlequery (ook in het migratiebestand):
+
+```sql
+select
+  (select count(*) from pg_proc where proname = 'has_posts_access' and pronamespace = 'public'::regnamespace) as has_function,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'posts'
+     and policyname = 'Posts are readable by their author or a match' and qual ilike '%has_posts_access%') as select_gated,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'posts'
+     and policyname = 'Users manage their own posts' and with_check ilike '%has_posts_access%') as insert_gated,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'posts'
+     and policyname = 'Users can delete their own posts' and qual ilike '%has_posts_access%') as delete_gated,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'post_likes'
+     and policyname = 'Likes are readable by authenticated users' and qual ilike '%has_posts_access%') as likes_select_gated,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'post_likes'
+     and policyname = 'Users manage their own likes' and qual ilike '%has_posts_access%' and with_check ilike '%has_posts_access%') as likes_all_gated;
+-- verwacht: overal 1
+```
+
+Draai `0022_posts_premium_only.sql` op je bestaande database -
 `0001_init.sql` is ook bijgewerkt voor nieuwe installaties.
 
 ## Moderatie (rapporteren & blokkeren)

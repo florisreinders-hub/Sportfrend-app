@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, FlatList, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 import { RootStackParamList } from "@/navigation/types";
@@ -88,14 +89,40 @@ export default function HomeScreen({ navigation, route }: Props) {
     [session?.user]
   );
 
+  // The posts/post_likes RLS policies (0022_posts_premium_only.sql) already
+  // return zero rows for a Basis account regardless of what this fetches -
+  // that's the real, unbypassable boundary. `dailyStatus.plan` here is only
+  // used to decide whether to even bother calling loadConnectionPosts (a
+  // Basis account would just get an empty result back) and, more
+  // importantly, to show the upgrade prompt below instead of a confusingly
+  // empty "Nog geen berichten" feed. Reuses the same fetchDiscoverDailyStatus()
+  // RPC/state as the Ontdekken tab (it already returns `plan`, no reason
+  // for a second near-identical RPC) - shared across both tabs since it's
+  // the same account's plan either way.
   const loadConnectiesTab = useCallback(async () => {
     if (!session?.user) return;
     setLoading(true);
     setError(null);
     try {
-      const connectionsData = await fetchConnections(session.user.id);
+      const [connectionsData, status] = await Promise.all([
+        fetchConnections(session.user.id),
+        fetchDiscoverDailyStatus().catch((e) => {
+          console.warn("[HomeScreen] Kon abonnement niet ophalen (prikbord-toegang):", e);
+          return null;
+        }),
+      ]);
       setConnections(connectionsData);
-      await loadConnectionPosts(connectionsData);
+      setDailyStatus(status);
+      // Fail open when the status fetch itself failed (status === null):
+      // still try to load posts, matching how Filter/Ontdekken/chat already
+      // treat an unknown plan - the RLS policies above enforce the real
+      // limit regardless, this is purely which UI to show.
+      const hasAccess = status ? status.plan === "premium" || status.plan === "elite" : true;
+      if (hasAccess) {
+        await loadConnectionPosts(connectionsData);
+      } else {
+        setPosts([]);
+      }
     } catch (e) {
       setError(getDataErrorMessage(e));
     } finally {
@@ -149,6 +176,11 @@ export default function HomeScreen({ navigation, route }: Props) {
   const dailyLimitReached =
     dailyStatus != null && dailyStatus.dailyLimit != null && (dailyStatus.remaining ?? 0) <= 0;
   const upgradeTarget = dailyStatus?.plan === "premium" ? "Elite" : "Premium";
+  // Fail open (assume access) while the plan is still unknown - same
+  // reasoning as dailyLimitReached above and the other plan checks in this
+  // app: the RLS policies on posts/post_likes are the real boundary, this
+  // only controls which UI renders.
+  const hasPostsAccess = dailyStatus ? dailyStatus.plan === "premium" || dailyStatus.plan === "elite" : true;
 
   return (
     <ScreenContainer withBottomPadding={false}>
@@ -236,7 +268,7 @@ export default function HomeScreen({ navigation, route }: Props) {
           keyExtractor={(item) => item.id}
           ListHeaderComponent={
             <>
-              <PostComposer style={styles.composer} />
+              {hasPostsAccess ? <PostComposer style={styles.composer} /> : null}
               {connections.length > 0 ? (
                 <View style={styles.connectionsSection}>
                   <Text style={styles.sectionTitle}>CONNECTIES</Text>
@@ -280,7 +312,23 @@ export default function HomeScreen({ navigation, route }: Props) {
                   })}
                 </View>
               ) : null}
-              <Text style={styles.sectionTitle}>BERICHTEN</Text>
+              {hasPostsAccess ? (
+                <Text style={styles.sectionTitle}>BERICHTEN</Text>
+              ) : (
+                <View style={styles.postsLockedCard}>
+                  <Ionicons name="lock-closed" size={20} color={colors.textSecondary} />
+                  <Text style={styles.postsLockedTitle}>Prikbord is een Premium-functie</Text>
+                  <Text style={styles.postsLockedText}>
+                    Upgrade naar Premium om berichten te plaatsen en te bekijken van je connecties.
+                  </Text>
+                  <Button
+                    label="Bekijk Premium"
+                    variant="primary"
+                    onPress={() => navigation.navigate("Pricing")}
+                    style={styles.postsLockedButton}
+                  />
+                </View>
+              )}
             </>
           }
           ListEmptyComponent={
@@ -288,9 +336,9 @@ export default function HomeScreen({ navigation, route }: Props) {
               <ActivityIndicator color={colors.primary} size="large" />
             ) : error ? (
               <Text style={styles.empty}>{error}</Text>
-            ) : (
+            ) : hasPostsAccess ? (
               <Text style={styles.empty}>Nog geen berichten. Plaats de eerste!</Text>
-            )
+            ) : null
           }
           renderItem={({ item }) => (
             <PostCard post={item} currentUserId={session?.user?.id} onToggleLike={onLikePost} onDelete={onDeletePost} />
@@ -422,5 +470,29 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     fontSize: fontSizes.sm,
     color: colors.textSecondary,
+  },
+  postsLockedCard: {
+    alignItems: "center",
+    gap: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    padding: spacing.lg,
+  },
+  postsLockedTitle: {
+    fontFamily: fonts.display,
+    fontSize: fontSizes.md,
+    color: colors.black,
+    textAlign: "center",
+  },
+  postsLockedText: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.textSecondary,
+    textAlign: "center",
+  },
+  postsLockedButton: {
+    marginTop: spacing.xs,
+    minWidth: 160,
   },
 });

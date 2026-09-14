@@ -88,8 +88,8 @@ Sinds migratie `0020_messages_daily_limit.sql` telt `created_at` ook mee voor de
 
 | Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
 |---|---|---|---|
-| `author_id`, `body`, `image_url`, `sport`, `event_date` | Ja (community-post) | - (zichtbaar voor de auteur zelf en gebruikers waarmee de auteur een bestaande match heeft - sinds migratie `0017_posts_match_only.sql`; daarvoor publiek zichtbaar voor alle ingelogde gebruikers) | Tot de auteur het bericht zelf verwijdert (sinds commit `1702eaa`) of accountverwijdering |
-| `post_likes.user_id` | Ja (wie heeft wat geliked, publiek zichtbaar) | - | Tot unliken of accountverwijdering |
+| `author_id`, `body`, `image_url`, `sport`, `event_date` | Ja (community-post) | - (zichtbaar voor de auteur zelf en gebruikers waarmee de auteur een bestaande match heeft, en sinds migratie `0022_posts_premium_only.sql` bovendien alleen voor een viewer met een actief Premium/Elite-abonnement - een Basis-account ziet helemaal geen posts, ook niet zijn eigen oudere; daarvoor publiek zichtbaar voor alle ingelogde gebruikers) | Tot de auteur het bericht zelf verwijdert (sinds commit `1702eaa`) of accountverwijdering |
+| `post_likes.user_id` | Ja (wie heeft wat geliked) | - (sinds `0022_posts_premium_only.sql` ook alleen zichtbaar voor Premium/Elite; daarvoor publiek zichtbaar voor alle ingelogde gebruikers) | Tot unliken of accountverwijdering |
 
 ### `reports`
 
@@ -113,7 +113,7 @@ Alleen de melder zelf kan zijn eigen rapportages lezen; er is geen moderator-rol
 |---|---|---|---|
 | `user_id`, `plan`, `status`, `price_cents`, `current_period_end` | Ja (financiële/abonnementsgegevens) | Ja (financieel) | Tot accountverwijdering - geen betalingsgegevens (kaartnummers e.d.) worden hier of elders in de eigen database opgeslagen |
 
-Sinds migratie `0019_discover_daily_limit.sql` is `plan` niet langer alleen informatief: `discover_profiles()` leest deze kolom (alleen een rij met `status = 'active'` telt mee, dus een gekozen-maar-niet-"betaald" `pending`-plan telt als Basis) om de dagelijkse Ontdekken-aanbevelingslimiet te bepalen (Basis 5/dag, Premium 15/dag, Elite onbeperkt). Sinds migratie `0020_messages_daily_limit.sql` geldt hetzelfde voor de dagelijkse berichtenlimiet (Basis 3/dag, Premium/Elite onbeperkt), afgedwongen op de INSERT-policy van `messages`. Sinds migratie `0021_discover_profiles_plan_filters.sql` bepaalt `plan` ook welke Ontdekken-filters bruikbaar zijn (Basis: alleen Sport + Afstand, tot 50km; Premium/Elite: ook Leeftijd en Niveau, Afstand tot 150km) - eveneens afgedwongen binnen `discover_profiles()` zelf.
+Sinds migratie `0019_discover_daily_limit.sql` is `plan` niet langer alleen informatief: `discover_profiles()` leest deze kolom (alleen een rij met `status = 'active'` telt mee, dus een gekozen-maar-niet-"betaald" `pending`-plan telt als Basis) om de dagelijkse Ontdekken-aanbevelingslimiet te bepalen (Basis 5/dag, Premium 15/dag, Elite onbeperkt). Sinds migratie `0020_messages_daily_limit.sql` geldt hetzelfde voor de dagelijkse berichtenlimiet (Basis 3/dag, Premium/Elite onbeperkt), afgedwongen op de INSERT-policy van `messages`. Sinds migratie `0021_discover_profiles_plan_filters.sql` bepaalt `plan` ook welke Ontdekken-filters bruikbaar zijn (Basis: alleen Sport + Afstand, tot 50km; Premium/Elite: ook Leeftijd en Niveau, Afstand tot 150km) - eveneens afgedwongen binnen `discover_profiles()` zelf. Sinds migratie `0022_posts_premium_only.sql` bepaalt `plan` ook of het "prikbord" (`posts`/`post_likes`) toegankelijk is: alleen een actief Premium- of Elite-abonnement mag posts lezen, plaatsen of liken - een Basis-account ziet niets van deze tabellen, afgedwongen via `has_posts_access()` in de RLS-policies zelf.
 
 ### `support_requests`
 

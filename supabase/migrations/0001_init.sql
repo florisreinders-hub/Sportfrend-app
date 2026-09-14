@@ -541,38 +541,72 @@ create policy "Match participants can send messages"
 -- enforcement boundary. This also narrows fetchPosts() (the Berichten
 -- feed, PostsFeedScreen) to the same subset, since RLS applies uniformly
 -- regardless of which screen's query hits this table.
+--
+-- has_posts_access: single source of truth for "may this caller use the
+-- posts/post_likes feature at all" - only an active Premium or Elite
+-- subscription qualifies (Pricing screen: the "prikbord" is a Premium/
+-- Elite-only feature). See 0022_posts_premium_only.sql for the full
+-- writeup, including its own side-effect note (this also blocks Basis
+-- from the public Berichten feed and from seeing another profile's posts,
+-- since RLS can't be scoped to one screen's query).
+create or replace function public.has_posts_access()
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null then
+    return false;
+  end if;
+
+  return exists (
+    select 1 from public.subscriptions s
+    where s.user_id = v_uid and s.status = 'active' and s.plan in ('premium', 'elite')
+  );
+end;
+$$;
+
+grant execute on function public.has_posts_access() to authenticated;
+
 create policy "Posts are readable by their author or a match"
   on public.posts for select
   to authenticated
   using (
-    auth.uid() = author_id
-    or exists (
-      select 1 from public.matches m
-      where (m.user_a_id = auth.uid() and m.user_b_id = posts.author_id)
-         or (m.user_b_id = auth.uid() and m.user_a_id = posts.author_id)
+    public.has_posts_access()
+    and (
+      auth.uid() = author_id
+      or exists (
+        select 1 from public.matches m
+        where (m.user_a_id = auth.uid() and m.user_b_id = posts.author_id)
+           or (m.user_b_id = auth.uid() and m.user_a_id = posts.author_id)
+      )
     )
   );
 
 create policy "Users manage their own posts"
   on public.posts for insert
   to authenticated
-  with check (auth.uid() = author_id);
+  with check (auth.uid() = author_id and public.has_posts_access());
 
 create policy "Users can delete their own posts"
   on public.posts for delete
   to authenticated
-  using (auth.uid() = author_id);
+  using (auth.uid() = author_id and public.has_posts_access());
 
 create policy "Likes are readable by authenticated users"
   on public.post_likes for select
   to authenticated
-  using (true);
+  using (public.has_posts_access());
 
 create policy "Users manage their own likes"
   on public.post_likes for all
   to authenticated
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
+  using (auth.uid() = user_id and public.has_posts_access())
+  with check (auth.uid() = user_id and public.has_posts_access());
 
 create policy "Users can view their own subscription"
   on public.subscriptions for select
