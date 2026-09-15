@@ -75,6 +75,23 @@ create table if not exists public.swipes (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────
+-- discover_daily_views: which profiles a user has already been shown
+-- today - powers the daily recommendation limit (Pricing screen: Basis 5/
+-- Premium 15/Elite onbeperkt), enforced inside discover_profiles(). See
+-- 0019_discover_daily_limit.sql for the full writeup of why this is a
+-- separate table from `swipes` (a shown-but-unswiped card must keep
+-- counting as "already shown", not re-consume the daily quota on every
+-- refetch).
+-- ─────────────────────────────────────────────────────────────────────────
+create table if not exists public.discover_daily_views (
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  profile_id uuid not null references public.profiles (id) on delete cascade,
+  view_date date not null default current_date,
+  created_at timestamptz not null default now(),
+  primary key (user_id, profile_id, view_date)
+);
+
+-- ─────────────────────────────────────────────────────────────────────────
 -- matches: created when two profiles both swipe 'like' on each other
 -- ─────────────────────────────────────────────────────────────────────────
 create table if not exists public.matches (
@@ -93,6 +110,7 @@ create table if not exists public.messages (
   match_id uuid not null references public.matches (id) on delete cascade,
   sender_id uuid not null references public.profiles (id) on delete cascade,
   body text not null,
+  image_url text,
   created_at timestamptz not null default now(),
   read_at timestamptz
 );
@@ -228,6 +246,7 @@ create trigger on_auth_user_created
 -- ─────────────────────────────────────────────────────────────────────────
 alter table public.profiles enable row level security;
 alter table public.swipes enable row level security;
+alter table public.discover_daily_views enable row level security;
 alter table public.matches enable row level security;
 alter table public.messages enable row level security;
 alter table public.posts enable row level security;
@@ -318,6 +337,17 @@ create policy "Users can see likes directed at them"
   to authenticated
   using (auth.uid() = swiped_id and direction = 'like');
 
+-- No insert/update/delete policy at all, deliberately - every write to
+-- this table happens inside discover_profiles() (SECURITY DEFINER, runs
+-- as the function owner, not subject to this RLS). A user able to
+-- insert/delete their own rows here could reset or fabricate their own
+-- "already shown today" history and dodge the daily recommendation limit
+-- entirely - see 0019_discover_daily_limit.sql.
+create policy "Users can read their own discover view history"
+  on public.discover_daily_views for select
+  to authenticated
+  using (auth.uid() = user_id);
+
 -- A blocked match is hidden from both participants - this also hides its
 -- messages, since "Match participants can read messages" below re-checks
 -- this same matches row (itself subject to this policy) via its EXISTS
@@ -376,11 +406,120 @@ create policy "Match participants can read messages"
     )
   );
 
+-- messages_plan_daily_limit: single source of truth for each plan's daily
+-- message limit (Pricing screen: Basis "3 Berichten per dag sturen",
+-- Premium/Elite "Onbeperkt chatten"), mirroring discover_plan_daily_limit()
+-- further below. null means unlimited. See 0020_messages_daily_limit.sql
+-- for the full writeup.
+create or replace function public.messages_plan_daily_limit(p_plan text)
+returns int
+language sql
+immutable
+as $$
+  select case p_plan
+    when 'basis' then 3
+    else null -- 'premium' and 'elite': onbeperkt chatten
+  end;
+$$;
+
+-- can_send_message_today: the actual enforcement, used in the INSERT
+-- policy right below. SECURITY DEFINER + auth.uid()-scoped, same
+-- reasoning as get_my_location()/discover_profiles() further below in
+-- this file: only ever answers "can I send a message today", never
+-- checks someone else's quota.
+create or replace function public.can_send_message_today()
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_plan text;
+  v_daily_limit int;
+  v_used_today int;
+begin
+  if v_uid is null then
+    return false;
+  end if;
+
+  select s.plan into v_plan
+  from public.subscriptions s
+  where s.user_id = v_uid and s.status = 'active';
+
+  v_daily_limit := public.messages_plan_daily_limit(coalesce(v_plan, 'basis'));
+  if v_daily_limit is null then
+    return true;
+  end if;
+
+  select count(*) into v_used_today
+  from public.messages m
+  where m.sender_id = v_uid and m.created_at::date = current_date;
+
+  return v_used_today < v_daily_limit;
+end;
+$$;
+
+-- messages_daily_status: lets the client show a clear "daily limit
+-- reached" message (with an upgrade link) instead of a bare RLS-violation
+-- error, which can't be told apart client-side from "you got blocked" or
+-- "this isn't your match" - both raise the exact same generic Postgres
+-- error. Same shape/reasoning as discover_daily_status() further below.
+create or replace function public.messages_daily_status()
+returns table (plan text, daily_limit int, used_today int, remaining int)
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_plan text;
+  v_daily_limit int;
+  v_used_today int;
+begin
+  if v_uid is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select s.plan into v_plan
+  from public.subscriptions s
+  where s.user_id = v_uid and s.status = 'active';
+
+  v_plan := coalesce(v_plan, 'basis');
+  v_daily_limit := public.messages_plan_daily_limit(v_plan);
+
+  if v_daily_limit is not null then
+    select count(*) into v_used_today
+    from public.messages m
+    where m.sender_id = v_uid and m.created_at::date = current_date;
+  end if;
+
+  return query select
+    v_plan,
+    v_daily_limit,
+    v_used_today,
+    case when v_daily_limit is null then null else greatest(v_daily_limit - coalesce(v_used_today, 0), 0) end;
+end;
+$$;
+
+grant execute on function public.messages_plan_daily_limit(text) to authenticated;
+grant execute on function public.can_send_message_today() to authenticated;
+grant execute on function public.messages_daily_status() to authenticated;
+
+-- A batch INSERT of several rows in a single statement isn't fully
+-- airtight against can_send_message_today() below (each row's WITH CHECK
+-- sees the same pre-statement snapshot, so N rows inserted at once could
+-- all pass even past the limit) - this app's own client (sendMessage(),
+-- lib/api.ts) only ever inserts one message at a time, so that's a
+-- theoretical gap for a hand-crafted batch request, not a practical one.
 create policy "Match participants can send messages"
   on public.messages for insert
   to authenticated
   with check (
     sender_id = auth.uid()
+    and public.can_send_message_today()
     and exists (
       select 1 from public.matches m
       where m.id = match_id
@@ -393,31 +532,81 @@ create policy "Match participants can send messages"
     )
   );
 
-create policy "Posts are readable by authenticated users"
+-- A post is only readable by its own author or by someone with an
+-- existing match with that author - never "everyone". See
+-- 0017_posts_match_only.sql for the full writeup of why this replaced
+-- the previous `using (true)` (fully public) policy: fetchConnectionPosts()
+-- (lib/api.ts) mirrors this exact same restriction client-side for the
+-- Connecties tab, but this policy is the actual, unbypassable
+-- enforcement boundary. This also narrows fetchPosts() (the Berichten
+-- feed, PostsFeedScreen) to the same subset, since RLS applies uniformly
+-- regardless of which screen's query hits this table.
+--
+-- has_posts_access: single source of truth for "may this caller use the
+-- posts/post_likes feature at all" - only an active Premium or Elite
+-- subscription qualifies (Pricing screen: the "prikbord" is a Premium/
+-- Elite-only feature). See 0022_posts_premium_only.sql for the full
+-- writeup, including its own side-effect note (this also blocks Basis
+-- from the public Berichten feed and from seeing another profile's posts,
+-- since RLS can't be scoped to one screen's query).
+create or replace function public.has_posts_access()
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null then
+    return false;
+  end if;
+
+  return exists (
+    select 1 from public.subscriptions s
+    where s.user_id = v_uid and s.status = 'active' and s.plan in ('premium', 'elite')
+  );
+end;
+$$;
+
+grant execute on function public.has_posts_access() to authenticated;
+
+create policy "Posts are readable by their author or a match"
   on public.posts for select
   to authenticated
-  using (true);
+  using (
+    public.has_posts_access()
+    and (
+      auth.uid() = author_id
+      or exists (
+        select 1 from public.matches m
+        where (m.user_a_id = auth.uid() and m.user_b_id = posts.author_id)
+           or (m.user_b_id = auth.uid() and m.user_a_id = posts.author_id)
+      )
+    )
+  );
 
 create policy "Users manage their own posts"
   on public.posts for insert
   to authenticated
-  with check (auth.uid() = author_id);
+  with check (auth.uid() = author_id and public.has_posts_access());
 
 create policy "Users can delete their own posts"
   on public.posts for delete
   to authenticated
-  using (auth.uid() = author_id);
+  using (auth.uid() = author_id and public.has_posts_access());
 
 create policy "Likes are readable by authenticated users"
   on public.post_likes for select
   to authenticated
-  using (true);
+  using (public.has_posts_access());
 
 create policy "Users manage their own likes"
   on public.post_likes for all
   to authenticated
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
+  using (auth.uid() = user_id and public.has_posts_access())
+  with check (auth.uid() = user_id and public.has_posts_access());
 
 create policy "Users can view their own subscription"
   on public.subscriptions for select
@@ -520,6 +709,60 @@ create policy "Users can delete their own profile photos"
   using (bucket_id = 'profile-photos' and (storage.foldername(name))[1] = auth.uid()::text);
 
 -- ─────────────────────────────────────────────────────────────────────────
+-- Storage: chat image attachments (ChatDetailScreen)
+-- ─────────────────────────────────────────────────────────────────────────
+-- Note: if this project already existed before this bucket/these policies
+-- were added to this file, run
+-- supabase/migrations/0018_chat_images.sql to patch it - the statements
+-- below are otherwise identical and safe to run again.
+--
+-- Path convention: "<match_id>/<sender_id>-<timestamp>.<ext>" - unlike
+-- profile-photos (scoped per-user), an uploaded chat image must be
+-- readable by BOTH participants of the match, not just its sender, so the
+-- folder is keyed by match_id and the read/write policies check match
+-- membership via public.matches rather than "the uploader's own id". The
+-- bucket is public for reads (consistent with every other photo URL in
+-- this app - profile photos, post images - none of which use signed
+-- URLs); the real access boundary is that the path itself is only ever
+-- handed to the two match participants, same trust model as those.
+
+insert into storage.buckets (id, name, public)
+values ('chat-images', 'chat-images', true)
+on conflict (id) do nothing;
+
+drop policy if exists "Chat images are publicly readable" on storage.objects;
+create policy "Chat images are publicly readable"
+  on storage.objects for select
+  to public
+  using (bucket_id = 'chat-images');
+
+drop policy if exists "Match participants can upload chat images" on storage.objects;
+create policy "Match participants can upload chat images"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'chat-images'
+    and exists (
+      select 1 from public.matches m
+      where m.id::text = (storage.foldername(name))[1]
+        and (m.user_a_id = auth.uid() or m.user_b_id = auth.uid())
+    )
+  );
+
+drop policy if exists "Match participants can delete chat images" on storage.objects;
+create policy "Match participants can delete chat images"
+  on storage.objects for delete
+  to authenticated
+  using (
+    bucket_id = 'chat-images'
+    and exists (
+      select 1 from public.matches m
+      where m.id::text = (storage.foldername(name))[1]
+        and (m.user_a_id = auth.uid() or m.user_b_id = auth.uid())
+    )
+  );
+
+-- ─────────────────────────────────────────────────────────────────────────
 -- Location privacy: exact coordinates are never readable via a plain
 -- column read (see the "revoke select on public.profiles" above) - these
 -- two SECURITY DEFINER functions are the only way to get at them, and
@@ -545,24 +788,116 @@ $$;
 
 grant execute on function public.get_my_location() to authenticated;
 
+-- discover_plan_daily_limit: single source of truth for each plan's daily
+-- Ontdekken recommendation limit (Pricing screen: Basis 5/Premium 15/
+-- Elite onbeperkt), shared by discover_profiles() and
+-- discover_daily_status() below so the two can't drift apart. null means
+-- "unlimited". See 0019_discover_daily_limit.sql for the full writeup.
+create or replace function public.discover_plan_daily_limit(p_plan text)
+returns int
+language sql
+immutable
+as $$
+  select case p_plan
+    when 'premium' then 15
+    when 'elite' then null
+    else 5 -- 'basis', and the fallback for a user with no active subscription row at all
+  end;
+$$;
+
+-- Lets the client show a clear "daily limit reached" message (with an
+-- upgrade link), distinctly from "no candidates match your filters" -
+-- discover_profiles() alone can't tell those two apart from an empty
+-- result set. SECURITY DEFINER + auth.uid()-scoped, same reasoning as
+-- get_my_location()/discover_profiles(): callers only ever see their own
+-- status.
+create or replace function public.discover_daily_status()
+returns table (plan text, daily_limit int, used_today int, remaining int)
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_plan text;
+  v_daily_limit int;
+  v_used_today int;
+begin
+  if v_uid is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select s.plan into v_plan
+  from public.subscriptions s
+  where s.user_id = v_uid and s.status = 'active';
+
+  v_plan := coalesce(v_plan, 'basis');
+  v_daily_limit := public.discover_plan_daily_limit(v_plan);
+
+  if v_daily_limit is not null then
+    select count(*) into v_used_today
+    from public.discover_daily_views d
+    where d.user_id = v_uid and d.view_date = current_date;
+  end if;
+
+  return query select
+    v_plan,
+    v_daily_limit,
+    v_used_today,
+    case when v_daily_limit is null then null else greatest(v_daily_limit - coalesce(v_used_today, 0), 0) end;
+end;
+$$;
+
+grant execute on function public.discover_plan_daily_limit(text) to authenticated;
+grant execute on function public.discover_daily_status() to authenticated;
+
 -- Powers the Ontdekken feed (fetchDiscoverProfiles, lib/api.ts): computes
 -- distance server-side from the caller's own coordinates (via auth.uid(),
 -- never a parameter - a viewer id parameter would let anyone query
 -- distances relative to someone else's location instead of their own) so
 -- raw coordinates for any *other* profile never leave the database at
--- all, only the resulting distance_km. Mirrors fetchDiscoverProfiles's
--- previous client-side filtering exactly: same sport/search-radius
--- fallback to the caller's own profile, same "no location set = no
--- distance narrowing" degradation, same visibility/block/already-swiped
--- exclusions RLS would otherwise apply (this function runs SECURITY
--- DEFINER and so bypasses RLS internally - those checks are re-implemented
--- here by hand instead).
+-- all, only the resulting distance_km.
+--
+-- p_sport and p_distance_km are applied exactly as passed, with no
+-- implicit fallback to the caller's own profile's sport/search_radius_km
+-- (an earlier version of this function did fall back that way, which was
+-- a bug: the Filter screen's sport pill always reads "Alle sporten" and
+-- its distance slider always shows a concrete "NNKM" value, by default
+-- and whenever left untouched - silently substituting the caller's own
+-- sport/radius behind that displayed value, instead of actually applying
+-- "no sport filter" / the displayed distance, meant a user (or a freshly
+-- seeded test profile whose own sport happened not to match anyone's)
+-- could see zero results despite the screen showing no active narrowing
+-- at all). See 0016_discover_profiles_no_implicit_defaults.sql for the
+-- full writeup of the bug this fixed.
+--
+-- Also enforces the daily recommendation limit (0019_discover_daily_limit.sql):
+-- resolves how many *new* (never-shown-today) candidates the caller may
+-- still see, records exactly those as shown in discover_daily_views, then
+-- lets both those and any already-shown-but-unswiped candidates through
+-- the normal filtered/ordered/distance query below - a shown-but-unswiped
+-- card must never re-consume quota, since HomeScreen refetches on every
+-- Ontdekken tab focus (useFocusEffect).
+--
+-- Also enforces which filters a plan may use at all
+-- (0021_discover_profiles_plan_filters.sql): Basis only gets Sport +
+-- Afstand (capped at 50km), Premium/Elite get all four filters (Afstand
+-- up to 150km). A disallowed p_level/p_max_age/p_distance_km is clamped
+-- here, not just hidden client-side on FilterScreen.tsx.
+--
+-- Also enforces "Slimme beschikbaarheids match" (Elite-only,
+-- 0023_discover_profiles_availability_filter.sql): p_availability_days is
+-- clamped to null for anyone but an active Elite plan, and otherwise
+-- narrows candidates to those whose own availability_days overlaps with
+-- at least one of the picked weekday keys.
 create or replace function public.discover_profiles(
   p_sport text default null,
   p_level text default null,
   p_max_age int default null,
   p_distance_km double precision default null,
-  p_limit int default 20
+  p_limit int default 20,
+  p_availability_days text[] default null
 )
 returns table (
   id uuid,
@@ -581,34 +916,108 @@ returns table (
 language plpgsql
 security definer
 set search_path = public
-stable
 as $$
 declare
   v_uid uuid := auth.uid();
-  v_my_sport text;
   v_my_lat double precision;
   v_my_lng double precision;
-  v_my_radius_km double precision;
-  v_sport text;
-  v_radius_km double precision;
   v_min_birthdate date;
   v_max_birthdate date;
+  v_plan text;
+  v_daily_limit int;
+  v_used_today int;
+  v_remaining int;
+  v_new_ids uuid[];
 begin
   if v_uid is null then
     raise exception 'Not authenticated';
   end if;
 
-  select p.sport, p.latitude, p.longitude, p.search_radius_km
-    into v_my_sport, v_my_lat, v_my_lng, v_my_radius_km
+  select p.latitude, p.longitude
+    into v_my_lat, v_my_lng
   from public.profiles p
   where p.id = v_uid;
 
-  v_sport := coalesce(p_sport, v_my_sport);
-  v_radius_km := coalesce(p_distance_km, v_my_radius_km);
+  select s.plan into v_plan
+  from public.subscriptions s
+  where s.user_id = v_uid and s.status = 'active';
+  v_plan := coalesce(v_plan, 'basis');
+
+  -- Filter access per plan (Pricing screen: Basis = Sport + Afstand only,
+  -- max 50km; Premium/Elite = all filters, Afstand up to 150km). A
+  -- disallowed value is clamped/ignored here, not rejected - a Basis
+  -- caller that sends p_level/p_max_age/a >50km p_distance_km simply gets
+  -- those narrowed to what Basis is actually allowed.
+  if v_plan = 'basis' then
+    p_level := null;
+    p_max_age := null;
+    p_distance_km := least(coalesce(p_distance_km, 50), 50);
+  end if;
+
+  -- "Slimme beschikbaarheids match" is Elite-only - Basis AND Premium
+  -- both get it ignored, not just Basis.
+  if v_plan <> 'elite' then
+    p_availability_days := null;
+  end if;
 
   if p_max_age is not null then
     v_min_birthdate := (current_date - (p_max_age || ' years')::interval)::date;
     v_max_birthdate := (current_date - interval '18 years')::date;
+  end if;
+
+  v_daily_limit := public.discover_plan_daily_limit(v_plan);
+
+  if v_daily_limit is not null then
+    select count(*) into v_used_today
+    from public.discover_daily_views d
+    where d.user_id = v_uid and d.view_date = current_date;
+
+    v_remaining := greatest(v_daily_limit - v_used_today, 0);
+
+    -- Pick the closest `v_remaining` candidates the caller has never been
+    -- shown today, and record them as shown - this is the one place the
+    -- daily quota is actually spent. Ordering matches the final query's
+    -- own "closest first" order, so the quota is spent on the same
+    -- profiles that would be shown first anyway.
+    select array_agg(sub.id) into v_new_ids
+    from (
+      select p.id,
+        case
+          when v_my_lat is not null and v_my_lng is not null and p.latitude is not null and p.longitude is not null
+          then 6371 * 2 * asin(least(1.0, sqrt(
+                 sin(radians((p.latitude - v_my_lat) / 2)) ^ 2
+                 + cos(radians(v_my_lat)) * cos(radians(p.latitude))
+                 * sin(radians((p.longitude - v_my_lng) / 2)) ^ 2
+               )))
+          else null
+        end as distance_km
+      from public.profiles p
+      where p.id <> v_uid
+        and p.profile_visible = true
+        and not exists (select 1 from public.swipes s where s.swiper_id = v_uid and s.swiped_id = p.id)
+        and not exists (
+          select 1 from public.blocks b
+          where (b.blocker_id = v_uid and b.blocked_id = p.id)
+             or (b.blocker_id = p.id and b.blocked_id = v_uid)
+        )
+        and (p_sport is null or p.sport = p_sport)
+        and (p_level is null or p.level = p_level)
+        and (v_min_birthdate is null or p.birthdate >= v_min_birthdate)
+        and (v_max_birthdate is null or p.birthdate <= v_max_birthdate)
+        and (p_availability_days is null or p.availability_days && p_availability_days)
+        and not exists (
+          select 1 from public.discover_daily_views d
+          where d.user_id = v_uid and d.profile_id = p.id and d.view_date = current_date
+        )
+      order by (case when distance_km is null then 1 else 0 end), distance_km asc nulls last
+      limit least(v_remaining, p_limit)
+    ) sub;
+
+    if v_new_ids is not null and array_length(v_new_ids, 1) > 0 then
+      insert into public.discover_daily_views (user_id, profile_id, view_date)
+      select v_uid, new_id, current_date from unnest(v_new_ids) as new_id
+      on conflict do nothing;
+    end if;
   end if;
 
   return query
@@ -623,10 +1032,23 @@ begin
         where (b.blocker_id = v_uid and b.blocked_id = p.id)
            or (b.blocker_id = p.id and b.blocked_id = v_uid)
       )
-      and (v_sport is null or p.sport = v_sport)
+      and (p_sport is null or p.sport = p_sport)
       and (p_level is null or p.level = p_level)
       and (v_min_birthdate is null or p.birthdate >= v_min_birthdate)
       and (v_max_birthdate is null or p.birthdate <= v_max_birthdate)
+      and (p_availability_days is null or p.availability_days && p_availability_days)
+      -- Only profiles genuinely allowed today: no daily limit at all
+      -- (Elite), just picked as one of this call's fresh quota slots, or
+      -- already shown earlier today (still allowed - re-showing an
+      -- unswiped card never costs extra quota).
+      and (
+        v_daily_limit is null
+        or (v_new_ids is not null and p.id = any(v_new_ids))
+        or exists (
+          select 1 from public.discover_daily_views d
+          where d.user_id = v_uid and d.profile_id = p.id and d.view_date = current_date
+        )
+      )
     limit 50
   ),
   with_distance as (
@@ -650,12 +1072,142 @@ begin
   where
     -- Only apply the radius cutoff when the viewer actually has a location
     -- and a radius to compare against - no location set means no
-    -- distance-based narrowing at all, same as before.
-    (v_my_lat is null or v_my_lng is null or v_radius_km is null)
-    or (w.distance_km is not null and w.distance_km <= v_radius_km)
+    -- distance-based narrowing at all.
+    (v_my_lat is null or v_my_lng is null or p_distance_km is null)
+    or (w.distance_km is not null and w.distance_km <= p_distance_km)
   order by (case when w.distance_km is null then 1 else 0 end), w.distance_km asc nulls last
   limit p_limit;
 end;
 $$;
 
-grant execute on function public.discover_profiles(text, text, int, double precision, int) to authenticated;
+grant execute on function public.discover_profiles(text, text, int, double precision, int, text[]) to authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- trainings: "Trainings & Buddy Planner" (Elite-only) - see
+-- 0024_trainings_planner.sql for the full writeup. Only mirrored here for
+-- new installs; the pg_cron reminder schedule in
+-- 0025_training_reminder_cron.sql is project-specific (needs your own
+-- DB_WEBHOOK_SECRET and the pg_cron/pg_net extensions enabled) and stays
+-- its own migration, same as how 0011_push_notifications.sql's webhook
+-- triggers were never merged back into this file either.
+-- ─────────────────────────────────────────────────────────────────────────
+create table if not exists public.trainings (
+  id uuid primary key default uuid_generate_v4(),
+  match_id uuid not null references public.matches (id) on delete cascade,
+  created_by uuid not null references public.profiles (id) on delete cascade,
+  date date not null,
+  time time not null,
+  sport text,
+  location text,
+  note text,
+  status text not null default 'pending' check (status in ('pending', 'accepted', 'declined')),
+  created_at timestamptz not null default now(),
+  reminder_sent_at timestamptz
+);
+
+alter table public.trainings enable row level security;
+
+create or replace function public.has_elite_access()
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null then
+    return false;
+  end if;
+
+  return exists (
+    select 1 from public.subscriptions s
+    where s.user_id = v_uid and s.status = 'active' and s.plan = 'elite'
+  );
+end;
+$$;
+
+grant execute on function public.has_elite_access() to authenticated;
+
+create policy "Match participants can read trainings"
+  on public.trainings for select
+  to authenticated
+  using (
+    exists (
+      select 1 from public.matches m
+      where m.id = trainings.match_id
+        and (m.user_a_id = auth.uid() or m.user_b_id = auth.uid())
+    )
+  );
+
+create policy "Elite match participants can propose trainings"
+  on public.trainings for insert
+  to authenticated
+  with check (
+    created_by = auth.uid()
+    and public.has_elite_access()
+    and exists (
+      select 1 from public.matches m
+      where m.id = match_id
+        and (m.user_a_id = auth.uid() or m.user_b_id = auth.uid())
+    )
+  );
+
+create policy "Match participants can respond to trainings"
+  on public.trainings for update
+  to authenticated
+  using (
+    exists (
+      select 1 from public.matches m
+      where m.id = trainings.match_id
+        and (m.user_a_id = auth.uid() or m.user_b_id = auth.uid())
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.matches m
+      where m.id = match_id
+        and (m.user_a_id = auth.uid() or m.user_b_id = auth.uid())
+        and (created_by = m.user_a_id or created_by = m.user_b_id)
+    )
+  );
+
+create or replace function public.claim_training_reminders(p_window_minutes int default 5)
+returns table (
+  id uuid,
+  match_id uuid,
+  date date,
+  -- "time" needs quoting here (unlike "date") - see
+  -- 0024_trainings_planner.sql's comment on the identical RETURNS TABLE
+  -- clause for why.
+  "time" time,
+  sport text,
+  location text,
+  user_a_id uuid,
+  user_b_id uuid
+)
+language sql
+set search_path = public
+as $$
+  update public.trainings t
+  set reminder_sent_at = now()
+  from public.matches m
+  where m.id = t.match_id
+    and t.status = 'accepted'
+    and t.reminder_sent_at is null
+    and ((t.date + t.time) at time zone 'Europe/Amsterdam')
+        between now() + interval '2 hours'
+            and now() + interval '2 hours' + make_interval(mins => p_window_minutes)
+  returning t.id, t.match_id, t.date, t.time, t.sport, t.location, m.user_a_id, m.user_b_id;
+$$;
+
+-- Supabase's project-wide default privileges grant EXECUTE on every new
+-- public function directly to anon/authenticated/service_role (not via
+-- PUBLIC) - see 0024_trainings_planner.sql's comment on this exact
+-- revoke/grant block for the full writeup of why "from public" alone
+-- doesn't actually restrict this function to service_role.
+revoke execute on function public.claim_training_reminders(int) from public, anon, authenticated;
+grant execute on function public.claim_training_reminders(int) to service_role;
+
+alter publication supabase_realtime add table public.trainings;

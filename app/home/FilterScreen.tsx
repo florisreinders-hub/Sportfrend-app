@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Slider from "@react-native-community/slider";
 import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
@@ -10,36 +11,125 @@ import { BottomNav } from "@/components/BottomNav";
 import { Button } from "@/components/Button";
 import { SelectModal } from "@/components/SelectModal";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
-import { DEFAULT_FILTERS, useDiscoverFilters } from "@/lib/FilterContext";
+import { DEFAULT_FILTERS, DiscoverFilters, useDiscoverFilters } from "@/lib/FilterContext";
 import { SPORT_OPTIONS } from "@/constants/sports";
 import { LEVEL_OPTIONS } from "@/constants/levels";
+import { fetchDiscoverDailyStatus, WEEKDAY_OPTIONS } from "@/lib/api";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Filter">;
 
+// Basis-abonnees op de Pricing-tabel: alleen Sport en Afstand
+// ("Basisfilters"), Afstand begrensd op 50km. Premium/Elite: alle vier
+// ("Uitgebreide filters"), Afstand tot 150km. Dit scherm grijst Leeftijd/
+// Niveau alleen uit voor Basis - discover_profiles() (SECURITY DEFINER,
+// 0021_discover_profiles_plan_filters.sql) is de echte grens en negeert/
+// begrenst deze waarden hoe dan ook server-side, dus dit is puur UX, geen
+// beveiliging.
+const BASIS_MAX_DISTANCE_KM = 50;
+
 export default function FilterScreen({ navigation }: Props) {
-  const { filters, setFilters, resetFilters } = useDiscoverFilters();
+  const { filters, setFilters } = useDiscoverFilters();
   const [maxAge, setMaxAge] = useState(filters.maxAge);
   const [distanceKm, setDistanceKm] = useState(filters.distanceKm);
   const [sport, setSport] = useState<string | null>(filters.sport);
   const [level, setLevel] = useState<string | null>(filters.level);
+  const [availabilityDays, setAvailabilityDays] = useState<string[]>(filters.availabilityDays ?? []);
   const [sportPickerVisible, setSportPickerVisible] = useState(false);
   const [levelPickerVisible, setLevelPickerVisible] = useState(false);
+  const [plan, setPlan] = useState<"basis" | "premium" | "elite" | null>(null);
+
+  // useFocusEffect, not a plain mount-only useEffect: BottomNav reaches
+  // this screen via navigation.navigate("Filter"), and React Navigation's
+  // native-stack navigate() does NOT remount a screen already sitting in
+  // the stack - it just brings the existing instance back into focus. A
+  // mount-only fetch here would run exactly once per app session (on the
+  // very first visit) and never again, so a plan that changes afterwards -
+  // or simply wasn't fully set up yet on that very first visit - would
+  // silently keep showing the stale result on every later visit, with the
+  // UI never actually locking despite the account genuinely being Basis.
+  useFocusEffect(
+    useCallback(() => {
+      fetchDiscoverDailyStatus()
+        .then((status) => setPlan(status.plan))
+        .catch((e) => {
+          // Not silently dropped, same reasoning as the fix applied to
+          // HomeScreen/ChatDetailScreen's own daily-status fetches: a
+          // failure here most likely means this RPC (or the plan-filter
+          // clamp inside discover_profiles() itself) isn't deployed to
+          // this project's database yet - see
+          // 0021_discover_profiles_plan_filters.sql. Plan stays at
+          // whatever it was before (or null on first load), which this
+          // screen treats as "don't lock anything" - discover_profiles()
+          // still enforces the real Basis limits server-side regardless,
+          // so this only affects whether the UI *shows* the lock, never
+          // whether it's actually enforced.
+          console.warn("[FilterScreen] Kon abonnement niet ophalen:", e);
+        });
+    }, [])
+  );
+
+  // A stale cached distance above the Basis cap (e.g. from before a
+  // downgrade, or simply this screen's default of 150) must not keep
+  // showing on the slider once we know the plan is Basis.
+  useEffect(() => {
+    if (plan === "basis" && distanceKm > BASIS_MAX_DISTANCE_KM) {
+      setDistanceKm(BASIS_MAX_DISTANCE_KM);
+    }
+  }, [plan]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Same reasoning as the distance clamp above, for a stale Beschikbaarheid
+  // selection from before a downgrade from Elite - the chips are disabled
+  // once locked, so this just keeps their "locked" appearance from looking
+  // like it's still showing a real selection underneath.
+  useEffect(() => {
+    if (plan != null && plan !== "elite" && availabilityDays.length > 0) {
+      setAvailabilityDays([]);
+    }
+  }, [plan]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const isBasis = plan === "basis";
+  // null/unknown plan fails open (unlocked) here too, same as isBasis above -
+  // discover_profiles() enforces the real Elite-only limit server-side
+  // regardless of what this screen shows.
+  const isElite = plan === "elite";
+  const availabilityLocked = plan != null && !isElite;
+  const maxDistanceKm = isBasis ? BASIS_MAX_DISTANCE_KM : DEFAULT_FILTERS.distanceKm;
 
   const sportLabel = SPORT_OPTIONS.find((o) => o.value === sport)?.label ?? "Alle sporten";
   const levelLabel = LEVEL_OPTIONS.find((o) => o.value === level)?.label ?? "Alle niveaus";
 
+  const toggleDay = (key: string) => {
+    setAvailabilityDays((prev) => (prev.includes(key) ? prev.filter((d) => d !== key) : [...prev, key]));
+  };
+
   const apply = () => {
-    setFilters({ maxAge, distanceKm, sport, level });
+    // Leeftijd/Niveau/Beschikbaarheid can't actually have been changed from
+    // their defaults while locked (the controls are disabled), but forcing
+    // them back to "no filter" here too means a stale non-default value
+    // from before a downgrade never gets silently re-applied once this
+    // screen saves.
+    const next: DiscoverFilters = {
+      maxAge: isBasis ? DEFAULT_FILTERS.maxAge : maxAge,
+      distanceKm: isBasis ? Math.min(distanceKm, BASIS_MAX_DISTANCE_KM) : distanceKm,
+      sport,
+      level: isBasis ? null : level,
+      availabilityDays: isElite && availabilityDays.length > 0 ? availabilityDays : null,
+    };
+    setFilters(next);
     navigation.navigate("Home", { tab: "ontdekken" });
   };
 
   const reset = () => {
-    resetFilters();
-    setMaxAge(DEFAULT_FILTERS.maxAge);
-    setDistanceKm(DEFAULT_FILTERS.distanceKm);
-    setSport(DEFAULT_FILTERS.sport);
-    setLevel(DEFAULT_FILTERS.level);
+    const next: DiscoverFilters = { ...DEFAULT_FILTERS, distanceKm: maxDistanceKm };
+    setFilters(next);
+    setMaxAge(next.maxAge);
+    setDistanceKm(next.distanceKm);
+    setSport(next.sport);
+    setLevel(next.level);
+    setAvailabilityDays(next.availabilityDays ?? []);
   };
+
+  const goToPricing = () => navigation.navigate("Pricing");
 
   return (
     <ScreenContainer withBottomPadding={false}>
@@ -49,16 +139,27 @@ export default function FilterScreen({ navigation }: Props) {
 
       <View style={styles.content}>
         <View style={styles.row}>
-          <Text style={styles.label}>LEEFTIJD</Text>
-          <Text style={styles.value}>18-{Math.round(maxAge)}</Text>
+          <View style={styles.labelRow}>
+            <Text style={[styles.label, isBasis && styles.labelLocked]}>LEEFTIJD</Text>
+            {isBasis ? <LockBadge /> : null}
+          </View>
+          <Text style={[styles.value, isBasis && styles.labelLocked]}>18-{Math.round(maxAge)}</Text>
         </View>
-        <SliderControl value={maxAge} minimumValue={18} maximumValue={90} onValueChange={setMaxAge} />
+        {isBasis ? (
+          <Pressable onPress={goToPricing} hitSlop={4}>
+            <View pointerEvents="none">
+              <SliderControl value={maxAge} minimumValue={18} maximumValue={90} onValueChange={() => {}} disabled />
+            </View>
+          </Pressable>
+        ) : (
+          <SliderControl value={maxAge} minimumValue={18} maximumValue={90} onValueChange={setMaxAge} />
+        )}
 
         <View style={styles.row}>
           <Text style={styles.label}>AFSTAND</Text>
           <Text style={styles.value}>{Math.round(distanceKm)}KM</Text>
         </View>
-        <SliderControl value={distanceKm} minimumValue={1} maximumValue={150} onValueChange={setDistanceKm} />
+        <SliderControl value={distanceKm} minimumValue={1} maximumValue={maxDistanceKm} onValueChange={setDistanceKm} />
 
         <View style={styles.row}>
           <Text style={styles.label}>SPORT</Text>
@@ -69,12 +170,54 @@ export default function FilterScreen({ navigation }: Props) {
         </View>
 
         <View style={styles.row}>
-          <Text style={styles.label}>NIVEAU</Text>
-          <Pressable style={styles.pill} onPress={() => setLevelPickerVisible(true)}>
-            <Text style={styles.pillText}>{levelLabel.toUpperCase()}</Text>
-            <Ionicons name="chevron-down" size={16} color={colors.black} />
+          <View style={styles.labelRow}>
+            <Text style={[styles.label, isBasis && styles.labelLocked]}>NIVEAU</Text>
+            {isBasis ? <LockBadge /> : null}
+          </View>
+          <Pressable
+            style={[styles.pill, isBasis && styles.pillLocked]}
+            onPress={() => (isBasis ? goToPricing() : setLevelPickerVisible(true))}
+          >
+            {isBasis ? <Ionicons name="lock-closed" size={14} color={colors.textSecondary} /> : null}
+            <Text style={[styles.pillText, isBasis && styles.pillTextLocked]}>
+              {isBasis ? "PREMIUM" : levelLabel.toUpperCase()}
+            </Text>
+            {isBasis ? null : <Ionicons name="chevron-down" size={16} color={colors.black} />}
           </Pressable>
         </View>
+
+        <View style={styles.row}>
+          <View style={styles.labelRow}>
+            <Text style={[styles.label, availabilityLocked && styles.labelLocked]}>BESCHIKBAARHEID</Text>
+            {availabilityLocked ? <LockBadge label="ELITE" /> : null}
+          </View>
+        </View>
+        {availabilityLocked ? (
+          <Pressable onPress={goToPricing} hitSlop={4}>
+            <View pointerEvents="none" style={styles.dayRow}>
+              {WEEKDAY_OPTIONS.map((day) => (
+                <View key={day.key} style={[styles.dayChip, styles.dayChipLocked]}>
+                  <Text style={[styles.dayChipText, styles.dayChipTextLocked]}>{day.label}</Text>
+                </View>
+              ))}
+            </View>
+          </Pressable>
+        ) : (
+          <View style={styles.dayRow}>
+            {WEEKDAY_OPTIONS.map((day) => {
+              const selected = availabilityDays.includes(day.key);
+              return (
+                <Pressable
+                  key={day.key}
+                  onPress={() => toggleDay(day.key)}
+                  style={[styles.dayChip, selected && styles.dayChipSelected]}
+                >
+                  <Text style={[styles.dayChipText, selected && styles.dayChipTextSelected]}>{day.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
 
         <Button label="Toepassen" onPress={apply} style={styles.apply} />
         <Button label="Reset filter" onPress={reset} variant="outline" style={styles.reset} />
@@ -102,27 +245,39 @@ export default function FilterScreen({ navigation }: Props) {
   );
 }
 
+function LockBadge({ label = "PREMIUM" }: { label?: string }) {
+  return (
+    <View style={styles.premiumBadge}>
+      <Ionicons name="lock-closed" size={11} color={colors.textSecondary} />
+      <Text style={styles.premiumBadgeText}>{label}</Text>
+    </View>
+  );
+}
+
 function SliderControl({
   value,
   minimumValue,
   maximumValue,
   onValueChange,
+  disabled,
 }: {
   value: number;
   minimumValue: number;
   maximumValue: number;
   onValueChange: (v: number) => void;
+  disabled?: boolean;
 }) {
   return (
     <Slider
-      style={styles.slider}
+      style={[styles.slider, disabled && styles.sliderDisabled]}
       value={value}
       minimumValue={minimumValue}
       maximumValue={maximumValue}
       step={1}
-      minimumTrackTintColor={colors.primary}
+      disabled={disabled}
+      minimumTrackTintColor={disabled ? colors.border : colors.primary}
       maximumTrackTintColor={colors.border}
-      thumbTintColor={colors.black}
+      thumbTintColor={disabled ? colors.textSecondary : colors.black}
       onValueChange={(v) => onValueChange(Math.round(v))}
     />
   );
@@ -150,10 +305,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: spacing.md,
   },
+  labelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
   label: {
     fontFamily: fonts.display,
     fontSize: fontSizes.md,
     color: colors.black,
+  },
+  labelLocked: {
+    color: colors.textSecondary,
   },
   value: {
     fontFamily: fonts.display,
@@ -164,6 +327,9 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 32,
   },
+  sliderDisabled: {
+    opacity: 0.4,
+  },
   pill: {
     flexDirection: "row",
     alignItems: "center",
@@ -173,10 +339,61 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     paddingHorizontal: spacing.md,
   },
+  pillLocked: {
+    opacity: 0.6,
+  },
   pillText: {
     fontFamily: fonts.display,
     fontSize: fontSizes.sm,
     color: colors.black,
+  },
+  pillTextLocked: {
+    color: colors.textSecondary,
+  },
+  premiumBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: colors.surface,
+    borderRadius: radii.pill,
+    paddingVertical: 2,
+    paddingHorizontal: spacing.xs,
+  },
+  premiumBadgeText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 10,
+    color: colors.textSecondary,
+  },
+  dayRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  dayChip: {
+    minWidth: 44,
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderRadius: radii.pill,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  dayChipSelected: {
+    backgroundColor: colors.primary,
+  },
+  dayChipLocked: {
+    opacity: 0.6,
+  },
+  dayChipText: {
+    fontFamily: fonts.display,
+    fontSize: fontSizes.sm,
+    color: colors.black,
+  },
+  dayChipTextSelected: {
+    color: colors.black,
+  },
+  dayChipTextLocked: {
+    color: colors.textSecondary,
   },
   apply: {
     marginTop: spacing.xl,

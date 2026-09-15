@@ -8,12 +8,17 @@ beschikbaar.
 ## Functionaliteit
 
 - **Onboarding**: inloggen, registreren (2 stappen), wachtwoord vergeten, locatie instellen
-- **Ontdekken**: swipe-kaarten om sportmaatjes te vinden (Skip / Connect), met match-scherm
+- **Ontdekken**: swipe-kaarten om sportmaatjes te vinden (Skip / Connect), met match-scherm en een dagelijkse aanbevelingslimiet per abonnement (zie "Dagelijkse aanbevelingslimiet" hieronder)
 - **Connecties**: overzicht van je matches
-- **Filter**: leeftijd, afstand, sport, niveau, beschikbaarheid
+- **Filter**: leeftijd, afstand, sport, niveau, beschikbaarheid - leeftijd
+  en niveau zijn alleen bruikbaar voor Premium/Elite, de afstand is voor
+  Basis begrensd op 50km (zie "Welke Ontdekken-filters een abonnement mag
+  gebruiken" hieronder), en beschikbaarheid ("Slimme beschikbaarheids
+  match") is exclusief voor Elite (zie "Slimme beschikbaarheids match
+  (Elite-only)" hieronder)
 - **Profielen**: sporters bekijken, je eigen profiel bekijken en bewerken
-- **Berichten**: community-feed ("Bericht plaatsen") en realtime 1-op-1 chat
-- **Instellingen**: account, voorkeuren, e-mail wijzigen
+- **Berichten**: community-feed ("Bericht plaatsen", alleen zichtbaar voor de auteur zelf en diens matches, en alleen bruikbaar voor Premium/Elite - zie "Prikbord" hieronder) en realtime 1-op-1 chat, inclusief het versturen van foto's, een "Plan een training"-knop (Elite-only - zie "Trainings & Buddy Planner" hieronder) en een dagelijkse berichtenlimiet per abonnement (zie "Dagelijkse berichtenlimiet" hieronder)
+- **Instellingen**: account, voorkeuren, e-mail wijzigen, "Mijn trainingen" (zie "Trainings & Buddy Planner" hieronder)
 - **Premium & Elite**: Basis (gratis), Premium (€4,99/mnd), Elite (€9,99/mnd) + betaalscherm
 - **Ondersteuning**: Helpdesk, veelgestelde vragen, klantenservice
 
@@ -52,6 +57,19 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
      in bestandsvolgorde (`0001_init.sql`, `0002_...`, `0003_...`, ...)
      (of gebruik `supabase db push` als je de Supabase CLI gebruikt)
    - Ga naar **Project Settings → API** en kopieer de `Project URL` en `anon public` key
+
+   **Heb je al een bestaand project?** Elke keer dat er een nieuw bestand
+   in `supabase/migrations/` bijkomt, moet dat bestand ook los op je
+   *bestaande* database gedraaid worden - dit gebeurt niet automatisch (er
+   is geen omgeving hier met netwerktoegang tot Supabase om dat voor je te
+   doen). Wordt dit overgeslagen, dan loopt de app op een schema dat achterloopt
+   bij de code, wat zich meestal uit als een PostgREST-foutmelding zoals
+   *"Could not find the 'X' column of 'Y' in the schema cache"* zodra de
+   code een kolom/tabel/functie gebruikt die het migratiebestand toevoegt
+   maar die nog niet op de database staat (zo brak het versturen van
+   chatberichten toen `0018_chat_images.sql`'s `messages.image_url`-kolom
+   wel in de code maar nog niet in de database stond). Elk migratiebestand
+   is veilig om meerdere keren te draaien.
 
 3. **Configureer environment variables**
 
@@ -114,9 +132,15 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
 
 - `profiles` — sport, niveau, locatie, geboortedatum, geslacht, etc. (1:1 met `auth.users`)
 - `swipes` — like/skip acties tussen profielen
+- `discover_daily_views` — welke profielen een gebruiker vandaag al te zien
+  heeft gekregen in Ontdekken; voedt de dagelijkse aanbevelingslimiet per
+  abonnement (zie 0019, "Dagelijkse aanbevelingslimiet" hieronder)
 - `matches` — ontstaat automatisch wanneer twee profielen elkaar liken
-- `messages` — 1-op-1 chatberichten per match, met Supabase Realtime
-- `posts` / `post_likes` — de "Bericht plaatsen" community-feed
+- `messages` — 1-op-1 chatberichten per match, met Supabase Realtime;
+  kunnen optioneel een `image_url` dragen (foto's, `chat-images`-bucket,
+  zie 0018)
+- `posts` / `post_likes` — de "Bericht plaatsen" community-feed, alleen
+  zichtbaar voor de auteur en diens matches (RLS, zie 0017)
 - `subscriptions` — Basis / Premium / Elite abonnement per gebruiker
 - `support_requests` — ingediende Klantenservice-berichten (back-up/overzicht,
   zie ook de "Klantenservice-e-mail"-sectie hieronder)
@@ -151,6 +175,280 @@ Draai `0015_profiles_min_age_check.sql` op je bestaande database -
 Function nodig, alleen deze migratie. Als de `alter table` faalt omdat er
 al een profiel met een te jonge geboortedatum bestaat, geeft het bestand
 zelf een query om die rij(en) eerst op te sporen.
+
+## Dagelijkse aanbevelingslimiet (Ontdekken)
+
+De Pricing-tabel belooft per abonnement een ander aantal dagelijkse
+aanbevelingen (Basis 5/dag, Premium 15/dag, Elite onbeperkt) - tot
+migratie `0019_discover_daily_limit.sql` was dat puur tekst op het
+betaalscherm: `discover_profiles()` gaf altijd dezelfde resultaten terug,
+ongeacht `subscriptions.plan`.
+
+Nu wordt dit server-side afgedwongen, in `discover_profiles()` zelf (dus
+niet te omzeilen met een hand-gebouwde API-aanroep die de client
+overslaat):
+
+- `discover_daily_views` houdt per gebruiker bij welke profielen vandaag
+  al getoond zijn. Dit is expres een aparte tabel, niet `swipes` - een
+  getoond-maar-nog-niet-geswipete kaart moet bij elke herlaadbeurt van het
+  Ontdekken-tabblad (`HomeScreen`'s `useFocusEffect` herlaadt altijd bij
+  focus) als "al gezien" blijven tellen, anders zou alleen maar heen-en-
+  weer wisselen tussen tabbladen al de hele dagelijkse limiet opsouperen
+  aan kaarten waarop nog niet eens geswiped is.
+- Alleen écht nieuwe (nog niet vandaag getoonde) kandidaten verbruiken een
+  eenheid van de limiet; al eerder vandaag getoonde, nog ongeswipete
+  kandidaten blijven altijd zichtbaar.
+- `discover_plan_daily_limit(plan)` is de ene bron van waarheid voor de
+  aantallen per plan; alleen een `subscriptions`-rij met `status =
+  'active'` telt mee (een gekozen-maar-nooit-"betaald" `pending`-plan
+  telt als Basis), en een gebruiker zonder rij telt ook als Basis.
+- `discover_daily_status()` (RPC) geeft de client `{ plan, daily_limit,
+  used_today, remaining }` terug, zodat `HomeScreen` een duidelijke
+  "dagelijkse limiet bereikt"-melding met upgradeknop naar het
+  Pricing-scherm kan tonen zodra `remaining` op 0 staat, in plaats van
+  dezelfde generieke lege-staat als "geen kandidaten die aan je filters
+  voldoen".
+- RLS op `discover_daily_views` staat alleen `select` toe aan de eigenaar
+  zelf; er is helemaal geen insert/update/delete-policy voor de
+  `authenticated`-rol. Elke schrijfactie loopt uitsluitend via
+  `discover_profiles()` (`SECURITY DEFINER`), dus een gebruiker kan zijn
+  eigen "al gezien"-geschiedenis niet resetten of vervalsen om de limiet
+  te omzeilen.
+
+Draai `0019_discover_daily_limit.sql` op je bestaande database -
+`0001_init.sql` is ook bijgewerkt voor nieuwe installaties.
+
+## Welke Ontdekken-filters een abonnement mag gebruiken
+
+Weer dezelfde soort belofte: de Pricing-tabel zegt Basis "Basisfilters"
+(alleen Sport + Afstand, tot nu toe nooit ergens begrensd), Premium/Elite
+"Uitgebreide filters" (Sport, Afstand, Leeftijd, Niveau). Migratie
+`0021_discover_profiles_plan_filters.sql` dwingt dit af in
+`discover_profiles()` zelf, niet alleen in de UI:
+
+- Voor een Basis-account (of iemand zonder actieve `subscriptions`-rij)
+  worden `p_level` en `p_max_age` genegeerd (op `null` gezet, dus geen
+  filter) en wordt `p_distance_km` begrensd op 50km - ook als de
+  aanroeper `null` ("onbeperkt") of een hogere waarde meestuurt. Dit is
+  bewust een *clamp*, geen fout: een verouderde/gemanipuleerde
+  filterwaarde degradeert netjes naar wat Basis wél mag, in plaats van de
+  hele aanvraag te laten mislukken.
+- Voor Premium/Elite blijft alles zoals het was: alle vier de filters
+  werken, Afstand tot 150km.
+- `FilterScreen.tsx` grijst Leeftijd en Niveau uit voor een Basis-account
+  (met een hangslotje/"PREMIUM"-badge, tikken erop opent het
+  Pricing-scherm) en begrenst de Afstand-slider zelf ook tot 50km - maar
+  dat is puur UX. De echte grens is `discover_profiles()`: een
+  hand-gebouwde RPC-aanroep die deze UI overslaat en toch `p_level`/
+  `p_max_age`/een `p_distance_km` boven 50km meestuurt voor een
+  Basis-account krijgt die waarden nog steeds genegeerd/begrensd.
+- Het scherm haalt het huidige plan op via dezelfde
+  `discover_daily_status()`-RPC als de aanbevelingslimiet hierboven (die
+  geeft toch al `plan` terug, dus geen aparte RPC nodig). Een mislukte
+  aanroep hier blijft niet stil - zie de `console.warn` in
+  `FilterScreen.tsx` - en laat het scherm gewoon niets vergrendelen
+  (`discover_profiles()` handhaaft de echte Basis-grenzen sowieso, ongeacht
+  of deze aanroep lukt).
+- Die plan-aanroep zit in een `useFocusEffect`, niet een gewone
+  mount-only `useEffect`: `BottomNav` bereikt dit scherm via
+  `navigation.navigate("Filter")`, en React Navigation's native-stack
+  `navigate()` remount een scherm dat al in de stack zit niet - het
+  brengt de bestaande instantie gewoon terug in focus. Een mount-only
+  fetch zou dus maar één keer per app-sessie draaien (bij het allereerste
+  bezoek) en daarna nooit meer, waardoor een plan dat pas ná dat eerste
+  bezoek naar Basis wordt gezet (of gewoon nog niet compleet was
+  ingesteld) op elk later bezoek stil de verouderde, niet-vergrendelde
+  staat bleef tonen - exact het gerapporteerde symptoom.
+
+Draai `0021_discover_profiles_plan_filters.sql` op je bestaande database -
+`0001_init.sql` is ook bijgewerkt voor nieuwe installaties. Controleer na
+het draaien met:
+
+```sql
+select prosrc ilike '%v_plan = ''basis''%' as has_plan_filter_clamp
+from pg_proc
+where proname = 'discover_profiles' and pronamespace = 'public'::regnamespace;
+-- verwacht: true
+```
+
+## Slimme beschikbaarheids match (Elite-only)
+
+Zelfde soort belofte als hierboven, maar dan voor de Pricing-regel
+"Slimme beschikbaarheids match" die alleen bij Elite staat. Migratie
+`0023_discover_profiles_availability_filter.sql` voegt op het
+Filter-scherm een nieuwe "Beschikbaarheid"-filter toe (dagen van de
+week, gebruikmakend van het bestaande `profiles.availability_days`-veld)
+en dwingt af dat die alleen werkt voor een actief Elite-account:
+
+- Een Elite-gebruiker kan op het Filter-scherm een of meerdere dagen
+  selecteren. Ontdekken toont dan alleen nog kandidaten van wie
+  `availability_days` op minstens één van die dagen overlapt met de
+  gekozen dagen (`profiles.availability_days && p_availability_days` in
+  `discover_profiles()`) - geen overlap, geen match qua beschikbaarheid.
+- Voor Basis én Premium wordt `p_availability_days` genegeerd (op `null`
+  gezet), ook als een hand-gebouwde RPC-aanroep buiten de UI om een
+  waarde meestuurt - net als bij de Leeftijd/Niveau-clamp hierboven,
+  maar dan voor alle plannen behalve Elite.
+- `FilterScreen.tsx` grijst de dagen-chips uit voor Basis/Premium (met
+  hetzelfde hangslotje, nu met een "ELITE"-badge in plaats van
+  "PREMIUM" - `LockBadge` accepteert nu een `label`-prop), tikken erop
+  opent het Pricing-scherm. Zelfde `useFocusEffect` + `console.warn` bij
+  een mislukte `discover_daily_status()`-aanroep als bij de
+  Leeftijd/Niveau-clamp - een mislukte statusaanroep vergrendelt dus
+  nooit stilletjes niets extra, en laat de echte afdwinging aan
+  `discover_profiles()` over.
+- **Belangrijk voor wie deze migratie zelf toepast**: dit is de eerste
+  migratie die een parameter *toevoegt* aan `discover_profiles()` (5 →
+  6 argumenten). Postgres identificeert een functie via zijn volledige
+  parameterlijst, dus `create or replace function` met een extra
+  parameter vervangt de oude 5-argumenten-versie niet - het maakt er een
+  *tweede*, overloaded functie naast. Elke aanroep met precies de oude 5
+  argumenten (zoals een client die deze update nog niet heeft) krijgt
+  dan `... is not unique` in plaats van gewoon te werken. Daarom bevat
+  deze migratie een expliciete `drop function if exists
+  public.discover_profiles(text, text, int, double precision, int);`
+  vóór de `create or replace` - zonder die drop blijven er twee
+  overloads bestaan.
+
+Draai `0023_discover_profiles_availability_filter.sql` op je bestaande
+database - `0001_init.sql` is ook bijgewerkt voor nieuwe installaties.
+Controleer na het draaien met:
+
+```sql
+select
+  (select count(*) from pg_proc where proname = 'discover_profiles'
+     and pronamespace = 'public'::regnamespace) as overload_count,
+  (select count(*) from pg_proc where proname = 'discover_profiles'
+     and pronamespace = 'public'::regnamespace
+     and pg_get_function_identity_arguments(oid) ilike '%p_availability_days%') as has_availability_param,
+  (select prosrc ilike '%availability_days && p_availability_days%' from pg_proc
+     where proname = 'discover_profiles' and pronamespace = 'public'::regnamespace
+     and pg_get_function_identity_arguments(oid) ilike '%p_availability_days%') as has_overlap_check,
+  (select prosrc ilike '%v_plan <> ''elite''%' from pg_proc
+     where proname = 'discover_profiles' and pronamespace = 'public'::regnamespace
+     and pg_get_function_identity_arguments(oid) ilike '%p_availability_days%') as has_elite_clamp;
+-- verwacht: 1, 1, true, true (overload_count moet precies 1 zijn - staat er
+-- 2, dan is de oude 5-argumenten-versie niet verwijderd en krijgt elke
+-- 5-argumenten-aanroeper "is not unique"; draai dit bestand dan nogmaals,
+-- de drop hierboven lost het op)
+```
+
+De migratie zelf bevat ook een zelfcontrolerend `do $$ ... $$`-blok
+onderaan (zelfde aanpak als `0022_posts_premium_only.sql`) dat bij het
+draaien zelf al een specifieke `EXCEPTION` opwerpt zodra iets hiervan
+niet klopt, in plaats van een dubbelzinnige "Success" die achteraf niet
+overeenkomt met een losse controlequery.
+
+## Dagelijkse berichtenlimiet (chat)
+
+Zelfde soort belofte, zelfde soort gat: de Pricing-tabel zegt Basis
+"3 Berichten per dag sturen", Premium/Elite "Onbeperkt chatten", maar tot
+migratie `0020_messages_daily_limit.sql` kon iedereen onbeperkt chatten.
+
+Anders dan de Ontdekken-limiet hoeft hier geen aparte "al gezien"-tabel
+bijgehouden te worden - een verstuurd bericht is een eenmalige actie
+zonder het "opnieuw getoond, mag niet dubbel tellen"-probleem dat
+`discover_daily_views` oplost, dus telt `can_send_message_today()`
+gewoon rechtstreeks `messages` (`sender_id` + `created_at::date =
+current_date`):
+
+- `messages_plan_daily_limit(plan)` is de bron van waarheid voor de
+  aantallen per plan (Basis 3, Premium/Elite onbeperkt/null) - zelfde
+  patroon als `discover_plan_daily_limit(plan)`.
+- `can_send_message_today()` (`SECURITY DEFINER`, scoped op `auth.uid()`)
+  is de daadwerkelijke afdwinging: toegevoegd als extra voorwaarde aan de
+  bestaande "Match participants can send messages" INSERT-policy op
+  `public.messages`, dus elk bericht - via de app of een hand-gebouwde
+  API-aanroep - loopt hier doorheen. Alleen een `subscriptions`-rij met
+  `status = 'active'` telt mee (een `pending`-plan telt als Basis).
+- `messages_daily_status()` (RPC) geeft `{ plan, daily_limit, used_today,
+  remaining }` terug, zodat `ChatDetailScreen` een duidelijke "dagelijkse
+  limiet bereikt"-melding met upgradeknop naar het Pricing-scherm kan
+  tonen in plaats van het invoerveld, zodra `remaining` op 0 staat - een
+  kale RLS-weigering is anders client-side niet te onderscheiden van "je
+  bent geblokkeerd" of "dit is niet jouw match", die dezelfde generieke
+  Postgres-foutmelding geven.
+- Bekende beperking, met opzet niet opgelost: een INSERT met meerdere
+  rijen tegelijk (een batch) toetst elke rij aan dezelfde snapshot van
+  vóór het statement, dus zo'n batch zou in theorie de limiet kunnen
+  omzeilen. De app zelf (`sendMessage()`, `lib/api.ts`) verstuurt altijd
+  precies één bericht per keer, dus dit is alleen een gat voor een
+  hand-gebouwde batch-aanroep, niet voor normaal app-gebruik.
+
+Draai `0020_messages_daily_limit.sql` op je bestaande database -
+`0001_init.sql` is ook bijgewerkt voor nieuwe installaties.
+
+## Prikbord ("Bericht plaatsen") is Premium/Elite-only
+
+Anders dan de vorige twee secties gaat dit niet om een *aantal* dat
+begrensd wordt, maar om de hele feature: Basis mag het prikbord
+(`posts`/`post_likes` - "Bericht plaatsen" op de Connecties-tab én de
+publieke Berichten-feed) helemaal niet gebruiken, noch lezen noch
+schrijven. Dit staat volledig los van 1-op-1 chat (`messages`), die voor
+elk abonnement beschikbaar blijft (met zijn eigen dagelijkse limiet
+hierboven).
+
+Migratie `0022_posts_premium_only.sql` voegt `has_posts_access()` toe
+(`SECURITY DEFINER`, `true` alleen bij een `subscriptions`-rij met
+`status = 'active'` en `plan in ('premium', 'elite')`) en AND't die in elke
+bestaande policy op `posts` en `post_likes` (select/insert/delete op
+`posts`, select/all op `post_likes`) - een Basis-account krijgt dus
+letterlijk nul toegang tot deze twee tabellen, niet een narrowed view.
+
+Zelfde soort onvermijdelijk neveneffect als `0017_posts_match_only.sql`:
+RLS geldt voor élke lezer/schrijver van deze tabellen, ongeacht welk
+scherm de query doet. Dit raakt dus ook:
+- De publieke Berichten-feed (`PostsFeedScreen.tsx`, `fetchPosts()`) -
+  kreeg dezelfde vergrendel-UI als de Connecties-tab.
+- Een andermans profiel bekijken (`SporterProfileScreen.tsx`,
+  `fetchPostsByAuthor()`) - toont voor een Basis-viewer gewoon de
+  bestaande "Nog geen berichten geplaatst"-lege-staat, ook als die
+  persoon wél iets geplaatst heeft. Niet onveilig (er lekt niets), wel
+  een tekstueel onnauwkeurige melding - bewust buiten scope gelaten voor
+  deze taak, maar het waard om te weten.
+
+Beide geraakte schermen (`HomeScreen.tsx`'s Connecties-tab en
+`PostsFeedScreen.tsx`) halen het huidige plan op via dezelfde
+`discover_daily_status()`-RPC als de andere abonnementscontroles hierboven
+(geeft toch al `plan` terug) en tonen bij Basis een duidelijke
+"Premium-functie"-melding met knop naar het Pricing-scherm in plaats van
+de samensteller/berichtenlijst. Een mislukte aanroep hier blijft niet
+stil - zie de `console.warn` in beide bestanden.
+
+Controlequery (ook in het migratiebestand):
+
+```sql
+select
+  (select count(*) from pg_proc where proname = 'has_posts_access' and pronamespace = 'public'::regnamespace) as has_function,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'posts'
+     and policyname = 'Posts are readable by their author or a match' and qual ilike '%has_posts_access%') as select_gated,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'posts'
+     and policyname = 'Users manage their own posts' and with_check ilike '%has_posts_access%') as insert_gated,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'posts'
+     and policyname = 'Users can delete their own posts' and qual ilike '%has_posts_access%') as delete_gated,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'post_likes'
+     and policyname = 'Likes are readable by authenticated users' and qual ilike '%has_posts_access%') as likes_select_gated,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'post_likes'
+     and policyname = 'Users manage their own likes' and qual ilike '%has_posts_access%' and with_check ilike '%has_posts_access%') as likes_all_gated;
+-- verwacht: overal 1
+```
+
+Draai `0022_posts_premium_only.sql` op je bestaande database -
+`0001_init.sql` is ook bijgewerkt voor nieuwe installaties.
+
+**Als de SQL editor "Success" toont maar de controlequery toch overal 0
+geeft**: het bestand zelf eindigt met een `do $$ ... $$`-blok dat exact
+diezelfde zes checks herhaalt en een specifieke `EXCEPTION` opwerpt zodra
+er ook maar één ontbreekt (in plaats van de dubbelzinnige "Success" van
+de losse controlequery) - draai het bestand nogmaals en lees die
+foutmelding. De meest waarschijnlijke oorzaak is dat er maar een deel van
+het geplakte bestand daadwerkelijk is uitgevoerd (bijvoorbeeld: in de SQL
+editor voert "Run" alleen de *geselecteerde* tekst uit als er iets
+gemarkeerd is, niet per se het hele plakvenster) of dat het tegen een
+ander Supabase-project/branch draaide dan waarop de controlequery
+daarna liep. Zie de kop van `0022_posts_premium_only.sql` zelf voor een
+uitgebreidere diagnostequery die de daadwerkelijke policy-tekst toont in
+plaats van alleen 0/1.
 
 ## Moderatie (rapporteren & blokkeren)
 
@@ -207,9 +505,11 @@ Die functie draait met de service-role key (nodig om zowel de
 `auth.users`-rij als de opgeslagen profielfoto's te verwijderen - dat kan
 niet met een gewone gebruikerssessie) en verwijdert, in deze volgorde:
 
-1. De bestanden van de gebruiker in de `profile-photos`-storage-bucket
-   (die worden niet automatisch opgeruimd - er loopt geen foreign key van
-   `storage.objects` naar `auth.users`).
+1. De bestanden van de gebruiker in de `profile-photos`-storage-bucket,
+   en de door de gebruiker zelf geüploade chatafbeeldingen in de
+   `chat-images`-bucket (per match waar de gebruiker deel van was) - die
+   worden niet automatisch opgeruimd, er loopt geen foreign key van
+   `storage.objects` naar `auth.users`.
 2. De `auth.users`-rij zelf, via `auth.admin.deleteUser()`. Omdat
    `profiles.id` verwijst naar `auth.users(id)` met `on delete cascade`, en
    elke andere tabel met persoonlijke gegevens (`swipes`, `matches`,
@@ -294,6 +594,19 @@ Zie `DATA_INVENTORY.md` §5 voor de volledige achtergrond. Draai
 `0001_init.sql` is ook bijgewerkt voor nieuwe installaties. Geen Edge
 Function of secret nodig, alleen deze migratie.
 
+**Opvolgbug, gevonden en gefixt in `0016_discover_profiles_no_implicit_defaults.sql`:**
+die eerste versie van `discover_profiles()` viel bij een niet-aangepast
+sport-/afstandsfilter stilzwijgend terug op het eigen profiel van de
+aanroeper (eigen sport, eigen `search_radius_km`) - terwijl het Filter-scherm
+in precies die staat altijd "ALLE SPORTEN" en een concrete "NNKM"-waarde
+toont, nooit een hint dat er iets anders wordt toegepast. Hierdoor
+verschenen 10 nieuw aangemaakte testprofielen (zie
+`supabase/seed/test_profiles_seed.sql`) niet in Ontdekken, puur omdat de
+sport van het testende account toevallig niet overeenkwam met een van de
+testprofielen. `p_sport`/`p_distance_km` worden nu exact toegepast zoals
+het Filter-scherm ze laat zien, zonder impliciete substitutie. Draai ook
+deze migratie op je bestaande database.
+
 ## Pushmeldingen (Expo Notifications)
 
 Na inloggen/registreren vraagt de app om toestemming voor pushmeldingen
@@ -349,6 +662,150 @@ en een melding te ontvangen, is een **custom development build** nodig
    worden; de Expo Push API werkt ook zonder.
 5. **Test pas echt via een development build**, niet via Expo Go (zie de
    beperking hierboven).
+
+## Trainings & Buddy Planner (Elite-only)
+
+Pricing-tabel: Elite heeft als enige "Slimme trainingsplanner". Een Elite-
+gebruiker kan vanuit een chat (naast het berichtenveld, via de knop met het
+kalender-icoon) een concreet trainingsvoorstel doen aan zijn/haar match -
+datum, tijd, sport (voorgevuld met de gedeelde sport, zie `fetchSharedSport()`
+in `lib/api.ts`), en optioneel locatie/opmerking. Dat voorstel verschijnt in
+de chat als een aparte kaart (`components/TrainingCard.tsx`, ingevoegd
+tussen de berichten op tijdstip - zie `ChatDetailScreen.tsx`'s
+`chatItems`), niet als los tekstbericht, met "Accepteren"/"Voorstel
+wijzigen" (en een kleinere "Afwijzen") voor wie het voorstel niet zelf
+deed. Geaccepteerde trainingen staan ook onder Instellingen →
+"Mijn trainingen" (`app/settings/MyTrainingsScreen.tsx`), voor beide
+deelnemers, ongeacht ieders eigen abonnement.
+
+Migratie `supabase/migrations/0024_trainings_planner.sql` (en, voor nieuwe
+installaties, hetzelfde blok in `0001_init.sql`) legt dit vast:
+
+- Nieuwe tabel `public.trainings` (`match_id`, `created_by`, `date`,
+  `time`, `sport`, `location`, `note`, `status`
+  `'pending'`/`'accepted'`/`'declined'`, `created_at`, plus
+  `reminder_sent_at` - zie hieronder).
+- **`has_elite_access()`** (mirrort `has_posts_access()` uit
+  `0022_posts_premium_only.sql` één-op-één, alleen met `plan = 'elite'` in
+  plaats van `plan in ('premium', 'elite')`) is de echte afdwinging van
+  requirement 6: de "Elite match participants can propose trainings"
+  RLS-policy op de INSERT staat een rij alleen toe als
+  `has_elite_access()` waar is én de aanroeper een deelnemer van
+  `match_id` is - een hand-gebouwde INSERT die de UI overslaat komt hier
+  op precies dezelfde manier vast te zitten als de UI zelf (die het
+  kalender-icoon vervangt door een hangslotje en naar Pricing linkt voor
+  Basis/Premium).
+- **Reageren is bewust niet Elite-only**: de UPDATE-policy ("Accepteren"/
+  "Voorstel wijzigen"/"Afwijzen", en de daadwerkelijke rij-wijziging bij
+  "Voorstel wijzigen") staat elke deelnemer toe, niet alleen Elite-
+  accounts - een Basis/Premium-gebruiker die een voorstel van een Elite-
+  match ontvangt, moet erop kunnen reageren. "Voorstel wijzigen" wijzigt
+  de bestaande rij (geen nieuwe kaart, geen geschiedenis van
+  overschreven voorstellen) en zet `created_by` op wie het laatst
+  bijwerkte, zodat de ander weer "Accepteren"/"Voorstel wijzigen" te zien
+  krijgt.
+- **`reminder_sent_at`** staat niet letterlijk in de opgegeven
+  kolommenlijst, maar is noodzakelijk: zonder een "al herinnerd?"-markering
+  zou de periodieke herinneringsjob (hieronder) bij elke tik van zijn
+  schema een dubbele push sturen zolang een training binnen het
+  "begint over 2 uur"-venster valt.
+- **`claim_training_reminders(p_window_minutes)`** (niet `security
+  definer` - dit moet over de trainings/matches van *alle* gebruikers
+  heen kunnen kijken, dus er is geen zinnig per-gebruiker bereik om het
+  tot te beperken) claimt atomisch (één `update ... returning`) elke
+  geaccepteerde, nog niet herinnerde training die over 2 tot 2+5 minuten
+  begint, en zet meteen `reminder_sent_at`, zodat twee overlappende
+  cron-ticks nooit dezelfde training dubbel melden. Alleen `service_role`
+  mag deze aanroepen - de migratie trekt `EXECUTE` daarom expliciet in
+  van `public`, `anon` én `authenticated` (`revoke execute ... from
+  public, anon, authenticated`) vóór de `grant ... to service_role` - zie
+  de eigenaardigheid hieronder over waarom "from public" alleen niet
+  genoeg bleek te zijn.
+- Datum/tijd worden ingevoerd als Europe/Amsterdam-kloktijd (de app doet
+  nergens anders iets met tijdzones) - `claim_training_reminders()`
+  interpreteert `(date + time)` expliciet als die tijdzone
+  (`at time zone 'Europe/Amsterdam'`) vóór de vergelijking met `now()`
+  (altijd UTC), zodat dit ook correct blijft rond de CET/CEST-omschakeling.
+
+**Postgres-eigenaardigheid, ontdekt tijdens het lokaal testen:** in een
+`create table`-kolomlijst is `time time` een geldige kolomdefinitie, maar
+in een `returns table(...)`-clausule van een functie geeft `time time`
+(in tegenstelling tot `date date`) een `syntax error at or near "time"` -
+dit is opgelost door de kolomnaam daar te quoten (`"time" time`), verder
+overal een gewone ongequote `time`-identifier.
+
+**Supabase-eigenaardigheid, pas ontdekt na een melding dat de zelfcontrole
+in 0024 faalde op een echte live database (lokaal testen miste dit -
+zie hieronder):** elk Supabase-project draait bij het aanmaken al eens
+(niet iets wat een migratie in deze repo zelf regelt):
+```sql
+alter default privileges in schema public
+  grant all on functions to postgres, anon, authenticated, service_role;
+```
+Elke nieuwe functie in `public` krijgt daardoor `EXECUTE`
+*rechtstreeks* toegekend aan `anon`/`authenticated`/`service_role` - niet
+via de `PUBLIC`-pseudorol. `revoke execute ... from public` (de eerste
+versie van deze migratie) trekt dus een recht in dat nooit de echte bron
+van `authenticated`'s toegang was, en doet in de praktijk niets:
+`authenticated` behoudt zijn eigen, rechtstreeks toegekende recht. De
+zelfcontrole ving dit exact op ("authenticated can still execute
+claim_training_reminders()"); de fix is expliciet ook intrekken van
+`anon` en `authenticated`, niet alleen van `public` (zie de huidige
+`revoke`-regel bij `claim_training_reminders()` hierboven). Mijn eigen
+lokale testopstelling (los Postgres-schema, geen live Supabase-project)
+repliceerde deze `alter default privileges`-instelling aanvankelijk niet
+voor functies (wel al voor tabellen, anders faalden de RLS-testscenario's),
+dus de lokale zelfcontrole gaf destijds ten onrechte groen licht -
+inmiddels wel toegevoegd aan de testopstelling en opnieuw geverifieerd.
+
+**Hergebruikt de pushmeldingen-infrastructuur** (requirement 5) in plaats
+van iets nieuws te bouwen: de Edge Function `send-training-reminder-push`
+importeert dezelfde `_shared/push.ts`-helpers
+(`createServiceRoleClient`/`sendExpoPushNotifications`/`jsonResponse`/
+`verifyWebhookSecret`) als `send-message-push`/`send-match-push`, en
+hergebruikt hetzelfde `DB_WEBHOOK_SECRET` (0011_push_notifications.sql).
+Het enige echte verschil: er is geen rij-event ("training begint over 2
+uur" is geen INSERT/UPDATE) om een trigger op te zetten, dus
+`supabase/migrations/0025_training_reminder_cron.sql` gebruikt in plaats
+daarvan pg_cron + pg_net (`cron.schedule(...)` met `net.http_post(...)`)
+om de functie elke 5 minuten aan te roepen - dezelfde
+`x-webhook-secret`-header, alleen tijdgestuurd in plaats van
+event-gestuurd.
+
+**Handmatige stappen die jij zelf moet zetten** (bovenop de stappen bij
+"Pushmeldingen" hierboven, die dit hergebruikt):
+
+1. Draai `0024_trainings_planner.sql` (tabel/RLS/functies) - zie de
+   controlequery bovenaan dat bestand.
+2. **Deploy de Edge Function**:
+   ```bash
+   supabase functions deploy send-training-reminder-push --no-verify-jwt
+   ```
+3. **Zet pg_cron en pg_net aan**: Supabase-dashboard → Database →
+   Extensions, zoek "pg_cron" en "pg_net", zet beide aan.
+4. **Voer `0025_training_reminder_cron.sql` uit**, na het invullen van
+   `REPLACE_WITH_YOUR_DB_WEBHOOK_SECRET` met dezelfde waarde als bij
+   Pushmeldingen stap 2 (niets nieuws te genereren). Controleer met:
+   ```sql
+   select jobname, schedule, active from cron.job where jobname = 'training-reminder-push';
+   -- verwacht: één rij, schedule = '*/5 * * * *', active = true
+   ```
+
+**Getest**: lokaal (los Postgres-schema, geen netwerktoegang tot Supabase
+vanuit deze omgeving) met een Elite- en een Basis-testaccount op dezelfde
+match - Elite kan een voorstel aanmaken, Basis niet (RLS-weigering, ook
+voor een match waar de Elite-gebruiker zelf geen deelnemer van is); beide
+deelnemers kunnen het voorstel lezen, een buitenstaander niet; de Basis-
+ontvanger kan accepteren/"voorstel wijzigen" (en daarbij `created_by` naar
+zichzelf laten verspringen) zonder zelf Elite te zijn; een buitenstaander
+kan niet updaten; `claim_training_reminders()` claimt exact de
+geaccepteerde, nog-niet-herinnerde training binnen het 2u-venster, negeert
+er buiten liggende/`pending`/al-herinnerde trainingen, claimt bij een
+tweede aanroep niets dubbel, en is voor zowel `authenticated` als `anon`
+volledig ontoegankelijk (`permission denied`) - alleen `service_role` kan
+hem aanroepen. Na de live-melding hierboven is de lokale testopstelling
+zelf ook aangepast (Supabase's `alter default privileges ... on
+functions`-gedrag gerepliceerd) en is dit scenario opnieuw bevestigd.
 
 ## Klantenservice-e-mail (Resend)
 

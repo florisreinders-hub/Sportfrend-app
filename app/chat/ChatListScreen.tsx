@@ -97,7 +97,9 @@ export default function ChatListScreen({ navigation }: Props) {
           renderItem={({ item }) => {
             const name = item.otherUser?.full_name ?? "Sportmaatje";
             const photo = item.otherUser?.photo_url ?? avatarPlaceholder(item.otherUser?.id ?? item.id);
-            const preview = item.lastMessage?.body ?? "Stuur het eerste bericht!";
+            const preview = item.lastMessage
+              ? item.lastMessage.body || (item.lastMessage.image_url ? "📷 Foto" : "")
+              : "Stuur het eerste bericht!";
             const timestamp = formatConversationTimestamp(item.lastMessage?.created_at ?? item.created_at);
             const isMine = item.lastMessage?.sender_id === session?.user?.id;
             return (

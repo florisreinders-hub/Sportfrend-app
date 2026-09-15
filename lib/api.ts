@@ -125,25 +125,31 @@ export function calculateAge(birthdate: string | null | undefined): number | nul
 export type DiscoverProfile = Profile & { distance_km: number | null };
 
 /**
- * Discover feed: same sport as the current user (when set) and within their
- * search radius (when they have a location set), excluding the user and
- * anyone they've already swiped on. Both filters degrade gracefully - a
- * user who skipped location setup or hasn't picked a sport yet still sees
- * a feed, just without that particular narrowing.
+ * Discover feed: within the selected distance and matching the selected
+ * sport/level/age filters (see lib/FilterContext.tsx), excluding the user
+ * and anyone they've already swiped on.
  *
- * `filters` (set on the Filter screen, see lib/FilterContext.tsx) layer on
- * top of / override those profile-based defaults: an explicit sport/level
- * choice takes precedence over the profile's own sport, a narrowed distance
- * overrides the profile's search_radius_km, and an age ceiling below the
- * default (90) adds a birthdate range. Left-at-default filter values are
- * treated as "not set" so a user who never opens the Filter screen still
- * gets the same profile-based feed as before.
+ * p_sport and p_distance_km are sent exactly as the Filter screen
+ * currently shows them - `filters.sport === null` ("Alle sporten", the
+ * screen's permanent default label whether touched or not) means no sport
+ * filter, and `filters.distanceKm` is the literal km the slider displays.
+ * An earlier version of this function (and of discover_profiles() itself)
+ * silently substituted the caller's own profile.sport/search_radius_km
+ * whenever a filter was left at its default instead - which meant the
+ * screen could say "Alle sporten" / "150KM" while the query actually
+ * narrowed to the caller's own sport and a stale 25km default, hiding
+ * results (including freshly seeded test profiles) with no visible reason
+ * why. See 0016_discover_profiles_no_implicit_defaults.sql for the fix.
  *
- * All of this - including the sport/search-radius fallback to the caller's
- * own profile - runs inside the discover_profiles() Postgres function
- * (supabase/migrations/0014_discover_profiles_location_privacy.sql) rather
- * than here, because computing distance requires reading raw coordinates,
- * which this app no longer lets any client (including this one) read for
+ * Only maxAge keeps a "left at default = no filter" convention
+ * (filters.maxAge at its max, 90, already reads "18-90" on screen, i.e.
+ * genuinely no additional narrowing beyond the app's own 18+ minimum) -
+ * there's no separate profile-level default it could be confused with.
+ *
+ * The actual distance computation happens inside the discover_profiles()
+ * Postgres function (supabase/migrations/0014_discover_profiles_location_privacy.sql)
+ * rather than here, because it requires reading raw coordinates, which
+ * this app no longer lets any client (including this one) read for
  * someone else's profile at all - see PROFILE_COLUMNS's comment. The
  * function runs SECURITY DEFINER (so it can read the coordinates
  * internally) but only ever returns a computed distance_km, never the
@@ -162,11 +168,43 @@ export async function fetchDiscoverProfiles(
     p_sport: filters.sport,
     p_level: filters.level,
     p_max_age: filters.maxAge < DEFAULT_FILTERS.maxAge ? filters.maxAge : null,
-    p_distance_km: filters.distanceKm < DEFAULT_FILTERS.distanceKm ? filters.distanceKm : null,
+    p_distance_km: filters.distanceKm,
     p_limit: 20,
+    // "Slimme beschikbaarheids match" - Elite-only, ignored server-side for
+    // anyone else (0023_discover_profiles_availability_filter.sql), sent
+    // exactly as picked here same as every other filter in this function.
+    p_availability_days: filters.availabilityDays && filters.availabilityDays.length > 0 ? filters.availabilityDays : null,
   });
   if (error) throw error;
   return (data ?? []) as DiscoverProfile[];
+}
+
+export type DiscoverDailyStatus = {
+  plan: "basis" | "premium" | "elite";
+  dailyLimit: number | null;
+  usedToday: number | null;
+  remaining: number | null;
+};
+
+/**
+ * The caller's daily Ontdekken recommendation quota (Pricing screen:
+ * Basis 5/dag, Premium 15/dag, Elite onbeperkt - 0019_discover_daily_limit.sql).
+ * `dailyLimit`/`usedToday`/`remaining` are all null for Elite (unlimited).
+ * discover_profiles() enforces the actual limit server-side regardless of
+ * whether this is ever called - this exists purely so HomeScreen can show
+ * a clear "limit reached" message instead of a bare empty result, which
+ * looks identical to "no candidates match your filters" otherwise.
+ */
+export async function fetchDiscoverDailyStatus(): Promise<DiscoverDailyStatus> {
+  const { data, error } = await supabase.rpc("discover_daily_status");
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    plan: row?.plan ?? "basis",
+    dailyLimit: row?.daily_limit ?? null,
+    usedToday: row?.used_today ?? null,
+    remaining: row?.remaining ?? null,
+  };
 }
 
 export type SwipeResult = { matched: false } | { matched: true; matchId: string };
@@ -235,6 +273,7 @@ export type Message = {
   match_id: string;
   sender_id: string;
   body: string;
+  image_url: string | null;
   created_at: string;
   read_at: string | null;
 };
@@ -249,14 +288,237 @@ export async function fetchMessages(matchId: string): Promise<Message[]> {
   return data ?? [];
 }
 
-export async function sendMessage(matchId: string, senderId: string, body: string) {
+export type MessagesDailyStatus = {
+  plan: "basis" | "premium" | "elite";
+  dailyLimit: number | null;
+  usedToday: number | null;
+  remaining: number | null;
+};
+
+/**
+ * The caller's daily message-sending quota (Pricing screen: Basis
+ * "3 Berichten per dag sturen", Premium/Elite "Onbeperkt chatten" -
+ * 0020_messages_daily_limit.sql). `dailyLimit`/`usedToday`/`remaining` are
+ * all null for Premium/Elite (unlimited). The "Match participants can send
+ * messages" RLS policy enforces the actual limit server-side regardless of
+ * whether this is ever called - this exists purely so ChatDetailScreen can
+ * show a clear "limit reached" message instead of a bare RLS-violation
+ * error, which looks identical to "you got blocked" otherwise.
+ */
+export async function fetchMessagesDailyStatus(): Promise<MessagesDailyStatus> {
+  const { data, error } = await supabase.rpc("messages_daily_status");
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    plan: row?.plan ?? "basis",
+    dailyLimit: row?.daily_limit ?? null,
+    usedToday: row?.used_today ?? null,
+    remaining: row?.remaining ?? null,
+  };
+}
+
+export async function sendMessage(matchId: string, senderId: string, body: string, imageUrl?: string | null) {
+  // `image_url` is only ever included in the insert payload when an image
+  // is actually being sent - never as an explicit `null`. PostgREST
+  // validates every column named in the request body against its cached
+  // schema, so if a project's live database hasn't had
+  // 0018_chat_images.sql applied yet (this app has no way to run
+  // migrations against Supabase itself - every migration in this repo
+  // has always required running it manually via `supabase db push` or the
+  // SQL editor), sending that column unconditionally broke plain-text
+  // sending too, not just image sending - see the "Could not find the
+  // 'image_url' column" bug this fixed. Omitting the key entirely when
+  // there's no image keeps ordinary text messages working regardless of
+  // whether that migration has been applied; only an actual image send
+  // still requires it.
+  const row: { match_id: string; sender_id: string; body: string; image_url?: string } = {
+    match_id: matchId,
+    sender_id: senderId,
+    body,
+  };
+  if (imageUrl) {
+    row.image_url = imageUrl;
+  }
+
+  const { data, error } = await supabase.from("messages").insert(row).select("*").single();
+  if (error) throw error;
+  return data as Message;
+}
+
+/**
+ * Uploads a picked image to the "chat-images" bucket under
+ * "<matchId>/<senderId>-<timestamp>.<ext>" (0018_chat_images.sql - the
+ * match_id-keyed path is what the storage RLS policies check to allow
+ * both participants, not just the sender, to read/manage it) and returns
+ * its public URL. Caller is responsible for then passing that URL into
+ * sendMessage.
+ */
+export async function uploadChatImage(matchId: string, senderId: string, localUri: string): Promise<string> {
+  const response = await fetch(localUri);
+  const arrayBuffer = await response.arrayBuffer();
+  const extMatch = localUri.match(/\.(\w+)$/);
+  const ext = (extMatch?.[1] ?? "jpg").toLowerCase();
+  const contentType = ext === "png" ? "image/png" : "image/jpeg";
+  const path = `${matchId}/${senderId}-${Date.now()}.${ext}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("chat-images")
+    .upload(path, arrayBuffer, { contentType, upsert: true });
+  if (uploadError) throw uploadError;
+
+  const { data } = supabase.storage.from("chat-images").getPublicUrl(path);
+  return data.publicUrl;
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// "Trainings & Buddy Planner" (Elite-only) - a training proposal shows up
+// as a special card inline in the chat, not as a plain message row (see
+// ChatDetailScreen.tsx merging messages + trainings into one sorted list).
+// Server-side enforcement (only an active Elite account may INSERT a row
+// here) lives in the "Elite match participants can propose trainings" RLS
+// policy - see supabase/migrations/0024_trainings_planner.sql. This client
+// code never checks the plan itself before calling createTraining(); it's
+// only used to decide whether to show the "Plan een training" button
+// enabled or locked in the first place.
+// ───────────────────────────────────────────────────────────────────────
+
+export type Training = {
+  id: string;
+  match_id: string;
+  created_by: string;
+  date: string; // "YYYY-MM-DD"
+  time: string; // "HH:MM:SS" as returned by PostgREST for a `time` column
+  sport: string | null;
+  location: string | null;
+  note: string | null;
+  status: "pending" | "accepted" | "declined";
+  created_at: string;
+};
+
+export type TrainingProposalFields = {
+  date: string; // "YYYY-MM-DD"
+  time: string; // "HH:MM"
+  sport: string | null;
+  location: string | null;
+  note: string | null;
+};
+
+export async function fetchTrainings(matchId: string): Promise<Training[]> {
   const { data, error } = await supabase
-    .from("messages")
-    .insert({ match_id: matchId, sender_id: senderId, body })
+    .from("trainings")
+    .select("*")
+    .eq("match_id", matchId)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function createTraining(
+  matchId: string,
+  createdBy: string,
+  fields: TrainingProposalFields
+): Promise<Training> {
+  const { data, error } = await supabase
+    .from("trainings")
+    .insert({
+      match_id: matchId,
+      created_by: createdBy,
+      date: fields.date,
+      time: fields.time,
+      sport: fields.sport,
+      location: fields.location,
+      note: fields.note,
+    })
     .select("*")
     .single();
   if (error) throw error;
-  return data as Message;
+  return data as Training;
+}
+
+/**
+ * "Voorstel wijzigen": the recipient edits the proposed date/time/etc and
+ * resubmits on the *same* row (no new card, no history of superseded
+ * proposals) - `created_by` flips to whoever just submitted the change, so
+ * the other participant becomes the one who sees "Accepteren"/"Voorstel
+ * wijzigen" next, and `status` resets to 'pending' since an edited
+ * proposal needs a fresh response.
+ */
+export async function updateTrainingProposal(
+  trainingId: string,
+  updatedBy: string,
+  fields: TrainingProposalFields
+): Promise<Training> {
+  const { data, error } = await supabase
+    .from("trainings")
+    .update({
+      created_by: updatedBy,
+      date: fields.date,
+      time: fields.time,
+      sport: fields.sport,
+      location: fields.location,
+      note: fields.note,
+      status: "pending",
+    })
+    .eq("id", trainingId)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data as Training;
+}
+
+export async function respondToTraining(trainingId: string, status: "accepted" | "declined"): Promise<Training> {
+  const { data, error } = await supabase.from("trainings").update({ status }).eq("id", trainingId).select("*").single();
+  if (error) throw error;
+  return data as Training;
+}
+
+/**
+ * Both participants' current `sport` - used purely to prefill the "Plan
+ * een training" form (requirement: "sport voorgevuld met de gedeelde
+ * sport van de match"). When both happen to have the same sport set,
+ * that's the obvious prefill; otherwise falls back to the caller's own
+ * sport, then the other participant's, then null (the picker is always
+ * editable regardless).
+ */
+export async function fetchSharedSport(myId: string, otherId: string): Promise<string | null> {
+  const { data, error } = await supabase.from("profiles").select("id, sport").in("id", [myId, otherId]);
+  if (error) throw error;
+  const mine = data?.find((p) => p.id === myId)?.sport ?? null;
+  const theirs = data?.find((p) => p.id === otherId)?.sport ?? null;
+  if (mine && mine === theirs) return mine;
+  return mine ?? theirs ?? null;
+}
+
+export type TrainingWithMatch = Training & {
+  match: {
+    id: string;
+    user_a_id: string;
+    user_b_id: string;
+    user_a: Profile | null;
+    user_b: Profile | null;
+  };
+};
+
+/**
+ * "Mijn trainingen" (Instellingen): every training this account has
+ * accepted, across all matches - not plan-gated itself (a Basis/Premium
+ * account can be the recipient of a training an Elite match proposed, and
+ * should still be able to see it here). RLS's "Match participants can
+ * read trainings" policy already restricts this to rows the caller is a
+ * participant of, so no extra user-id filter is needed client-side - same
+ * trust pattern as fetchMessages().
+ */
+export async function fetchMyAcceptedTrainings(): Promise<TrainingWithMatch[]> {
+  const { data, error } = await supabase
+    .from("trainings")
+    .select(
+      `*, match:matches(id, user_a_id, user_b_id, user_a:profiles!matches_user_a_id_fkey(${PROFILE_COLUMNS}), user_b:profiles!matches_user_b_id_fkey(${PROFILE_COLUMNS}))`
+    )
+    .eq("status", "accepted")
+    .order("date", { ascending: true })
+    .order("time", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as unknown as TrainingWithMatch[];
 }
 
 export type Conversation = {
@@ -337,6 +599,39 @@ export async function fetchPosts() {
   const { data, error } = await supabase
     .from("posts")
     .select(`*, author:profiles!posts_author_id_fkey(${PROFILE_COLUMNS}), post_likes(user_id)`)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
+/**
+ * Posts for the Connecties tab: only the caller's own posts plus posts by
+ * an author they have an existing match with - never "everyone", unlike
+ * fetchPosts() (used by the public Berichten feed). `connections` is
+ * whatever fetchConnections(userId) already returned - the Connecties tab
+ * always fetches that first anyway, so this reuses it instead of a second
+ * round trip to resolve matched author ids.
+ *
+ * This mirrors the "Posts are readable by their author or a match" RLS
+ * policy (0017_posts_match_only.sql) exactly - that policy is the actual
+ * enforcement boundary (a hand-crafted API call bypassing this function
+ * entirely still can't read a stranger's post), this client-side filter
+ * just keeps the query's intent explicit rather than relying solely on
+ * rows silently disappearing.
+ */
+export async function fetchConnectionPosts(
+  userId: string,
+  connections: Awaited<ReturnType<typeof fetchConnections>>
+) {
+  const matchedAuthorIds = connections
+    .map((c: any) => (c.user_a_id === userId ? c.user_b?.id : c.user_a?.id))
+    .filter((id: string | undefined): id is string => Boolean(id));
+  const authorIds = [userId, ...matchedAuthorIds];
+
+  const { data, error } = await supabase
+    .from("posts")
+    .select(`*, author:profiles!posts_author_id_fkey(${PROFILE_COLUMNS}), post_likes(user_id)`)
+    .in("author_id", authorIds)
     .order("created_at", { ascending: false });
   if (error) throw error;
   return data ?? [];

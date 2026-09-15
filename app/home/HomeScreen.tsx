@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, FlatList, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 import { RootStackParamList } from "@/navigation/types";
@@ -15,12 +16,14 @@ import { useAuth } from "@/lib/AuthContext";
 import { useDiscoverFilters } from "@/lib/FilterContext";
 import {
   deletePost,
+  fetchConnectionPosts,
   fetchConnections,
+  fetchDiscoverDailyStatus,
   fetchDiscoverProfiles,
-  fetchPosts,
   getDataErrorMessage,
   recordSwipe,
   toggleLike,
+  DiscoverDailyStatus,
   Profile,
 } from "@/lib/api";
 import { avatarPlaceholder } from "@/constants/placeholders";
@@ -36,14 +39,35 @@ export default function HomeScreen({ navigation, route }: Props) {
   const [posts, setPosts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dailyStatus, setDailyStatus] = useState<DiscoverDailyStatus | null>(null);
 
+  // The daily quota is actually spent inside discover_profiles() at fetch
+  // time, not when a card is swiped (see 0019_discover_daily_limit.sql) -
+  // so this status, fetched once alongside the candidates themselves,
+  // already reflects "0 remaining" as soon as the day's full allotment has
+  // been served, even before the user has swiped through the local stack.
+  // No need to re-fetch it per swipe.
   const loadDiscover = useCallback(async () => {
     if (!session?.user) return;
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchDiscoverProfiles(session.user.id, filters);
+      const [data, status] = await Promise.all([
+        fetchDiscoverProfiles(session.user.id, filters),
+        fetchDiscoverDailyStatus().catch((e) => {
+          // Swallowed on purpose (the candidate list above is the critical
+          // path, not this) - but logged, not silent, because a failure
+          // here is exactly what makes "limit reached" indistinguishable
+          // from "genuinely no candidates" below: it's the most likely
+          // symptom of discover_daily_status()/0019_discover_daily_limit.sql
+          // not actually being applied to this Supabase project yet (every
+          // migration in this repo has to be run manually - see README.md).
+          console.warn("[HomeScreen] Kon dagelijkse Ontdekken-limiet niet ophalen:", e);
+          return null;
+        }),
+      ]);
       setProfiles(data);
+      setDailyStatus(status);
     } catch (e) {
       setError(getDataErrorMessage(e));
     } finally {
@@ -51,23 +75,60 @@ export default function HomeScreen({ navigation, route }: Props) {
     }
   }, [session?.user, filters]);
 
-  const loadPosts = useCallback(async () => {
-    setPosts(await fetchPosts());
-  }, []);
+  // Posts here are deliberately restricted to the caller's own + matched
+  // authors' (fetchConnectionPosts, lib/api.ts) - the Connecties tab must
+  // never show everyone's posts, unlike the public Berichten feed
+  // (PostsFeedScreen, fetchPosts()). Needs `connections` to already be
+  // loaded (it derives matched author ids from it), so this always runs
+  // right after fetchConnections resolves rather than in parallel with it.
+  const loadConnectionPosts = useCallback(
+    async (connectionsData: Awaited<ReturnType<typeof fetchConnections>>) => {
+      if (!session?.user) return;
+      setPosts(await fetchConnectionPosts(session.user.id, connectionsData));
+    },
+    [session?.user]
+  );
 
+  // The posts/post_likes RLS policies (0022_posts_premium_only.sql) already
+  // return zero rows for a Basis account regardless of what this fetches -
+  // that's the real, unbypassable boundary. `dailyStatus.plan` here is only
+  // used to decide whether to even bother calling loadConnectionPosts (a
+  // Basis account would just get an empty result back) and, more
+  // importantly, to show the upgrade prompt below instead of a confusingly
+  // empty "Nog geen berichten" feed. Reuses the same fetchDiscoverDailyStatus()
+  // RPC/state as the Ontdekken tab (it already returns `plan`, no reason
+  // for a second near-identical RPC) - shared across both tabs since it's
+  // the same account's plan either way.
   const loadConnectiesTab = useCallback(async () => {
     if (!session?.user) return;
     setLoading(true);
     setError(null);
     try {
-      const [connectionsData] = await Promise.all([fetchConnections(session.user.id), loadPosts()]);
+      const [connectionsData, status] = await Promise.all([
+        fetchConnections(session.user.id),
+        fetchDiscoverDailyStatus().catch((e) => {
+          console.warn("[HomeScreen] Kon abonnement niet ophalen (prikbord-toegang):", e);
+          return null;
+        }),
+      ]);
       setConnections(connectionsData);
+      setDailyStatus(status);
+      // Fail open when the status fetch itself failed (status === null):
+      // still try to load posts, matching how Filter/Ontdekken/chat already
+      // treat an unknown plan - the RLS policies above enforce the real
+      // limit regardless, this is purely which UI to show.
+      const hasAccess = status ? status.plan === "premium" || status.plan === "elite" : true;
+      if (hasAccess) {
+        await loadConnectionPosts(connectionsData);
+      } else {
+        setPosts([]);
+      }
     } catch (e) {
       setError(getDataErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  }, [session?.user, loadPosts]);
+  }, [session?.user, loadConnectionPosts]);
 
   useFocusEffect(
     useCallback(() => {
@@ -80,7 +141,7 @@ export default function HomeScreen({ navigation, route }: Props) {
     if (!session?.user) return;
     const liked = post.post_likes?.some((l: any) => l.user_id === session.user.id);
     await toggleLike(post.id, session.user.id, liked);
-    loadPosts();
+    await loadConnectionPosts(connections);
   };
 
   const onDeletePost = async (post: any) => {
@@ -110,6 +171,17 @@ export default function HomeScreen({ navigation, route }: Props) {
     }
   };
 
+  // dailyLimit is null for Elite (unlimited) - only Basis/Premium can ever
+  // actually hit this.
+  const dailyLimitReached =
+    dailyStatus != null && dailyStatus.dailyLimit != null && (dailyStatus.remaining ?? 0) <= 0;
+  const upgradeTarget = dailyStatus?.plan === "premium" ? "Elite" : "Premium";
+  // Fail open (assume access) while the plan is still unknown - same
+  // reasoning as dailyLimitReached above and the other plan checks in this
+  // app: the RLS policies on posts/post_likes are the real boundary, this
+  // only controls which UI renders.
+  const hasPostsAccess = dailyStatus ? dailyStatus.plan === "premium" || dailyStatus.plan === "elite" : true;
+
   return (
     <ScreenContainer withBottomPadding={false}>
       <TopBar />
@@ -135,6 +207,19 @@ export default function HomeScreen({ navigation, route }: Props) {
               <Text style={styles.empty}>{error}</Text>
               <Button label="Opnieuw proberen" variant="outline" onPress={loadDiscover} style={styles.retryButton} />
             </View>
+          ) : profiles.length === 0 && dailyLimitReached ? (
+            <View style={styles.errorState}>
+              <Text style={styles.empty}>
+                Je hebt je dagelijkse limiet van {dailyStatus!.dailyLimit} aanbevelingen bereikt. Upgrade naar{" "}
+                {upgradeTarget} voor {upgradeTarget === "Premium" ? "meer" : "onbeperkte"} aanbevelingen.
+              </Text>
+              <Button
+                label={`Bekijk ${upgradeTarget}`}
+                variant="primary"
+                onPress={() => navigation.navigate("Pricing")}
+                style={styles.retryButton}
+              />
+            </View>
           ) : profiles.length === 0 ? (
             <Text style={styles.empty}>Geen sporters gevonden. Pas je filters aan of kom later terug.</Text>
           ) : (
@@ -144,12 +229,18 @@ export default function HomeScreen({ navigation, route }: Props) {
                   .slice(0, 3)
                   .reverse()
                   .map((profile, index, arr) => (
+                    // isTop is true for the *last* item of this reversed,
+                    // sliced-to-3 copy - which is profiles[0] of the real
+                    // array (the nearest/first candidate), not
+                    // profiles[profiles.length - 1]. It's the card
+                    // rendered last (so painted on top) and the only one
+                    // with an active drag gesture (SwipeCard's own
+                    // isTop-gated PanResponder).
                     <SwipeCard
                       key={profile.id}
                       profile={profile}
                       isTop={index === arr.length - 1}
                       onSwiped={(direction) => handleSwipe(profile, direction)}
-                      onPress={() => navigation.navigate("SporterProfile", { sporterId: profile.id })}
                     />
                   ))}
               </View>
@@ -158,13 +249,13 @@ export default function HomeScreen({ navigation, route }: Props) {
                   label="Skip"
                   variant="danger"
                   style={styles.actionButton}
-                  onPress={() => handleSwipe(profiles[profiles.length - 1], "skip")}
+                  onPress={() => handleSwipe(profiles[0], "skip")}
                 />
                 <Button
                   label="Connect"
                   variant="primary"
                   style={styles.actionButton}
-                  onPress={() => handleSwipe(profiles[profiles.length - 1], "like")}
+                  onPress={() => handleSwipe(profiles[0], "like")}
                 />
               </View>
             </>
@@ -177,7 +268,7 @@ export default function HomeScreen({ navigation, route }: Props) {
           keyExtractor={(item) => item.id}
           ListHeaderComponent={
             <>
-              <PostComposer style={styles.composer} />
+              {hasPostsAccess ? <PostComposer style={styles.composer} /> : null}
               {connections.length > 0 ? (
                 <View style={styles.connectionsSection}>
                   <Text style={styles.sectionTitle}>CONNECTIES</Text>
@@ -196,10 +287,22 @@ export default function HomeScreen({ navigation, route }: Props) {
                           })
                         }
                       >
-                        <Image
-                          source={{ uri: other?.photo_url ?? avatarPlaceholder(other?.id ?? item.id) }}
-                          style={styles.avatar}
-                        />
+                        {/* Its own nested Pressable (RN resolves this before the
+                            row's own onPress) - viewing a connection's full
+                            profile is only reachable from here, after an
+                            actual match, never from Ontdekken. Falls back to
+                            just opening the chat (the row's own onPress) when
+                            other's real id isn't available. */}
+                        {other?.id ? (
+                          <Pressable onPress={() => navigation.navigate("SporterProfile", { sporterId: other.id })}>
+                            <Image source={{ uri: other?.photo_url ?? avatarPlaceholder(other.id) }} style={styles.avatar} />
+                          </Pressable>
+                        ) : (
+                          <Image
+                            source={{ uri: other?.photo_url ?? avatarPlaceholder(item.id) }}
+                            style={styles.avatar}
+                          />
+                        )}
                         <View>
                           <Text style={styles.connectionName}>{other?.full_name ?? "Sportmaatje"}</Text>
                           <Text style={styles.connectionMeta}>{other?.sport ?? "Sport onbekend"}</Text>
@@ -209,7 +312,23 @@ export default function HomeScreen({ navigation, route }: Props) {
                   })}
                 </View>
               ) : null}
-              <Text style={styles.sectionTitle}>BERICHTEN</Text>
+              {hasPostsAccess ? (
+                <Text style={styles.sectionTitle}>BERICHTEN</Text>
+              ) : (
+                <View style={styles.postsLockedCard}>
+                  <Ionicons name="lock-closed" size={20} color={colors.textSecondary} />
+                  <Text style={styles.postsLockedTitle}>Prikbord is een Premium-functie</Text>
+                  <Text style={styles.postsLockedText}>
+                    Upgrade naar Premium om berichten te plaatsen en te bekijken van je connecties.
+                  </Text>
+                  <Button
+                    label="Bekijk Premium"
+                    variant="primary"
+                    onPress={() => navigation.navigate("Pricing")}
+                    style={styles.postsLockedButton}
+                  />
+                </View>
+              )}
             </>
           }
           ListEmptyComponent={
@@ -217,9 +336,9 @@ export default function HomeScreen({ navigation, route }: Props) {
               <ActivityIndicator color={colors.primary} size="large" />
             ) : error ? (
               <Text style={styles.empty}>{error}</Text>
-            ) : (
+            ) : hasPostsAccess ? (
               <Text style={styles.empty}>Nog geen berichten. Plaats de eerste!</Text>
-            )
+            ) : null
           }
           renderItem={({ item }) => (
             <PostCard post={item} currentUserId={session?.user?.id} onToggleLike={onLikePost} onDelete={onDeletePost} />
@@ -351,5 +470,29 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     fontSize: fontSizes.sm,
     color: colors.textSecondary,
+  },
+  postsLockedCard: {
+    alignItems: "center",
+    gap: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    padding: spacing.lg,
+  },
+  postsLockedTitle: {
+    fontFamily: fonts.display,
+    fontSize: fontSizes.md,
+    color: colors.black,
+    textAlign: "center",
+  },
+  postsLockedText: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.textSecondary,
+    textAlign: "center",
+  },
+  postsLockedButton: {
+    marginTop: spacing.xs,
+    minWidth: 160,
   },
 });

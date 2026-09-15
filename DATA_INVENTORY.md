@@ -57,6 +57,14 @@ RLS + kolomrechten: elke rij is leesbaar door alle ingelogde gebruikers **behalv
 
 Nooit rechtstreeks leesbaar voor de andere partij (behalve een gerichte 'like', nodig om een match te kunnen detecteren) - een 'skip' is alleen zichtbaar voor wie hem gaf.
 
+### `discover_daily_views`
+
+| Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
+|---|---|---|---|
+| `user_id`, `profile_id`, `view_date` | Ja (welke profielen op welke dag aan wie zijn getoond in Ontdekken) | Beperkt | Tot accountverwijdering - geen eigen verwijderfunctie, en groeit dagelijks (één rij per getoond profiel per dag) sinds migratie `0019_discover_daily_limit.sql` |
+
+Houdt bij hoeveel/welke profielen een gebruiker vandaag al te zien heeft gekregen in Ontdekken, om de dagelijkse aanbevelingslimiet per abonnement (zie §"subscriptions" hieronder) server-side af te dwingen. Alleen leesbaar door de eigenaar zelf (RLS); er is helemaal geen insert/update/delete-policy voor de `authenticated`-rol - elke schrijfactie loopt uitsluitend via de `SECURITY DEFINER`-functie `discover_profiles()`, zodat een gebruiker zijn eigen "al gezien"-historie niet kan resetten of vervalsen om de limiet te omzeilen.
+
 ### `matches`
 
 | Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
@@ -69,16 +77,32 @@ Nooit rechtstreeks leesbaar voor de andere partij (behalve een gerichte 'like', 
 |---|---|---|---|
 | `sender_id` | Ja | - | Tot verwijdering van het bijbehorende match of accountverwijdering |
 | `body` | Ja, **kan alle inhoud bevatten die gebruikers uitwisselen** | Potentieel hoog (afhankelijk van inhoud) | idem - geen aparte verwijderfunctie per bericht |
+| `image_url` | Ja, indien gezet - link naar een door de gebruiker verstuurde foto (sinds migratie `0018_chat_images.sql`), opgeslagen in de publieke Storage-bucket `chat-images` onder `<match_id>/<sender_id>-<timestamp>.<ext>` | Potentieel hoog (afhankelijk van de foto-inhoud) | Bij accountverwijdering wordt het bestand in Storage nu ook expliciet verwijderd (net als profielfoto's, zie `delete-account`); bij het losstaand verwijderen van alléén het match ("Vriend verwijderen") blijft het bestand in Storage wel achter, ook al verdwijnt de berichtrij zelf |
 | `created_at`, `read_at` | Metadata | - | idem |
 
 Berichttekst (eerste 120 tekens) verlaat de eigen infrastructuur richting Expo's push-API bij het versturen van een pushmelding - zie §4.
+
+Sinds migratie `0020_messages_daily_limit.sql` telt `created_at` ook mee voor de dagelijkse berichtenlimiet per abonnement (Basis 3/dag, Premium/Elite onbeperkt, zie §"subscriptions"): de "Match participants can send messages"-RLS-policy telt hoeveel rijen deze afzender vandaag al heeft, en weigert een nieuw bericht zodra dat aantal het planlimiet bereikt.
+
+### `trainings`
+
+Sinds migratie `0024_trainings_planner.sql` ("Trainings & Buddy Planner", zie README.md).
+
+| Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
+|---|---|---|---|
+| `match_id`, `created_by` | Ja (wie stelt een training voor aan wie) | Matig | Tot verwijdering van het bijbehorende match (`on delete cascade`) of accountverwijdering |
+| `date`, `time`, `sport`, `location`, `note` | Ja, indien gezet - wanneer/waar/met wie iemand traint, plus een vrij invulveld (`note`) | Potentieel (`location`/`note` kunnen adres- of andere herleidbare informatie bevatten) | idem |
+| `status`, `created_at` | Metadata | - | idem |
+| `reminder_sent_at` | Nee (alleen "is de 2-uur-van-tevoren-pushmelding al verstuurd", geen inhoud) | - | idem |
+
+Alleen een actief Elite-abonnement (`has_elite_access()`, zie §"subscriptions") mag een rij *aanmaken* (RLS INSERT-policy) - reageren (accepteren/afwijzen/"voorstel wijzigen") mag elke deelnemer van het match, ongeacht diens eigen plan. `claim_training_reminders()` (alleen aanroepbaar door `service_role`, nooit door een ingelogde gebruiker) stuurt via dezelfde Expo Push API als berichten/matches (§4) een herinnering circa 2 uur voor een geaccepteerde training.
 
 ### `posts` / `post_likes`
 
 | Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
 |---|---|---|---|
-| `author_id`, `body`, `image_url`, `sport`, `event_date` | Ja (openbare community-post) | - (bewust publiek zichtbaar voor alle ingelogde gebruikers) | Tot de auteur het bericht zelf verwijdert (sinds commit `1702eaa`) of accountverwijdering |
-| `post_likes.user_id` | Ja (wie heeft wat geliked, publiek zichtbaar) | - | Tot unliken of accountverwijdering |
+| `author_id`, `body`, `image_url`, `sport`, `event_date` | Ja (community-post) | - (zichtbaar voor de auteur zelf en gebruikers waarmee de auteur een bestaande match heeft, en sinds migratie `0022_posts_premium_only.sql` bovendien alleen voor een viewer met een actief Premium/Elite-abonnement - een Basis-account ziet helemaal geen posts, ook niet zijn eigen oudere; daarvoor publiek zichtbaar voor alle ingelogde gebruikers) | Tot de auteur het bericht zelf verwijdert (sinds commit `1702eaa`) of accountverwijdering |
+| `post_likes.user_id` | Ja (wie heeft wat geliked) | - (sinds `0022_posts_premium_only.sql` ook alleen zichtbaar voor Premium/Elite; daarvoor publiek zichtbaar voor alle ingelogde gebruikers) | Tot unliken of accountverwijdering |
 
 ### `reports`
 
@@ -102,6 +126,8 @@ Alleen de melder zelf kan zijn eigen rapportages lezen; er is geen moderator-rol
 |---|---|---|---|
 | `user_id`, `plan`, `status`, `price_cents`, `current_period_end` | Ja (financiële/abonnementsgegevens) | Ja (financieel) | Tot accountverwijdering - geen betalingsgegevens (kaartnummers e.d.) worden hier of elders in de eigen database opgeslagen |
 
+Sinds migratie `0019_discover_daily_limit.sql` is `plan` niet langer alleen informatief: `discover_profiles()` leest deze kolom (alleen een rij met `status = 'active'` telt mee, dus een gekozen-maar-niet-"betaald" `pending`-plan telt als Basis) om de dagelijkse Ontdekken-aanbevelingslimiet te bepalen (Basis 5/dag, Premium 15/dag, Elite onbeperkt). Sinds migratie `0020_messages_daily_limit.sql` geldt hetzelfde voor de dagelijkse berichtenlimiet (Basis 3/dag, Premium/Elite onbeperkt), afgedwongen op de INSERT-policy van `messages`. Sinds migratie `0021_discover_profiles_plan_filters.sql` bepaalt `plan` ook welke Ontdekken-filters bruikbaar zijn (Basis: alleen Sport + Afstand, tot 50km; Premium/Elite: ook Leeftijd en Niveau, Afstand tot 150km) - eveneens afgedwongen binnen `discover_profiles()` zelf. Sinds migratie `0022_posts_premium_only.sql` bepaalt `plan` ook of het "prikbord" (`posts`/`post_likes`) toegankelijk is: alleen een actief Premium- of Elite-abonnement mag posts lezen, plaatsen of liken - een Basis-account ziet niets van deze tabellen, afgedwongen via `has_posts_access()` in de RLS-policies zelf. Sinds migratie `0023_discover_profiles_availability_filter.sql` bepaalt `plan` ook of de "Slimme beschikbaarheids match"-filter (overlap met `profiles.availability_days`) in `discover_profiles()` wordt toegepast: uitsluitend voor een actief Elite-abonnement - voor Basis én Premium wordt de meegestuurde `p_availability_days`-waarde genegeerd. Sinds migratie `0024_trainings_planner.sql` bepaalt `plan` ook of een rij in `trainings` mag worden *aangemaakt* (`has_elite_access()`, uitsluitend een actief Elite-abonnement) - reageren op een al bestaande training is niet aan `plan` gebonden.
+
 ### `support_requests`
 
 | Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
@@ -110,13 +136,14 @@ Alleen de melder zelf kan zijn eigen rapportages lezen; er is geen moderator-rol
 
 ---
 
-## 3. Supabase Storage (`profile-photos`-bucket)
+## 3. Supabase Storage (`profile-photos`- en `chat-images`-buckets)
 
 | Gegeven | Gevoelig | Bewaartermijn |
 |---|---|---|
 | Profielfoto's, pad `{user_id}/{timestamp}.{ext}` | Ja (beeldmateriaal van de gebruiker) | **Elke upload krijgt een nieuw bestand; de vorige foto wordt niet automatisch verwijderd** - oude foto's blijven dus staan totdat het hele account verwijderd wordt (`delete-account` ruimt dan de volledige map van die gebruiker op) |
+| Chatafbeeldingen (`chat-images`-bucket), pad `{match_id}/{sender_id}-{timestamp}.{ext}` (sinds `0018_chat_images.sql`) | Ja (beeldmateriaal dat de gebruiker in een chat verstuurt) | Blijft staan zolang het match bestaat; `delete-account` ruimt bij accountverwijdering alle door die gebruiker geüploade chatafbeeldingen op (in elk match waar diegene deel van was) - het losstaand verwijderen van één match ("Vriend verwijderen") ruimt de bijbehorende afbeeldingen echter niet op |
 
-De bucket is publiek leesbaar (`public: true`) - elke URL is opvraagbaar door iedereen die hem kent, ingelogd of niet, zolang het account niet verwijderd is.
+Beide buckets zijn publiek leesbaar (`public: true`) - elke URL is opvraagbaar door iedereen die hem kent, ingelogd of niet, zolang het bestand niet verwijderd is. Voor `chat-images` is het pad (met een niet te raden `match_id` en timestamp) de facto de enige bescherming tegen willekeurige toegang; wie mag *uploaden* of *verwijderen* wordt wél afgedwongen via RLS-policies op `storage.objects`, die controleren of de aanvrager daadwerkelijk deelnemer is van het match in het pad.
 
 ---
 
@@ -126,7 +153,7 @@ De bucket is publiek leesbaar (`public: true`) - elke URL is opvraagbaar door ie
 |---|---|---|---|
 | **Supabase** (database, auth, storage, edge functions, realtime) | Alle bovenstaande gegevens - dit ís de primaire opslag | Kernfunctionaliteit van de app | - |
 | **Resend** (`send-support-email`) | Naam, e-mailadres, gebruikers-ID, onderwerp en volledige tekst van een Klantenservice-bericht | E-mail naar `info.sportfrend@gmail.com` sturen bij een support-aanvraag | README.md §"Klantenservice-e-mail (Resend)" |
-| **Expo / EAS** (Push-API, `exp.host`) | Expo push-token, verzendernaam (`full_name`), **eerste 120 tekens van een berichttekst**, of "Je hebt een match met {naam}" | Pushmeldingen bij nieuwe berichten/matches | README.md §"Pushmeldingen (Expo Notifications)" |
+| **Expo / EAS** (Push-API, `exp.host`) | Expo push-token, verzendernaam (`full_name`), **eerste 120 tekens van een berichttekst**, "Je hebt een match met {naam}", of sport/locatie van een geaccepteerde training (herinnering 2 uur van tevoren) | Pushmeldingen bij nieuwe berichten/matches/trainingsherinneringen | README.md §"Pushmeldingen (Expo Notifications)", §"Trainings & Buddy Planner (Elite-only)" |
 | **Expo / EAS** (Update-hosting, `u.expo.dev`) | Geen gebruikersgegevens - alleen de gecompileerde JS-bundle (code, geen userdata) wordt gehost | OTA-updates van de preview build | - |
 | **RevenueCat** (nog niet live - sandbox-modus) | **Nog niet van toepassing.** Bij een echte integratie: de gebruikers-ID (als RevenueCat `app_user_id`), aankoopgeschiedenis en abonnementsstatus, gedeeld met Apple/Google's eigen betaalinfrastructuur via de store zelf | Toekomstige verwerking van echte betalingen voor Premium/Elite | README.md §"RevenueCat (Betalen-scherm)", `lib/purchases.ts` |
 | **Apple / Google** (locatietoestemming, pushregistratie, toekomstige in-app-aankopen) | Locatietoestemming en pushregistratie lopen via het besturingssysteem zelf; app-storegegevens zodra RevenueCat live gaat | Platform-services | - |
@@ -152,6 +179,6 @@ Er is **geen automatische verwijdering/expiratie** op enige tabel (geen TTL, gee
 |---|---|
 | Gebruiker verwijdert een match ("Vriend verwijderen") | Verwijdert alleen die `matches`-rij (en daarmee, via RLS, de zichtbaarheid van bijbehorende `messages` - de berichtrijen zelf blijven fysiek bestaan tenzij `on delete cascade` alsnog via een accountverwijdering wordt getriggerd) |
 | Gebruiker verwijdert een eigen post | Verwijdert die `posts`-rij en cascadeert naar `post_likes` op die post |
-| Gebruiker verwijdert zijn account (Instellingen → "Account verwijderen") | Verwijdert **alles**: `auth.users`-rij → cascadeert naar `profiles` → cascadeert naar `swipes`, `matches`, `messages`, `posts`, `post_likes`, `subscriptions`, `support_requests`, `reports`, `blocks`; plus alle bestanden in `profile-photos/{user_id}/` worden expliciet verwijderd door `delete-account` |
+| Gebruiker verwijdert zijn account (Instellingen → "Account verwijderen") | Verwijdert **alles**: `auth.users`-rij → cascadeert naar `profiles` → cascadeert naar `swipes`, `matches`, `messages`, `posts`, `post_likes`, `subscriptions`, `support_requests`, `reports`, `blocks`; plus alle bestanden in `profile-photos/{user_id}/` en alle eigen geüploade chatafbeeldingen in `chat-images/{match_id}/{user_id}-*` (voor elk match van deze gebruiker) worden expliciet verwijderd door `delete-account` |
 
 Gegevens waarvoor **geen** verwijderfunctie in de app bestaat, en die dus alleen via accountverwijdering (van zichzelf óf van de tegenpartij) verdwijnen: individuele berichten, swipes, rapportages, blokkades, support-aanvragen, abonnementsgeschiedenis.
