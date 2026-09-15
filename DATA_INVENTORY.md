@@ -114,6 +114,8 @@ Alleen een actief Elite-abonnement (`has_elite_access()`, zie §"subscriptions")
 
 Alleen de melder zelf kan zijn eigen rapportages lezen; er is geen moderator-rol/dashboard in de app zelf (moderatie gebeurt nu via directe databasetoegang met de service-role key).
 
+Sinds migratie `0026_reports_and_support_daily_limits.sql` mag een account maximaal 10 rapportages per dag aanmaken (`can_submit_report_today()`, afgedwongen op de INSERT-policy) - voorheen onbeperkt, een mogelijk intimidatiemiddel (iemand overspoelen met valse meldingen).
+
 ### `blocks`
 
 | Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
@@ -133,6 +135,8 @@ Sinds migratie `0019_discover_daily_limit.sql` is `plan` niet langer alleen info
 | Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
 |---|---|---|---|
 | `user_id`, `subject`, `message` | Ja, vrije tekst | Potentieel (afhankelijk van inhoud) | Tot accountverwijdering - geen eigen verwijderfunctie |
+
+Sinds migratie `0026_reports_and_support_daily_limits.sql` mag een account maximaal 5 klantenservice-aanvragen per dag aanmaken (`can_submit_support_request_today()`, afgedwongen op de INSERT-policy) - voorheen onbeperkt, en elke aanvraag triggert een echte e-mail via Resend (§4), dus onbeperkt misbruik kostte ook echt geld/quota.
 
 ---
 

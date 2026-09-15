@@ -468,6 +468,82 @@ voor beiden verborgen, en nieuwe berichten tussen hen worden geweigerd. Zie
 SQL - draai deze migratie op je bestaande database (0001_init.sql is ook
 bijgewerkt voor nieuwe installaties).
 
+## Dagelijkse limiet op rapportages en klantenservice-aanvragen
+
+Beide waren tot migratie `0026_reports_and_support_daily_limits.sql`
+onbeperkt: een account kon oneindig vaak dezelfde of andere gebruikers
+rapporteren (een mogelijk intimidatiemiddel - iemand overspoelen met
+valse meldingen), en oneindig vaak het Klantenservice-formulier
+versturen - wat bij elke keer een echte e-mail via Resend triggert
+(`send-support-email`), dus onbeperkt misbruik kost daar ook echt
+geld/quota, niet alleen ergernis.
+
+Zelfde patroon als `messages_plan_daily_limit()`/`can_send_message_today()`/
+`messages_daily_status()` (`0020_messages_daily_limit.sql`), met één
+verschil: deze twee limieten zijn **plat, niet per abonnement** - valse
+rapportages en support-spam zijn puur misbruikpreventie, geen
+betaald-plan-voordeel om aan Basis te onthouden, dus krijgt elk plan
+dezelfde limiet:
+
+- **Rapportages: max 10 per dag** (`reports_daily_limit()`,
+  `can_submit_report_today()`, gate op de "Users can create their own
+  reports"-INSERT-policy op `reports`).
+- **Klantenservice-aanvragen: max 5 per dag** (`support_requests_daily_limit()`,
+  `can_submit_support_request_today()`, gate op de "Users can insert
+  their own support requests"-INSERT-policy op `support_requests`).
+- `reports_daily_status()` / `support_requests_daily_status()` (RPC's,
+  `{ daily_limit, used_today, remaining }` - geen `plan`-kolom, want niet
+  per-abonnement) laten `ReportModal.tsx` en `SupportScreen.tsx` een
+  duidelijke "dagelijkse limiet bereikt"-melding tonen in plaats van het
+  formulier, zodra `remaining` op 0 staat - een kale RLS-weigering is
+  anders client-side niet te onderscheiden van elke andere "niet
+  toegestaan"-fout. Een mislukte statusaanroep blijft niet stil - zie de
+  `console.warn` in beide bestanden - en laat het formulier gewoon
+  bruikbaar (`reports`/`support_requests`'s RLS-policies handhaven de
+  echte grens sowieso, ongeacht of deze aanroep lukt).
+- `ReportModal.tsx` haalt de status opnieuw op telkens als het sheet
+  opent (niet bij mount - het component blijft mounted-maar-verborgen
+  tussen keren open), zodat een limiet die sinds de vorige keer is
+  bereikt meteen zichtbaar is. `SupportScreen.tsx` gebruikt een
+  `useFocusEffect`, zelfde reden als de andere Instellingen-schermen.
+
+Draai `0026_reports_and_support_daily_limits.sql` op je bestaande
+database - `0001_init.sql` is ook bijgewerkt voor nieuwe installaties.
+Controleer na het draaien met:
+
+```sql
+select
+  (select count(*) from pg_proc where proname = 'can_submit_report_today'
+     and pronamespace = 'public'::regnamespace) as has_report_check_fn,
+  (select count(*) from pg_proc where proname = 'reports_daily_status'
+     and pronamespace = 'public'::regnamespace) as has_report_status_fn,
+  (select count(*) from pg_proc where proname = 'can_submit_support_request_today'
+     and pronamespace = 'public'::regnamespace) as has_support_check_fn,
+  (select count(*) from pg_proc where proname = 'support_requests_daily_status'
+     and pronamespace = 'public'::regnamespace) as has_support_status_fn,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'reports'
+     and policyname = 'Users can create their own reports'
+     and with_check ilike '%can_submit_report_today%') as reports_insert_policy_gated,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'support_requests'
+     and policyname = 'Users can insert their own support requests'
+     and with_check ilike '%can_submit_support_request_today%') as support_insert_policy_gated,
+  public.reports_daily_limit() as reports_daily_limit,
+  public.support_requests_daily_limit() as support_requests_daily_limit;
+-- verwacht: 1, 1, 1, 1, 1, 1, 10, 5
+```
+
+De migratie zelf bevat ook een zelfcontrolerend `do $$ ... $$`-blok
+onderaan (zelfde aanpak als `0022`/`0023`/`0024`) dat bij het draaien
+zelf al een specifieke `EXCEPTION` opwerpt zodra iets hiervan niet klopt.
+
+**Getest**: lokaal (los Postgres-schema, geen netwerktoegang tot Supabase
+vanuit deze omgeving) - 10 rapportages op een dag lukken, de 11e wordt
+door RLS geweigerd; 5 klantenservice-aanvragen lukken, de 6e wordt
+geweigerd; een andere gebruiker heeft zijn eigen, onafhankelijke teller
+(niet beïnvloed door iemand anders' limiet); en de status-RPC's geven
+zonder inloggen een nette fout in plaats van resultaten van een ander
+account.
+
 ## RLS-beveiligingsaudit
 
 `supabase/migrations/0013_rls_security_audit_fixes.sql` fixt vijf gaten die

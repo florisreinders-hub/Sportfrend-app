@@ -1,10 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { Button } from "@/components/Button";
 import { Input } from "@/components/Input";
-import { createReport, getDataErrorMessage, REPORT_REASONS } from "@/lib/api";
+import { createReport, fetchReportsDailyStatus, getDataErrorMessage, ReportsDailyStatus, REPORT_REASONS } from "@/lib/api";
 
 type Props = {
   visible: boolean;
@@ -22,12 +22,30 @@ export function ReportModal({ visible, onClose, reporterId, reportedId, reported
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [dailyStatus, setDailyStatus] = useState<ReportsDailyStatus | null>(null);
+
+  // Fetched fresh every time the sheet opens (not on mount - this
+  // component stays mounted-but-hidden between opens) so a limit reached
+  // in an earlier session, or a report filed elsewhere in the app since
+  // this sheet last opened, is reflected immediately. A failed fetch is
+  // logged, not silently swallowed - same reasoning as every other daily-
+  // status fetch in this app (ChatDetailScreen's refreshPlan/
+  // refreshDailyStatus, FilterScreen's plan fetch): it fails open (the
+  // form stays usable) since public.reports' RLS policy is the actual
+  // enforcement regardless of whether this call ever succeeds.
+  useEffect(() => {
+    if (!visible) return;
+    fetchReportsDailyStatus()
+      .then(setDailyStatus)
+      .catch((e) => console.warn("[ReportModal] Kon dagelijkse rapportagelimiet-status niet ophalen:", e));
+  }, [visible]);
 
   const reset = () => {
     setReason(null);
     setDetails("");
     setError(null);
     setDone(false);
+    setDailyStatus(null);
   };
 
   const handleClose = () => {
@@ -43,11 +61,20 @@ export function ReportModal({ visible, onClose, reporterId, reportedId, reported
       await createReport(reporterId, reportedId, reason, details, matchId);
       setDone(true);
     } catch (e) {
+      // The daily limit is the one failure worth telling apart client-side
+      // - refresh the status first so a limit-triggered failure renders
+      // the dedicated banner below instead of (or alongside) a generic
+      // error, same pattern as ChatDetailScreen's onSend.
+      fetchReportsDailyStatus()
+        .then(setDailyStatus)
+        .catch((refreshError) => console.warn("[ReportModal] Kon dagelijkse rapportagelimiet-status niet ophalen:", refreshError));
       setError(getDataErrorMessage(e));
     } finally {
       setSubmitting(false);
     }
   };
+
+  const limitReached = dailyStatus != null && dailyStatus.remaining <= 0;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
@@ -64,6 +91,14 @@ export function ReportModal({ visible, onClose, reporterId, reportedId, reported
             <View style={styles.content}>
               <Text style={styles.doneText}>
                 Bedankt, je melding is verstuurd. Ons team bekijkt deze zo snel mogelijk.
+              </Text>
+              <Button label="Sluiten" onPress={handleClose} style={{ marginTop: spacing.md }} />
+            </View>
+          ) : limitReached ? (
+            <View style={styles.content}>
+              <Text style={styles.limitText}>
+                Je hebt vandaag het maximum van {dailyStatus!.dailyLimit} rapportages bereikt. Probeer het morgen
+                opnieuw.
               </Text>
               <Button label="Sluiten" onPress={handleClose} style={{ marginTop: spacing.md }} />
             </View>
@@ -184,6 +219,12 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     fontSize: fontSizes.md,
     color: colors.black,
+    textAlign: "center",
+  },
+  limitText: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.md,
+    color: colors.textSecondary,
     textAlign: "center",
   },
 });

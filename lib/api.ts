@@ -774,6 +774,34 @@ export async function updateProfileSettings(userId: string, fields: Partial<Prof
   if (error) throw error;
 }
 
+export type SupportRequestsDailyStatus = {
+  dailyLimit: number;
+  usedToday: number;
+  remaining: number;
+};
+
+/**
+ * The caller's daily Klantenservice-aanvraag quota (max 5/dag, flat for
+ * every plan - 0026_reports_and_support_daily_limits.sql). Every
+ * submission triggers a real outbound e-mail via Resend
+ * (notifySupportRequest() below), so this exists to guard that spend/quota,
+ * not to withhold a feature. The "Users can insert their own support
+ * requests" RLS policy enforces the actual limit server-side regardless of
+ * whether this is ever called - this exists purely so SupportScreen can
+ * show a clear "dagelijkse limiet bereikt" message instead of a bare
+ * RLS-violation error.
+ */
+export async function fetchSupportRequestsDailyStatus(): Promise<SupportRequestsDailyStatus> {
+  const { data, error } = await supabase.rpc("support_requests_daily_status");
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    dailyLimit: row?.daily_limit ?? 5,
+    usedToday: row?.used_today ?? 0,
+    remaining: row?.remaining ?? 0,
+  };
+}
+
 export async function createSupportRequest(userId: string, subject: string, message: string) {
   const { error } = await supabase.from("support_requests").insert({ user_id: userId, subject, message });
   if (error) throw error;
@@ -816,6 +844,32 @@ export const REPORT_REASONS: { key: string; label: string }[] = [
   { key: "spam", label: "Spam" },
   { key: "anders", label: "Anders" },
 ];
+
+export type ReportsDailyStatus = {
+  dailyLimit: number;
+  usedToday: number;
+  remaining: number;
+};
+
+/**
+ * The caller's daily rapportage-quota (max 10/dag, flat for every plan -
+ * 0026_reports_and_support_daily_limits.sql), pure abuse-prevention (a
+ * false-reports harassment vector) rather than a paid-tier perk. The
+ * "Users can create their own reports" RLS policy enforces the actual
+ * limit server-side regardless of whether this is ever called - this
+ * exists purely so ReportModal can show a clear "dagelijkse limiet
+ * bereikt" message instead of a bare RLS-violation error.
+ */
+export async function fetchReportsDailyStatus(): Promise<ReportsDailyStatus> {
+  const { data, error } = await supabase.rpc("reports_daily_status");
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    dailyLimit: row?.daily_limit ?? 10,
+    usedToday: row?.used_today ?? 0,
+    remaining: row?.remaining ?? 0,
+  };
+}
 
 /**
  * Saves a moderation report. `matchId` is only passed when reporting from a

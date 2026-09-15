@@ -629,10 +629,133 @@ create policy "Users can update their own subscription"
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
+-- Flat (not plan-dependent) daily caps on reports/support_requests - see
+-- 0026_reports_and_support_daily_limits.sql for the full writeup. Unlike
+-- messages_plan_daily_limit()/discover_plan_daily_limit(), these two are
+-- pure abuse-prevention (false reports, Resend e-mail spend), not a
+-- paid-tier perk, so every plan gets the same limit.
+create or replace function public.reports_daily_limit()
+returns int
+language sql
+immutable
+as $$
+  select 10;
+$$;
+
+create or replace function public.can_submit_report_today()
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_used_today int;
+begin
+  if v_uid is null then
+    return false;
+  end if;
+
+  select count(*) into v_used_today
+  from public.reports r
+  where r.reporter_id = v_uid and r.created_at::date = current_date;
+
+  return v_used_today < public.reports_daily_limit();
+end;
+$$;
+
+create or replace function public.reports_daily_status()
+returns table (daily_limit int, used_today int, remaining int)
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_daily_limit int := public.reports_daily_limit();
+  v_used_today int;
+begin
+  if v_uid is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select count(*) into v_used_today
+  from public.reports r
+  where r.reporter_id = v_uid and r.created_at::date = current_date;
+
+  return query select v_daily_limit, v_used_today, greatest(v_daily_limit - v_used_today, 0);
+end;
+$$;
+
+grant execute on function public.reports_daily_limit() to authenticated;
+grant execute on function public.can_submit_report_today() to authenticated;
+grant execute on function public.reports_daily_status() to authenticated;
+
+create or replace function public.support_requests_daily_limit()
+returns int
+language sql
+immutable
+as $$
+  select 5;
+$$;
+
+create or replace function public.can_submit_support_request_today()
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_used_today int;
+begin
+  if v_uid is null then
+    return false;
+  end if;
+
+  select count(*) into v_used_today
+  from public.support_requests sr
+  where sr.user_id = v_uid and sr.created_at::date = current_date;
+
+  return v_used_today < public.support_requests_daily_limit();
+end;
+$$;
+
+create or replace function public.support_requests_daily_status()
+returns table (daily_limit int, used_today int, remaining int)
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_daily_limit int := public.support_requests_daily_limit();
+  v_used_today int;
+begin
+  if v_uid is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select count(*) into v_used_today
+  from public.support_requests sr
+  where sr.user_id = v_uid and sr.created_at::date = current_date;
+
+  return query select v_daily_limit, v_used_today, greatest(v_daily_limit - v_used_today, 0);
+end;
+$$;
+
+grant execute on function public.support_requests_daily_limit() to authenticated;
+grant execute on function public.can_submit_support_request_today() to authenticated;
+grant execute on function public.support_requests_daily_status() to authenticated;
+
 create policy "Users can insert their own support requests"
   on public.support_requests for insert
   to authenticated
-  with check (auth.uid() = user_id);
+  with check (auth.uid() = user_id and public.can_submit_support_request_today());
 
 create policy "Users can view their own support requests"
   on public.support_requests for select
@@ -642,7 +765,7 @@ create policy "Users can view their own support requests"
 create policy "Users can create their own reports"
   on public.reports for insert
   to authenticated
-  with check (auth.uid() = reporter_id);
+  with check (auth.uid() = reporter_id and public.can_submit_report_today());
 
 create policy "Users can view their own reports"
   on public.reports for select
