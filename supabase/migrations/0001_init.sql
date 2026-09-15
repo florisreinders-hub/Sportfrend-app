@@ -1202,7 +1202,12 @@ as $$
   returning t.id, t.match_id, t.date, t.time, t.sport, t.location, m.user_a_id, m.user_b_id;
 $$;
 
-revoke execute on function public.claim_training_reminders(int) from public;
+-- Supabase's project-wide default privileges grant EXECUTE on every new
+-- public function directly to anon/authenticated/service_role (not via
+-- PUBLIC) - see 0024_trainings_planner.sql's comment on this exact
+-- revoke/grant block for the full writeup of why "from public" alone
+-- doesn't actually restrict this function to service_role.
+revoke execute on function public.claim_training_reminders(int) from public, anon, authenticated;
 grant execute on function public.claim_training_reminders(int) to service_role;
 
 alter publication supabase_realtime add table public.trainings;

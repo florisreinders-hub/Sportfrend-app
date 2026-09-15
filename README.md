@@ -716,12 +716,11 @@ installaties, hetzelfde blok in `0001_init.sql`) legt dit vast:
   geaccepteerde, nog niet herinnerde training die over 2 tot 2+5 minuten
   begint, en zet meteen `reminder_sent_at`, zodat twee overlappende
   cron-ticks nooit dezelfde training dubbel melden. Alleen `service_role`
-  mag deze aanroepen - Postgres geeft `EXECUTE` op een nieuwe functie
-  standaard aan `PUBLIC`, dus de migratie trekt dat expliciet weer in
-  (`revoke execute ... from public`) vóór de `grant ... to service_role`,
-  anders zou elke ingelogde gebruiker (weliswaar begrensd door de
-  UPDATE-RLS-policy tot zijn eigen trainings) deze functie rechtstreeks
-  kunnen aanroepen.
+  mag deze aanroepen - de migratie trekt `EXECUTE` daarom expliciet in
+  van `public`, `anon` én `authenticated` (`revoke execute ... from
+  public, anon, authenticated`) vóór de `grant ... to service_role` - zie
+  de eigenaardigheid hieronder over waarom "from public" alleen niet
+  genoeg bleek te zijn.
 - Datum/tijd worden ingevoerd als Europe/Amsterdam-kloktijd (de app doet
   nergens anders iets met tijdzones) - `claim_training_reminders()`
   interpreteert `(date + time)` expliciet als die tijdzone
@@ -734,6 +733,30 @@ in een `returns table(...)`-clausule van een functie geeft `time time`
 (in tegenstelling tot `date date`) een `syntax error at or near "time"` -
 dit is opgelost door de kolomnaam daar te quoten (`"time" time`), verder
 overal een gewone ongequote `time`-identifier.
+
+**Supabase-eigenaardigheid, pas ontdekt na een melding dat de zelfcontrole
+in 0024 faalde op een echte live database (lokaal testen miste dit -
+zie hieronder):** elk Supabase-project draait bij het aanmaken al eens
+(niet iets wat een migratie in deze repo zelf regelt):
+```sql
+alter default privileges in schema public
+  grant all on functions to postgres, anon, authenticated, service_role;
+```
+Elke nieuwe functie in `public` krijgt daardoor `EXECUTE`
+*rechtstreeks* toegekend aan `anon`/`authenticated`/`service_role` - niet
+via de `PUBLIC`-pseudorol. `revoke execute ... from public` (de eerste
+versie van deze migratie) trekt dus een recht in dat nooit de echte bron
+van `authenticated`'s toegang was, en doet in de praktijk niets:
+`authenticated` behoudt zijn eigen, rechtstreeks toegekende recht. De
+zelfcontrole ving dit exact op ("authenticated can still execute
+claim_training_reminders()"); de fix is expliciet ook intrekken van
+`anon` en `authenticated`, niet alleen van `public` (zie de huidige
+`revoke`-regel bij `claim_training_reminders()` hierboven). Mijn eigen
+lokale testopstelling (los Postgres-schema, geen live Supabase-project)
+repliceerde deze `alter default privileges`-instelling aanvankelijk niet
+voor functies (wel al voor tabellen, anders faalden de RLS-testscenario's),
+dus de lokale zelfcontrole gaf destijds ten onrechte groen licht -
+inmiddels wel toegevoegd aan de testopstelling en opnieuw geverifieerd.
 
 **Hergebruikt de pushmeldingen-infrastructuur** (requirement 5) in plaats
 van iets nieuws te bouwen: de Edge Function `send-training-reminder-push`
@@ -778,9 +801,11 @@ zichzelf laten verspringen) zonder zelf Elite te zijn; een buitenstaander
 kan niet updaten; `claim_training_reminders()` claimt exact de
 geaccepteerde, nog-niet-herinnerde training binnen het 2u-venster, negeert
 er buiten liggende/`pending`/al-herinnerde trainingen, claimt bij een
-tweede aanroep niets dubbel, en is voor het `authenticated`-account
+tweede aanroep niets dubbel, en is voor zowel `authenticated` als `anon`
 volledig ontoegankelijk (`permission denied`) - alleen `service_role` kan
-hem aanroepen.
+hem aanroepen. Na de live-melding hierboven is de lokale testopstelling
+zelf ook aangepast (Supabase's `alter default privileges ... on
+functions`-gedrag gerepliceerd) en is dit scenario opnieuw bevestigd.
 
 ## Klantenservice-e-mail (Resend)
 

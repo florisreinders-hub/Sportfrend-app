@@ -36,8 +36,9 @@
 --   (select count(*) from pg_publication_tables where pubname = 'supabase_realtime'
 --      and schemaname = 'public' and tablename = 'trainings') as realtime_enabled,
 --   has_function_privilege('authenticated', 'public.claim_training_reminders(int)', 'execute') as authenticated_can_call_reminder_fn,
+--   has_function_privilege('anon', 'public.claim_training_reminders(int)', 'execute') as anon_can_call_reminder_fn,
 --   has_function_privilege('service_role', 'public.claim_training_reminders(int)', 'execute') as service_role_can_call_reminder_fn;
--- -- expect: 1, 1, 1, 3, 1, false, true
+-- -- expect: 1, 1, 1, 3, 1, false, false, true
 
 create table if not exists public.trainings (
   id uuid primary key default uuid_generate_v4(),
@@ -187,18 +188,27 @@ as $$
   returning t.id, t.match_id, t.date, t.time, t.sport, t.location, m.user_a_id, m.user_b_id;
 $$;
 
--- Postgres grants EXECUTE on a new function to PUBLIC by default, which
--- would let any authenticated (or even anon, if ever granted table access)
--- caller invoke this directly - unlike has_posts_access()/discover_profiles()/
--- etc. elsewhere in this codebase, this one is NOT `security definer`
--- (it needs to cross every user's trainings/matches rows, not just the
--- caller's own, so there's no legitimate per-user scope to define it down
--- to), so its only real access boundary is who is allowed to call it at
--- all. Explicitly revoking from PUBLIC first, then granting only to
--- service_role, is what actually enforces "only the reminder job may call
--- this" - without the revoke, a regular authenticated user could invoke
--- it directly.
-revoke execute on function public.claim_training_reminders(int) from public;
+-- Unlike has_posts_access()/discover_profiles()/etc. elsewhere in this
+-- codebase, this one is NOT `security definer` (it needs to cross every
+-- user's trainings/matches rows, not just the caller's own, so there's no
+-- legitimate per-user scope to define it down to), so its only real
+-- access boundary is who is allowed to call it at all.
+--
+-- Every Supabase project (not just this one - it's set up once at project
+-- creation, nothing any migration in this repo controls) runs, roughly:
+--   alter default privileges in schema public
+--     grant all on functions to postgres, anon, authenticated, service_role;
+-- which means a newly created function in `public` gets EXECUTE granted
+-- *directly* to anon/authenticated/service_role the moment it's created -
+-- not inherited through the PUBLIC pseudo-role at all. A plain
+-- `revoke execute ... from public` (what this migration originally did)
+-- therefore revokes a grant that was never actually the source of
+-- authenticated's access, and does nothing: authenticated keeps its own,
+-- separate, directly-granted EXECUTE privilege regardless. The self-check
+-- below is exactly what caught this ("authenticated can still execute
+-- claim_training_reminders()") - the fix is revoking from anon and
+-- authenticated explicitly, not just from public.
+revoke execute on function public.claim_training_reminders(int) from public, anon, authenticated;
 grant execute on function public.claim_training_reminders(int) to service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────
@@ -271,7 +281,11 @@ begin
   end if;
 
   if has_function_privilege('authenticated', 'public.claim_training_reminders(int)', 'execute') then
-    raise exception 'authenticated can still execute claim_training_reminders() - the "revoke execute ... from public" above did not take effect. Since this function is not security definer, a signed-in user could call it directly (though RLS would still confine it to their own trainings rows) - it must be service_role-only.';
+    raise exception 'authenticated can still execute claim_training_reminders() - Supabase''s project-wide default privileges grant EXECUTE on new public functions directly to authenticated (not via PUBLIC), so "revoke ... from public" alone never touches it. It must also be revoked from authenticated explicitly - see the comment above this function''s grant/revoke block.';
+  end if;
+
+  if has_function_privilege('anon', 'public.claim_training_reminders(int)', 'execute') then
+    raise exception 'anon can still execute claim_training_reminders() - same cause/fix as the authenticated check above, just for the anon role.';
   end if;
 
   if not has_function_privilege('service_role', 'public.claim_training_reminders(int)', 'execute') then
