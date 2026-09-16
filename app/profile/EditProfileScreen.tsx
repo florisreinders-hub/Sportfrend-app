@@ -16,6 +16,7 @@ import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { getDataErrorMessage, PROFILE_COLUMNS, Profile } from "@/lib/api";
 import { sportPhotoPlaceholder } from "@/constants/placeholders";
+import { checkContentFilter, confirmFlaggedContent } from "@/lib/contentFilter";
 
 type Props = NativeStackScreenProps<RootStackParamList, "EditProfile">;
 
@@ -106,6 +107,11 @@ export default function EditProfileScreen({ navigation }: Props) {
 
   const onSave = async () => {
     if (!session?.user) return;
+    const flagged = await checkContentFilter(bio);
+    if (flagged.length > 0) {
+      const proceed = await confirmFlaggedContent("bio", "opslaan");
+      if (!proceed) return;
+    }
     setSaving(true);
     setSaveError(null);
     // upsert (not update): a profile row might not exist yet for this

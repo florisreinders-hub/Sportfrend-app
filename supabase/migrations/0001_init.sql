@@ -1334,3 +1334,223 @@ revoke execute on function public.claim_training_reminders(int) from public, ano
 grant execute on function public.claim_training_reminders(int) to service_role;
 
 alter publication supabase_realtime add table public.trainings;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Content filter (aanstootgevende taal): zie 0027_content_filter.sql voor
+-- de volledige uitleg/afweging (waarschuwen + markeren, niet hard
+-- blokkeren - Apple App Store Review Guideline 1.2). Alleen mirrored hier
+-- voor nieuwe installaties.
+-- ─────────────────────────────────────────────────────────────────────────
+create table if not exists public.content_filter_words (
+  id uuid primary key default uuid_generate_v4(),
+  word text not null,
+  language text not null check (language in ('nl', 'en')),
+  category text not null check (category in ('scheldwoord', 'seksueel', 'haatdragend')),
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  unique (word, language)
+);
+
+alter table public.content_filter_words enable row level security;
+-- Bewust geen policies voor `authenticated` - deze tabel is alleen
+-- beheerd via directe SQL-toegang (SQL editor/migraties), niet via de
+-- app. find_flagged_words() hieronder is `security definer` en leest hem
+-- daarom zonder dat `authenticated` er zelf SELECT op nodig heeft - de
+-- ruwe woordenlijst blijft zo onzichtbaar voor de client (triviaal te
+-- omzeilen als je hem kent), terwijl de check-functie er wél gebruik van
+-- kan maken.
+
+-- Basisset: Nederlands + Engels, scheldwoorden/seksueel expliciet/
+-- haatdragend. Bewust compact (geen duizenden woorden) om valse
+-- positieven te beperken - uitbreiden kan altijd via een simpele insert,
+-- zie de "Uitbreiden" sectie in README.md.
+insert into public.content_filter_words (word, language, category) values
+  -- Nederlands - scheldwoorden
+  ('klootzak', 'nl', 'scheldwoord'),
+  ('klootviool', 'nl', 'scheldwoord'),
+  ('kutwijf', 'nl', 'scheldwoord'),
+  ('kuttenkop', 'nl', 'scheldwoord'),
+  ('hoerenjong', 'nl', 'scheldwoord'),
+  ('rotzak', 'nl', 'scheldwoord'),
+  ('kankerlijer', 'nl', 'scheldwoord'),
+  ('kankerhoer', 'nl', 'scheldwoord'),
+  ('teringlijer', 'nl', 'scheldwoord'),
+  ('tyfuslijer', 'nl', 'scheldwoord'),
+  ('klote', 'nl', 'scheldwoord'),
+  ('kut', 'nl', 'scheldwoord'),
+  ('lul', 'nl', 'scheldwoord'),
+  ('eikel', 'nl', 'scheldwoord'),
+  ('trut', 'nl', 'scheldwoord'),
+  ('hoer', 'nl', 'scheldwoord'),
+  ('slet', 'nl', 'scheldwoord'),
+  ('klootzakken', 'nl', 'scheldwoord'),
+  -- Nederlands - seksueel expliciet
+  ('neuken', 'nl', 'seksueel'),
+  ('neuk', 'nl', 'seksueel'),
+  ('geneukt', 'nl', 'seksueel'),
+  ('sperma', 'nl', 'seksueel'),
+  ('kutneuken', 'nl', 'seksueel'),
+  ('pornoslet', 'nl', 'seksueel'),
+  ('tieten', 'nl', 'seksueel'),
+  -- Nederlands - haatdragend
+  ('mongool', 'nl', 'haatdragend'),
+  ('kankerhomo', 'nl', 'haatdragend'),
+  ('flikker', 'nl', 'haatdragend'),
+  ('kutmarokkaan', 'nl', 'haatdragend'),
+  ('kankerjood', 'nl', 'haatdragend'),
+  ('kutneger', 'nl', 'haatdragend'),
+  ('scheldkanker', 'nl', 'haatdragend'),
+  -- Engels - scheldwoorden
+  ('fuck', 'en', 'scheldwoord'),
+  ('fucker', 'en', 'scheldwoord'),
+  ('motherfucker', 'en', 'scheldwoord'),
+  ('bitch', 'en', 'scheldwoord'),
+  ('asshole', 'en', 'scheldwoord'),
+  ('bastard', 'en', 'scheldwoord'),
+  ('dumbass', 'en', 'scheldwoord'),
+  ('douchebag', 'en', 'scheldwoord'),
+  ('piece of shit', 'en', 'scheldwoord'),
+  ('shithead', 'en', 'scheldwoord'),
+  -- Engels - seksueel expliciet
+  ('cunt', 'en', 'seksueel'),
+  ('cock', 'en', 'seksueel'),
+  ('dick', 'en', 'seksueel'),
+  ('pussy', 'en', 'seksueel'),
+  ('whore', 'en', 'seksueel'),
+  ('slut', 'en', 'seksueel'),
+  ('cum', 'en', 'seksueel'),
+  ('blowjob', 'en', 'seksueel'),
+  ('handjob', 'en', 'seksueel'),
+  -- Engels - haatdragend
+  ('nigger', 'en', 'haatdragend'),
+  ('nigga', 'en', 'haatdragend'),
+  ('faggot', 'en', 'haatdragend'),
+  ('retard', 'en', 'haatdragend'),
+  ('retarded', 'en', 'haatdragend'),
+  ('spic', 'en', 'haatdragend'),
+  ('chink', 'en', 'haatdragend'),
+  ('kike', 'en', 'haatdragend'),
+  ('tranny', 'en', 'haatdragend')
+on conflict (word, language) do nothing;
+
+-- find_flagged_words: het eigenlijke matchen - woordgrens-matching
+-- (\m...\M, Postgres' regex-equivalent van "heel woord", niet zomaar een
+-- kale substring) om overmatige valse positieven te beperken (bv. "ras"
+-- matcht niet binnen "raster"). `security definer` zodat `authenticated`
+-- dit kan aanroepen (voor de client-side waarschuwing vóór versturen)
+-- zonder zelf SELECT op de ruwe woordenlijst nodig te hebben.
+create or replace function public.find_flagged_words(p_text text)
+returns text[]
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select coalesce(array_agg(distinct w.word), '{}'::text[])
+  from public.content_filter_words w
+  where w.active
+    and p_text is not null
+    and p_text ~* ('\m' || regexp_replace(w.word, '([.^$*+?()\[\]{}\\|])', '\\\1', 'g') || '\M');
+$$;
+
+grant execute on function public.find_flagged_words(text) to authenticated;
+
+-- flagged_content: audit trail van elke keer dat find_flagged_words() een
+-- treffer gaf bij het opslaan van bio/bericht/post/trainingsopmerking -
+-- zie de "Afweging" hierboven voor waarom dit content niet weigert, en
+-- de "Hard afgedwongen" alinea voor waarom dit wél altijd gebeurt,
+-- ongeacht wat de client doet.
+create table if not exists public.flagged_content (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  source_table text not null check (source_table in ('profiles', 'messages', 'posts', 'trainings')),
+  source_id uuid not null,
+  matched_words text[] not null,
+  reason text,
+  status text not null default 'pending' check (status in ('pending', 'reviewed', 'dismissed')),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists flagged_content_status_idx on public.flagged_content (status);
+create index if not exists flagged_content_user_id_idx on public.flagged_content (user_id);
+
+alter table public.flagged_content enable row level security;
+-- Bewust geen policies - net als `reports` op dit moment ("Alleen de
+-- melder zelf kan zijn eigen rapportages lezen" geldt hier zelfs niet:
+-- een gebruiker mag zijn eigen flags niet eens zien, dat zou het
+-- filterwoord weglekken) is dit uitsluitend voor moderatie via directe
+-- service-role-toegang, tot taak 2 (moderatie-overzicht) een eigen
+-- moderator-gerichte policy toevoegt.
+
+-- flag_content_if_needed: de trigger-functie zelf - kijkt welke tabel
+-- hem aanriep (TG_TABLE_NAME) om de juiste tekstkolom en eigenaar-kolom
+-- te pakken, en schrijft bij een treffer een rij naar flagged_content.
+-- Slaat NOOIT de INSERT/UPDATE zelf over (altijd `return NEW`) - dat is
+-- precies de "waarschuwen, niet blokkeren"-afweging hierboven, nu op
+-- database-niveau in plaats van alleen client-side.
+create or replace function public.flag_content_if_needed()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_text text;
+  v_user_id uuid;
+  v_matched text[];
+begin
+  if TG_TABLE_NAME = 'messages' then
+    v_text := NEW.body;
+    v_user_id := NEW.sender_id;
+  elsif TG_TABLE_NAME = 'posts' then
+    v_text := NEW.body;
+    v_user_id := NEW.author_id;
+  elsif TG_TABLE_NAME = 'trainings' then
+    v_text := NEW.note;
+    v_user_id := NEW.created_by;
+  elsif TG_TABLE_NAME = 'profiles' then
+    v_text := NEW.bio;
+    v_user_id := NEW.id;
+  else
+    raise exception 'flag_content_if_needed() is not configured for table %', TG_TABLE_NAME;
+  end if;
+
+  if v_text is null then
+    return NEW;
+  end if;
+
+  v_matched := public.find_flagged_words(v_text);
+
+  if array_length(v_matched, 1) > 0 then
+    insert into public.flagged_content (user_id, source_table, source_id, matched_words, reason)
+    values (v_user_id, TG_TABLE_NAME, NEW.id, v_matched, 'Automatisch gedetecteerd door woordenlijst-filter');
+  end if;
+
+  return NEW;
+end;
+$$;
+
+-- Alleen op INSERT, en op UPDATE alleen wanneer de relevante tekstkolom
+-- daadwerkelijk in de UPDATE-statement zit (`update of <kolom>`) - zonder
+-- dat zou bv. elke keer dat iemand zijn Ontdekken-zichtbaarheid toggelt
+-- (een heel andere kolom op profiles) een overbodige herscan van de bio
+-- triggeren.
+drop trigger if exists flag_bio_content on public.profiles;
+create trigger flag_bio_content
+  after insert or update of bio on public.profiles
+  for each row execute function public.flag_content_if_needed();
+
+drop trigger if exists flag_message_content on public.messages;
+create trigger flag_message_content
+  after insert on public.messages
+  for each row execute function public.flag_content_if_needed();
+
+drop trigger if exists flag_post_content on public.posts;
+create trigger flag_post_content
+  after insert on public.posts
+  for each row execute function public.flag_content_if_needed();
+
+drop trigger if exists flag_training_content on public.trainings;
+create trigger flag_training_content
+  after insert or update of note on public.trainings
+  for each row execute function public.flag_content_if_needed();

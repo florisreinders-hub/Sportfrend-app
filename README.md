@@ -1156,6 +1156,125 @@ toegevoegd via `npx expo install expo-dev-client` en aan `app.config.js`'s
 `developmentClient`-vlag per profiel bepaalt of de dev-launcher-native-code
 daadwerkelijk actief is, niet de aanwezigheid van deze plugin).
 
+## Contentfilter (aanstootgevende taal)
+
+Basale, automatische filter op bio (profiel), berichten (chat), posts
+(prikbord) en trainingsvoorstellen (opmerking-veld), ter voorbereiding op
+Apple's App Store Review Guideline 1.2 (User-Generated Content), die van
+apps met UGC verlangt dat ze objectionable content kunnen filteren en een
+manier hebben om het te verwijderen.
+
+**Afweging: waarschuwen-met-doorsturen, niet hard blokkeren.** Redenen
+(volledig uitgeschreven bovenaan `0027_content_filter.sql`):
+
+1. Een woordenlijst-filter heeft onvermijdelijk valse positieven (het
+   "Scunthorpe-probleem"). Hard blokkeren weigert dan legitieme content
+   zonder beroepsmogelijkheid - riskant voor een klein team zonder eigen
+   moderatiedashboard om zulke false positives snel te herstellen.
+2. Apple's richtlijn 1.2 vraagt geen harde pre-publicatie-blokkade; de
+   combinatie "filter + melden + contentverwijdering/ban door de
+   developer" (dit project heeft al `reports`/`blocks`, zie
+   `0012_moderation_reports_blocks.sql`) voldoet.
+3. Consistent met de rest van dit project: harde afdwinging via RLS is
+   hier gereserveerd voor misbruik met een ondubbelzinnige grens
+   (dagelijkse limieten, plan-gating) - "is dit woord aanstootgevend in
+   deze context" is een inhoudsoordeel, en hoort bij een moderator.
+
+Wél hard afgedwongen, ongeacht wat de client doet: het *markeren* zelf,
+via een `AFTER INSERT/UPDATE`-trigger op elke tabel. Een aangepaste
+client die de waarschuwing overslaat, slaat dus nooit de audit trail
+zelf over.
+
+**Opbouw** (`0027_content_filter.sql`, gemirrored in `0001_init.sql` voor
+nieuwe installaties):
+
+- `content_filter_words` — de woordenlijst zelf: `word`, `language`
+  (`nl`/`en`), `category` (`scheldwoord`/`seksueel`/`haatdragend`),
+  `active`. RLS aan, bewust **geen** policies - alleen beheerbaar via
+  directe SQL (SQL editor/migraties), nooit via de app. Uitbreiden of
+  uitschakelen kan zonder ooit een release te doen:
+  ```sql
+  insert into public.content_filter_words (word, language, category)
+  values ('nieuwerdant', 'nl', 'scheldwoord');
+
+  update public.content_filter_words set active = false where word = 'trut';
+  ```
+  Basisset: ~60 woorden, Nederlands + Engels, verdeeld over
+  scheldwoorden/seksueel-expliciet/haatdragend - bewust compact om valse
+  positieven te beperken, geen uitputtende lijst.
+- `find_flagged_words(text) returns text[]` — de matcher. Woordgrens-
+  matching (`\m...\M`, Postgres' "heel woord", geen kale substring) zodat
+  bv. "ras" niet matcht binnen "raster". Let op: dit is bewust een
+  heel-woord-match, dus "kutzooi" (aan elkaar geschreven) matcht **niet**
+  op "kut" - hetzelfde principe dat "raster" beschermt. `security
+  definer` + `grant execute ... to authenticated`, zodat de client 'm kan
+  aanroepen voor de waarschuwing vóór versturen, zonder zelf `SELECT` op
+  de ruwe woordenlijst nodig te hebben (die blijft zo onzichtbaar voor de
+  client).
+- `flagged_content` — audit trail: `user_id`, `source_table`
+  (`profiles`/`messages`/`posts`/`trainings`), `source_id`,
+  `matched_words`, `reason`, `status` (`pending`/`reviewed`/`dismissed`),
+  `created_at`. RLS aan, bewust **geen** policies - anders dan `reports`
+  kan zelfs de gemarkeerde gebruiker zijn eigen flags niet zien (dat zou
+  het triggerende woord weglekken). Bedoeld voor het moderatie-overzicht
+  (aparte taak) via directe service-role-toegang.
+- `flag_content_if_needed()` — de trigger-functie, kijkt via
+  `TG_TABLE_NAME` welke tekstkolom/eigenaar-kolom hoort bij de tabel die
+  hem aanriep, en schrijft bij een treffer een rij naar `flagged_content`.
+  Slaat de INSERT/UPDATE zelf nooit over (altijd `return NEW`).
+- Vier triggers: `flag_bio_content` (`profiles`, `insert or update of
+  bio`), `flag_message_content` (`messages`, `insert`), `flag_post_content`
+  (`posts`, `insert`), `flag_training_content` (`trainings`, `insert or
+  update of note`).
+- `lib/contentFilter.ts` — client-side helpers: `checkContentFilter(text)`
+  roept `find_flagged_words()` aan (faalt open - een mislukte aanroep
+  blokkeert nooit het versturen, net als elke andere optionele status-RPC
+  in dit project) en `confirmFlaggedContent(what, verb)` toont de
+  "Mogelijk ongepaste taal"-waarschuwing met de keuze om alsnog te
+  versturen. Aangeroepen vanuit `EditProfileScreen.tsx` (bio),
+  `ChatDetailScreen.tsx` (bericht, ook bij een afbeelding met bijschrift),
+  `NewPostScreen.tsx` (post) en `TrainingFormModal.tsx` (opmerking,
+  alleen als niet leeg).
+
+Draai `0027_content_filter.sql` op je bestaande database - `0001_init.sql`
+is ook bijgewerkt voor nieuwe installaties. Controleer na het draaien met:
+
+```sql
+select
+  (select count(*) from public.content_filter_words) as word_count,
+  (select count(*) from pg_proc where proname = 'find_flagged_words'
+     and pronamespace = 'public'::regnamespace) as has_check_fn,
+  (select count(*) from pg_proc where proname = 'flag_content_if_needed'
+     and pronamespace = 'public'::regnamespace) as has_trigger_fn,
+  (select count(*) from pg_trigger where tgname = 'flag_bio_content' and not tgisinternal) as has_profiles_trigger,
+  (select count(*) from pg_trigger where tgname = 'flag_message_content' and not tgisinternal) as has_messages_trigger,
+  (select count(*) from pg_trigger where tgname = 'flag_post_content' and not tgisinternal) as has_posts_trigger,
+  (select count(*) from pg_trigger where tgname = 'flag_training_content' and not tgisinternal) as has_trainings_trigger,
+  public.find_flagged_words('die training was echt kut vandaag') as test_match,
+  public.find_flagged_words('een heel normale nette bio zonder problemen') as test_no_match;
+-- verwacht: word_count > 0, 1, 1, 1, 1, 1, 1, {kut}, {}
+```
+
+De migratie zelf bevat ook een zelfcontrolerend `do $$ ... $$`-blok
+onderaan (zelfde aanpak als `0022`/`0023`/`0024`/`0026`) dat bij het
+draaien zelf al een specifieke `EXCEPTION` opwerpt zodra iets hiervan
+niet klopt.
+
+**Getest**: lokaal (los Postgres-schema met minimale stand-ins voor
+`profiles`/`messages`/`posts`/`trainings`, geen netwerktoegang tot
+Supabase vanuit deze omgeving) - de migratie draait idempotent (tweemaal
+achter elkaar, geen dubbele woorden, geen fouten); een schone bio/bericht/
+post/trainingsopmerking geeft nooit een rij in `flagged_content`; een
+tekst met een woord uit de lijst (Nederlands én Engels getest) geeft
+precies één rij, met het juiste `source_table`/`source_id`/
+`matched_words`; alle vier de schrijfacties slagen altijd, ongeacht een
+treffer (nooit geblokkeerd); `authenticated` kan `content_filter_words`
+noch `flagged_content` direct uitlezen (RLS zonder policies, ook niet de
+eigen flags van de gemarkeerde gebruiker), maar kan `find_flagged_words()`
+wel aanroepen. `npx tsc --noEmit` blijft schoon na het aankoppelen van de
+vier schermen, en een `expo export`-bundel bevat de nieuwe
+`find_flagged_words`/waarschuwing-strings en alle vier de aanroeppunten.
+
 ## Scripts
 
 - `npm start` — start de Expo dev server

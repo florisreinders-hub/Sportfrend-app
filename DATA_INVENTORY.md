@@ -1,10 +1,10 @@
 # Data-inventaris: persoonsgegevens in Sportfrend
 
-Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0026_reports_and_support_daily_limits.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest, inclusief `lib/sentry.ts` (crash-reporting, geen migratie).
+Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0027_content_filter.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest, inclusief `lib/sentry.ts` (crash-reporting, geen migratie) en `lib/contentFilter.ts` (client-side deel van de contentfilter).
 
 **Dit is een technische inventaris, geen juridisch document.** Voor een AVG/GDPR-verwerkersregister, verwerkersovereenkomsten met Supabase/Resend/Expo/RevenueCat/Sentry, en een officiële bewaartermijnenbeleid is juridisch advies nodig - dit document is bedoeld als de feitelijke basis daarvoor.
 
-Laatst bijgewerkt: bij migratie `0026_reports_and_support_daily_limits.sql` (dagelijkse limieten op rapportages/klantenservice) en de toevoeging van Sentry crash-reporting (`lib/sentry.ts`, geen migratie) - zie §2 (`reports`, `support_requests`) en §4.
+Laatst bijgewerkt: bij migratie `0027_content_filter.sql` (automatische contentfilter met markering in `flagged_content`) - zie §2 (`flagged_content`).
 
 Gebruikers kunnen zelf een overzicht van (vrijwel) alle onderstaande gegevens opvragen via **Instellingen → "Mijn gegevens opvragen"** - zie README.md §"Mijn gegevens opvragen (recht op inzage/dataportabiliteit)" en `lib/dataExport.ts`.
 
@@ -137,6 +137,17 @@ Sinds migratie `0019_discover_daily_limit.sql` is `plan` niet langer alleen info
 | `user_id`, `subject`, `message` | Ja, vrije tekst | Potentieel (afhankelijk van inhoud) | Tot accountverwijdering - geen eigen verwijderfunctie |
 
 Sinds migratie `0026_reports_and_support_daily_limits.sql` mag een account maximaal 5 klantenservice-aanvragen per dag aanmaken (`can_submit_support_request_today()`, afgedwongen op de INSERT-policy) - voorheen onbeperkt, en elke aanvraag triggert een echte e-mail via Resend (§4), dus onbeperkt misbruik kostte ook echt geld/quota.
+
+### `flagged_content`
+
+| Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
+|---|---|---|---|
+| `user_id` | Ja | Ja (moderatiegegeven) | Tot accountverwijdering - geen eigen verwijderfunctie |
+| `source_table`, `source_id`, `matched_words`, `reason`, `status` | Nee (verwijst terug naar de bron-rij; `matched_words` is het/de getriggerde woord(en) uit de lijst, geen los stuk vrije tekst) | Matig | idem |
+
+Sinds migratie `0027_content_filter.sql`: automatische audit trail wanneer `bio` (`profiles`), een chatbericht (`messages`), een post (`posts`) of een trainingsopmerking (`trainings.note`) een woord uit `content_filter_words` bevat (woordgrens-matching, Nederlands + Engels, scheldwoorden/seksueel-expliciet/haatdragend - zie README.md §"Contentfilter"). De content wordt **niet geweigerd** (alleen een client-side waarschuwing vóór versturen, met de mogelijkheid alsnog te versturen) - het markeren zelf gebeurt via een database-trigger en is niet te omzeilen. RLS staat aan zonder policies: zelfs de gemarkeerde gebruiker zelf kan zijn eigen rijen hier niet lezen (dat zou het triggerende woord weglekken); alleen bedoeld voor een toekomstig moderatie-overzicht via directe service-role-toegang.
+
+`content_filter_words` (de woordenlijst zelf) bevat geen persoonsgegevens - puur beheerde configuratie, geen gebruikersdata, ook zonder policies voor `authenticated` (onzichtbaar voor de client, alleen bereikbaar via de `security definer`-functie `find_flagged_words()`).
 
 ---
 

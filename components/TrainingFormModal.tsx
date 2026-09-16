@@ -10,6 +10,7 @@ import { TimePickerModal } from "@/components/TimePickerModal";
 import { formatTrainingWhen } from "@/components/TrainingCard";
 import { SPORT_OPTIONS } from "@/constants/sports";
 import { TrainingProposalFields } from "@/lib/api";
+import { checkContentFilter, confirmFlaggedContent } from "@/lib/contentFilter";
 
 const TRAINING_SPORT_OPTIONS = SPORT_OPTIONS.filter((o) => o.value !== null);
 
@@ -58,6 +59,13 @@ export function TrainingFormModal({ visible, title, submitLabel, initialValues, 
     if (!date || !time) {
       Alert.alert("Kies een datum en tijd", "Selecteer wanneer jullie willen trainen.");
       return;
+    }
+    if (note.trim()) {
+      const flagged = await checkContentFilter(note);
+      if (flagged.length > 0) {
+        const proceed = await confirmFlaggedContent("opmerking", "versturen");
+        if (!proceed) return;
+      }
     }
     setSubmitting(true);
     try {

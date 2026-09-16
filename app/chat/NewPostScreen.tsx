@@ -13,6 +13,7 @@ import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { SPORT_OPTIONS } from "@/constants/sports";
 import { useAuth } from "@/lib/AuthContext";
 import { createPost, formatEventDateTime, getDataErrorMessage } from "@/lib/api";
+import { checkContentFilter, confirmFlaggedContent } from "@/lib/contentFilter";
 
 type Props = NativeStackScreenProps<RootStackParamList, "NewPost">;
 
@@ -48,6 +49,11 @@ export default function NewPostScreen({ navigation, route }: Props) {
 
   const onPost = async () => {
     if (!body.trim() || !session?.user || posting) return;
+    const flagged = await checkContentFilter(body);
+    if (flagged.length > 0) {
+      const proceed = await confirmFlaggedContent("bericht", "plaatsen");
+      if (!proceed) return;
+    }
     setError(null);
 
     setPosting(true);

@@ -39,6 +39,7 @@ import {
   updateTrainingProposal,
   uploadChatImage,
 } from "@/lib/api";
+import { checkContentFilter, confirmFlaggedContent } from "@/lib/contentFilter";
 import { ReportModal } from "@/components/ReportModal";
 import { TrainingCard } from "@/components/TrainingCard";
 import { TrainingFormModal } from "@/components/TrainingFormModal";
@@ -235,6 +236,11 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
   const onSend = async () => {
     if (!draft.trim() || !session?.user || sending) return;
     const body = draft.trim();
+    const flagged = await checkContentFilter(body);
+    if (flagged.length > 0) {
+      const proceed = await confirmFlaggedContent("bericht", "versturen");
+      if (!proceed) return;
+    }
     setDraft("");
     setSending(true);
     try {
@@ -263,6 +269,14 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
       quality: 0.7,
     });
     if (result.canceled || !result.assets[0]) return;
+
+    if (draft.trim()) {
+      const flagged = await checkContentFilter(draft);
+      if (flagged.length > 0) {
+        const proceed = await confirmFlaggedContent("bericht", "versturen");
+        if (!proceed) return;
+      }
+    }
 
     setUploadingImage(true);
     try {
