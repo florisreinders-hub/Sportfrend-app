@@ -161,8 +161,9 @@ Beide buckets zijn publiek leesbaar (`public: true`) - elke URL is opvraagbaar d
 | **Expo / EAS** (Update-hosting, `u.expo.dev`) | Geen gebruikersgegevens - alleen de gecompileerde JS-bundle (code, geen userdata) wordt gehost | OTA-updates van de preview build | - |
 | **RevenueCat** (nog niet live - sandbox-modus) | **Nog niet van toepassing.** Bij een echte integratie: de gebruikers-ID (als RevenueCat `app_user_id`), aankoopgeschiedenis en abonnementsstatus, gedeeld met Apple/Google's eigen betaalinfrastructuur via de store zelf | Toekomstige verwerking van echte betalingen voor Premium/Elite | README.md §"RevenueCat (Betalen-scherm)", `lib/purchases.ts` |
 | **Apple / Google** (locatietoestemming, pushregistratie, toekomstige in-app-aankopen) | Locatietoestemming en pushregistratie lopen via het besturingssysteem zelf; app-storegegevens zodra RevenueCat live gaat | Platform-services | - |
+| **Sentry** (crash-reporting, `lib/sentry.ts`) | Crash-/foutgegevens: foutmelding + stacktrace, device-model, OS-versie, app-versie/build, scherm-/tik-breadcrumbs vóór de crash. **Geen** IP-adres of andere default-PII (`sendDefaultPii` staat niet aan) en geen gebruikers-ID/e-mailadres - er wordt nergens `Sentry.setUser(...)` aangeroepen | Crashes/onafgehandelde fouten opsporen na lancering | README.md §"Sentry crash-reporting" |
 
-Geen analytics-, crash-reporting- of trackingdiensten (bijv. Sentry, Amplitude, Mixpanel) zijn op dit moment in het project geïntegreerd - geverifieerd via `package.json`.
+Geen analytics- of trackingdiensten (bijv. Amplitude, Mixpanel) zijn op dit moment in het project geïntegreerd - geverifieerd via `package.json`. Sentry (zie hierboven) is uitsluitend crash-reporting, geen gedragsanalytics.
 
 ---
 

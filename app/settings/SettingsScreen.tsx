@@ -79,6 +79,21 @@ export default function SettingsScreen({ navigation }: Props) {
     }
   };
 
+  // Dev-only (__DEV__, see the render below) - deliberately thrown inside
+  // an event handler, not during render, so this does NOT get caught by
+  // ErrorBoundary.tsx (a component tree error boundary only catches
+  // render/lifecycle errors, never an event-handler throw - see React's
+  // own docs on error boundaries). It's meant to exercise the *other*
+  // capture path instead: lib/sentry.ts's initSentry() default
+  // integrations install a global `ErrorUtils` handler specifically for
+  // this kind of "uncaught JS exception outside render" case. Tapping this
+  // should therefore surface as a new issue in the Sentry dashboard within
+  // a few seconds, tagged with this build's release/dist (see
+  // README.md's "Sentry crash-reporting" section for how to verify this).
+  const onTestCrash = () => {
+    throw new Error("Sentry test-crash vanuit Instellingen (SettingsScreen.tsx, __DEV__-only knop)");
+  };
+
   const onDeleteAccount = () => {
     Alert.alert(
       "Account verwijderen",
@@ -202,6 +217,21 @@ export default function SettingsScreen({ navigation }: Props) {
               {deleting ? "Account wordt verwijderd..." : "Account verwijderen"}
             </Text>
           </Pressable>
+
+          {__DEV__ ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Ontwikkelaar</Text>
+              <Pressable style={styles.row} onPress={onTestCrash}>
+                <Ionicons name="bug-outline" size={20} color={colors.danger} />
+                <Text style={[styles.rowLabel, styles.logout]}>Test crash (Sentry)</Text>
+              </Pressable>
+              <Text style={styles.hint}>
+                Alleen zichtbaar in development. Gooit een onafgehandelde fout buiten React's render-cyclus om
+                (dus niet via ErrorBoundary.tsx) - hiermee verifieer je dat lib/sentry.ts's globale
+                foutafhandeling een fout daadwerkelijk naar het Sentry-dashboard stuurt.
+              </Text>
+            </View>
+          ) : null}
         </>
       )}
 

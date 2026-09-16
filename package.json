@@ -8,7 +8,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "sentry:upload-sourcemaps": "sentry-expo-upload-sourcemaps dist"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.2.3",
@@ -20,6 +21,7 @@
     "@react-native-community/slider": "5.2.0",
     "@react-navigation/native": "^6.1.18",
     "@react-navigation/native-stack": "^6.11.0",
+    "@sentry/react-native": "^8.26.0",
     "@supabase/supabase-js": "^2.45.4",
     "expo": "57.0.19",
     "expo-constants": "~57.0.17",
@@ -39,6 +41,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.24.0",
+    "@sentry/expo-upload-sourcemaps": "^8.26.0",
     "@types/react": "^19.1.0",
     "babel-preset-expo": "~57.0.0",
     "typescript": "~6.0.3"

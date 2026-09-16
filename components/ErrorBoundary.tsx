@@ -1,5 +1,6 @@
 import React from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
+import * as Sentry from "@sentry/react-native";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 
 type Props = {
@@ -22,6 +23,12 @@ export class ErrorBoundary extends React.Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error("Onverwachte fout in de app:", error, info.componentStack);
+    // A render-phase error caught here never reaches the global
+    // ErrorUtils/unhandled-rejection handlers initSentry() (lib/sentry.ts)
+    // installs - React swallows it into this boundary instead - so it
+    // needs its own explicit report. A no-op (not a throw) when Sentry
+    // was never initialized (e.g. no SENTRY_DSN in local dev).
+    Sentry.captureException(error, { contexts: { react: { componentStack: info.componentStack } } });
   }
 
   render() {

@@ -86,7 +86,7 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
 
 4. **Zet de auth-redirect URL op de allowlist**
 
-   De app gebruikt het `sportfrend://` custom scheme (`app.json` → `"scheme": "sportfrend"`)
+   De app gebruikt het `sportfrend://` custom scheme (`app.config.js` → `"scheme": "sportfrend"`)
    zodat de bevestigingslink in registratie-/wachtwoord-reset-e-mails rechtstreeks
    terug de app in gaat in plaats van naar een browser/localhost (zie
    `lib/deepLinking.ts`). Een bevestigde registratie toont daarna het
@@ -969,11 +969,142 @@ zijn wanneer de SDK er eenmaal in zit.
    EAS-build maken) - dat kan pas nadat stap 1 t/m 5 hierboven staan, en dat
    testen kan dan niet meer via Expo Go.
 
+## Sentry crash-reporting
+
+`ErrorBoundary.tsx` bestond al, maar deed tot nu toe alleen `console.error(...)`
+- onzichtbaar in een gepubliceerde/preview build, dus in de praktijk nul
+zichtbaarheid op crashes bij echte gebruikers. `@sentry/react-native`
+(+ diens Expo-config-plugin en Metro-integratie) verhelpt dat: onafgehandelde
+JS-exceptions, onafgehandelde promise-rejections, én render-fouten die
+`ErrorBoundary.tsx` opvangt, komen nu allemaal in het Sentry-dashboard
+terecht, met leesbare (niet-geminificeerde) stacktraces.
+
+**Hoe dit is opgezet:**
+
+- **`app.config.js`** (was `app.json` - moest dynamisch worden om
+  `SENTRY_DSN` uit de environment te kunnen lezen, wat een los `app.json`
+  niet kan) voegt `"@sentry/react-native"` toe aan `plugins` - dit is Sentry's
+  eigen Expo-config-plugin, die bij een `eas build` automatisch een
+  build-fase in het native Xcode-/Gradle-project injecteert die source maps
+  bouwt en uploadt. **Dat is dus letterlijk de "EAS Build-hook"** voor
+  source maps - geen los handgeschreven hook-script nodig, Sentry's plugin
+  regelt de native build-fase zelf. Bewust geen `organization`/`project`/
+  `authToken` als plugin-config meegegeven (Sentry's eigen plugin waarschuwt
+  daar expliciet tegen - een authToken in `app.config.js` zou in de
+  geshipte app terechtkomen) - die komen in plaats daarvan uit
+  `SENTRY_ORG`/`SENTRY_PROJECT`/`SENTRY_AUTH_TOKEN`, gelezen als
+  environment variables tijdens de build zelf (standaard sentry-cli-gedrag).
+- **`metro.config.js`** (nieuw bestand - bestond nog niet) gebruikt
+  `getSentryExpoConfig()` uit `@sentry/react-native/metro`. Dit is het
+  eigenlijke mechanisme achter leesbare stacktraces: het voegt een Metro-
+  serializer toe die een uniek **Debug ID** inbakt in zowel de bundel als
+  de bijbehorende source map. Sentry matcht een crash aan zijn source map
+  via dat Debug ID, niet via een release-naam - belangrijk voor dit
+  project specifiek, omdat de meeste wijzigingen via `eas update` (OTA)
+  verschijnen, niet via een verse `eas build` waar een release-naam
+  natuurlijk bij past.
+- **`lib/sentry.ts`** leest de DSN via `Constants.expoConfig.extra.sentryDsn`
+  (zie hieronder waarom niet rechtstreeks via `process.env`), en roept
+  `Sentry.init()` aan met:
+  - `release`: `<slug>@<version>` (stabiel per app-store-versie)
+  - `dist`: `Updates.updateId` (een verse UUID per `eas update`-publicatie)
+    of `"dev"` als er geen actieve OTA-update is - dit is wat "release-
+    tracking per build" hier concreet betekent, aangezien native
+    `eas build`s zeldzaam zijn vergeleken met `eas update`-publicaties.
+  - `environment`: `Updates.channel` (`development`/`preview`/`production`,
+    dezelfde drie kanalen als `eas.json`), met een `__DEV__`-fallback voor
+    een lokale Metro-dev-server-sessie waar `Updates.channel` altijd `null`
+    is.
+  - Faalt open zoals de rest van deze app's optionele-configuratie-afhandeling
+    (`isSupabaseConfigured`, `lib/supabase.ts`): ontbreekt `SENTRY_DSN`, dan
+    wordt er een `console.warn` gelogd en slaat `initSentry()` de rest over
+    in plaats van de app te laten crashen bij opstarten.
+  - `Sentry.init()`'s standaard-integraties installeren zelf al een globale
+    `ErrorUtils`-handler (onafgehandelde JS-exceptions) én
+    unhandled-rejection-tracking - het aanroepen van `Sentry.init()` zelf is
+    dus al genoeg, geen aparte handlers nodig.
+- **`App.tsx`** roept `initSentry()` aan op module-niveau (buiten de
+  component, vóórdat er iets anders kan crashen) en exporteert
+  `Sentry.wrap(App)` in plaats van de kale `App`-component - dat voegt
+  Sentry's eigen top-level foutopvang en touch-breadcrumbs toe, *naast* de
+  bestaande `ErrorBoundary` binnenin (die blijft ongewijzigd voor zijn
+  eigen Nederlandstalige fallback-UI).
+- **`ErrorBoundary.tsx`** roept nu `Sentry.captureException(error, ...)`
+  aan in `componentDidCatch` - een render-fout die hier terechtkomt bereikt
+  nooit de globale `ErrorUtils`-handler (React vangt hem af vóórdat hij
+  daar komt), dus dit is het enige punt waar zo'n fout alsnog gerapporteerd
+  wordt.
+
+**Waarom `SENTRY_DSN` (geen `EXPO_PUBLIC_`-prefix) via `extra` in plaats van
+rechtstreeks `process.env`:** een DSN is geen geheim (het is een write-only
+eindpunt-identifier, vergelijkbaar met een Segment/Mixpanel write-key) en zou
+prima met een `EXPO_PUBLIC_`-prefix gekund hebben, zoals
+`EXPO_PUBLIC_SUPABASE_URL`. Omdat de variabele hier al vast `SENTRY_DSN` heet
+(zonder prefix), leest `app.config.js` hem in plaats daarvan in op
+config-evaluatietijd (Node.js, niet Metro) en geeft hem door via `extra` -
+`lib/sentry.ts` leest hem terug via `Constants.expoConfig.extra.sentryDsn`.
+
+**Test-crash-knop** (Instellingen → onderaan, alleen zichtbaar met
+`__DEV__`): gooit een fout rechtstreeks vanuit een `onPress`-handler, dus
+*buiten* React's render-cyclus om - dit test bewust het nieuwe globale-
+foutafhandelings-pad (`ErrorUtils`, via `Sentry.init()`'s standaard-
+integraties), niet het al langer bestaande `ErrorBoundary`-pad. Verschijnt
+in een build waarin `SENTRY_DSN` correct staat na een paar seconden als
+nieuwe issue in het Sentry-dashboard.
+
+**Handmatige stappen die jij zelf moet zetten:**
+
+1. **Maak een Sentry-project aan** (Platform: React Native), en kopieer de
+   DSN (Project settings → Client Keys (DSN)).
+2. **Zet `SENTRY_DSN`** lokaal in `.env` én als EAS-omgevingsvariabele
+   (dezelfde plek als `EXPO_PUBLIC_SUPABASE_URL`).
+3. **Voor source maps op een echte `eas build`** (App Store/Play Store-
+   inzendingen): zet `SENTRY_ORG`, `SENTRY_PROJECT` en `SENTRY_AUTH_TOKEN`
+   (Sentry-dashboard → Settings → Auth Tokens, scope `project:releases` +
+   `org:read`) als EAS-secrets:
+   ```bash
+   eas secret:create --scope project --name SENTRY_ORG --value <je-org-slug>
+   eas secret:create --scope project --name SENTRY_PROJECT --value <je-project-slug>
+   eas secret:create --scope project --name SENTRY_AUTH_TOKEN --value <je-auth-token> --type string
+   ```
+   De config-plugin regelt de rest automatisch tijdens de build.
+4. **Voor source maps op een `eas update`-publicatie** (de gebruikelijke
+   manier waarop dit project wijzigingen uitrolt - geen native build, dus
+   de stap hierboven wordt dan nooit uitgevoerd): bouw en publiceer met
+   dezelfde, vooraf gebouwde `dist`-map, en upload daarna diezelfde map naar
+   Sentry:
+   ```bash
+   npx expo export --platform all --source-maps
+   npx eas-cli update --branch preview --input-dir dist --skip-bundler --non-interactive
+   SENTRY_AUTH_TOKEN=<je-auth-token> SENTRY_ORG=<je-org-slug> SENTRY_PROJECT=<je-project-slug> \
+     npm run sentry:upload-sourcemaps
+   ```
+   (`--input-dir dist --skip-bundler` laat `eas update` exact de al
+   gebouwde map publiceren in plaats van zelf nog een keer te bundelen -
+   zonder dat zouden de geüploade source maps niet gegarandeerd bij de
+   daadwerkelijk gepubliceerde bundel horen.)
+5. **Test met de verborgen crash-knop** (Instellingen, `__DEV__`-only) en
+   controleer of de fout binnen enkele seconden in het Sentry-dashboard
+   verschijnt, met een leesbare (niet-geminificeerde) stacktrace.
+
+**Getest vanuit deze omgeving** (geen live Sentry-account/netwerktoegang tot
+sentry.io beschikbaar hier, dus de daadwerkelijke dashboard-check is aan
+jou - zie stap 5 hierboven): `npx tsc --noEmit` schoon; `npx expo export
+--source-maps` produceert een `.hbc`-bundel mét bijbehorende `.map` met een
+`debugId`-veld; `sentry-expo-upload-sourcemaps dist` herkent en matcht die
+bundel+sourcemap correct (faalt zoals verwacht pas op de daadwerkelijke
+netwerkupload, door een nep-token en geen netwerktoegang vanuit deze
+sandbox); en een bundle-export bevestigt dat de test-crash-knop alleen in
+een `--dev`-bundel aanwezig is, niet in een productie-achtige bundel.
+
 ## Scripts
 
 - `npm start` — start de Expo dev server
 - `npm run ios` / `npm run android` / `npm run web`
 - `npm run typecheck` — TypeScript compileren zonder output
+- `npm run sentry:upload-sourcemaps` — upload source maps uit `dist/` naar
+  Sentry (zie "Sentry crash-reporting" hierboven) - vereist
+  `SENTRY_AUTH_TOKEN`/`SENTRY_ORG`/`SENTRY_PROJECT` in de environment
 
 ## Notities
 
