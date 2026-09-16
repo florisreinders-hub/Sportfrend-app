@@ -1,10 +1,10 @@
 # Data-inventaris: persoonsgegevens in Sportfrend
 
-Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0014_discover_profiles_location_privacy.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest.
+Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0026_reports_and_support_daily_limits.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest, inclusief `lib/sentry.ts` (crash-reporting, geen migratie).
 
-**Dit is een technische inventaris, geen juridisch document.** Voor een AVG/GDPR-verwerkersregister, verwerkersovereenkomsten met Supabase/Resend/Expo/RevenueCat, en een officiële bewaartermijnenbeleid is juridisch advies nodig - dit document is bedoeld als de feitelijke basis daarvoor.
+**Dit is een technische inventaris, geen juridisch document.** Voor een AVG/GDPR-verwerkersregister, verwerkersovereenkomsten met Supabase/Resend/Expo/RevenueCat/Sentry, en een officiële bewaartermijnenbeleid is juridisch advies nodig - dit document is bedoeld als de feitelijke basis daarvoor.
 
-Laatst bijgewerkt: bij de migratie die exacte locatiegegevens afschermt (zie §5) - `0014_discover_profiles_location_privacy.sql`.
+Laatst bijgewerkt: bij migratie `0026_reports_and_support_daily_limits.sql` (dagelijkse limieten op rapportages/klantenservice) en de toevoeging van Sentry crash-reporting (`lib/sentry.ts`, geen migratie) - zie §2 (`reports`, `support_requests`) en §4.
 
 Gebruikers kunnen zelf een overzicht van (vrijwel) alle onderstaande gegevens opvragen via **Instellingen → "Mijn gegevens opvragen"** - zie README.md §"Mijn gegevens opvragen (recht op inzage/dataportabiliteit)" en `lib/dataExport.ts`.
 
