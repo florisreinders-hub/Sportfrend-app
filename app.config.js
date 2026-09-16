@@ -58,6 +58,15 @@ module.exports = {
       "expo-font",
       "expo-status-bar",
       "@sentry/react-native",
+      // Safe to keep in every profile, not just eas.json's "development"
+      // one - eas.json's own `developmentClient` flag (not this plugin's
+      // presence) is what actually turns the dev-launcher/dev-menu native
+      // code on or off per build profile, same as Expo's own docs set it
+      // up. Needed so `eas build --profile development` (see README.md's
+      // "Sentry crash-reporting" section) produces an installable
+      // dev-client APK at all - without this dependency, a
+      // `developmentClient: true` build fails.
+      "expo-dev-client",
     ],
     extra: {
       eas: {

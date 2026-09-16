@@ -1083,19 +1083,78 @@ nieuwe issue in het Sentry-dashboard.
    gebouwde map publiceren in plaats van zelf nog een keer te bundelen -
    zonder dat zouden de geüploade source maps niet gegarandeerd bij de
    daadwerkelijk gepubliceerde bundel horen.)
-5. **Test met de verborgen crash-knop** (Instellingen, `__DEV__`-only) en
+5. **Bouw en installeer een development build op een Android-testtoestel**
+   om de crash-knop te kunnen zien (die is `__DEV__`-only, dus nooit
+   zichtbaar in een preview/productie-build) - zie
+   "Development build op Android (voor de Sentry-testknop)" hieronder voor
+   de exacte commando's.
+6. **Test met de verborgen crash-knop** (Instellingen, onderaan) en
    controleer of de fout binnen enkele seconden in het Sentry-dashboard
    verschijnt, met een leesbare (niet-geminificeerde) stacktrace.
 
+### Development build op Android (voor de Sentry-testknop)
+
+Geen Google Play Console-account nodig - "internal distribution" is een
+kaal, rechtstreeks installeerbaar `.apk`-bestand, buiten de Play Store om
+(zelfde aanpak als eerder voor het testen van echte pushmeldingen, zie
+"Pushmeldingen" hierboven: Expo Go ondersteunt sinds SDK 53 geen remote
+pushmeldingen meer, en kan hoe dan ook nooit een custom native module als
+`@sentry/react-native` laden - vandaar een eigen development build in
+plaats van Expo Go).
+
+```bash
+# 1. Eenmalig: zorg dat SENTRY_DSN lokaal bekend is (stap 1-2 hierboven) -
+#    de dev-client haalt zijn JS live op van jouw Metro-server (stap 4
+#    hieronder), dus app.config.js leest SENTRY_DSN dan uit jouw eigen
+#    lokale .env, niet uit een EAS-secret.
+cat .env | grep SENTRY_DSN   # controleer dat hij hier al in staat
+
+# 2. Start de build in de cloud (~10-15 min, geen Android Studio/Xcode
+#    lokaal nodig). Eerste keer: EAS biedt aan een Android-keystore voor
+#    je te genereren - accepteer dat, geen Play Console-account nodig.
+npx eas-cli build --profile development --platform android
+
+# 3. Zodra de build klaar is, installeer hem op je Android-toestel.
+#    Optie A - eenvoudigst, geen kabel nodig: scan de QR-code die eas
+#    build aan het eind toont met je telefoon (of open de build-URL in de
+#    browser op je telefoon) en tik "Installeren". Android vraagt de
+#    eerste keer om toestemming voor "apps van deze bron installeren".
+#    Optie B - telefoon via USB verbonden met deze computer (adb/USB-
+#    debugging aan): installeert automatisch op het aangesloten toestel.
+npx eas-cli build:run --platform android --latest
+
+# 4. Start de Metro-bundler (dezelfde .env als stap 1 wordt hier gebruikt)
+#    en open de zojuist geïnstalleerde app op je telefoon - die toont een
+#    "dev client"-scherm waar je verbindt met deze sessie (scan de QR-code
+#    die hieronder verschijnt, telefoon en computer moeten op hetzelfde
+#    wifi-netwerk zitten - gebruik --tunnel als dat niet zo is).
+npx expo start --dev-client
+
+# 5. Log in de app in (of maak een testaccount) tot je bij Instellingen
+#    bent, tik helemaal onderaan op "Test crash (Sentry)", en kijk binnen
+#    een paar seconden in het Sentry-dashboard (Issues) of de fout
+#    verschijnt.
+```
+
 **Getest vanuit deze omgeving** (geen live Sentry-account/netwerktoegang tot
 sentry.io beschikbaar hier, dus de daadwerkelijke dashboard-check is aan
-jou - zie stap 5 hierboven): `npx tsc --noEmit` schoon; `npx expo export
+jou - zie stap 6 hierboven): `npx tsc --noEmit` schoon; `npx expo export
 --source-maps` produceert een `.hbc`-bundel mét bijbehorende `.map` met een
 `debugId`-veld; `sentry-expo-upload-sourcemaps dist` herkent en matcht die
 bundel+sourcemap correct (faalt zoals verwacht pas op de daadwerkelijke
 netwerkupload, door een nep-token en geen netwerktoegang vanuit deze
-sandbox); en een bundle-export bevestigt dat de test-crash-knop alleen in
-een `--dev`-bundel aanwezig is, niet in een productie-achtige bundel.
+sandbox); een bundle-export bevestigt dat de test-crash-knop alleen in
+een `--dev`-bundel aanwezig is, niet in een productie-achtige bundel; en
+`npx eas-cli config --profile development --platform android` bevestigt
+dat het `development`-buildprofiel daadwerkelijk resolvet naar
+`distribution: internal`, `developmentClient: true`, `buildType: apk` en
+`credentialsSource: remote` (EAS genereert zelf een Android-keystore,
+geen Play Console-account nodig). `expo-dev-client` was nog geen
+dependency - zonder dat pakket faalt een `developmentClient: true`-build;
+toegevoegd via `npx expo install expo-dev-client` en aan `app.config.js`'s
+`plugins` toegevoegd (veilig voor élk profiel - `eas.json`'s eigen
+`developmentClient`-vlag per profiel bepaalt of de dev-launcher-native-code
+daadwerkelijk actief is, niet de aanwezigheid van deze plugin).
 
 ## Scripts
 
