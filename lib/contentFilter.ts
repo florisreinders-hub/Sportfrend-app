@@ -2,19 +2,20 @@ import { Alert } from "react-native";
 import { supabase } from "./supabase";
 
 /**
- * "Waarschuwen, niet blokkeren" (see 0027_content_filter.sql's full
- * writeup of the trade-off): calls find_flagged_words() purely so the
- * client can show a friendly warning *before* submitting - the actual,
- * unavoidable enforcement is the AFTER INSERT/UPDATE trigger on
- * profiles/messages/posts/trainings, which runs regardless of whether
- * this check ever happens (a modified client skipping this call still
- * gets flagged server-side, it just doesn't see the warning first).
+ * Hard block (see 0028_content_filter_hard_block.sql's full writeup):
+ * calls find_flagged_words() so the client can reject a match immediately,
+ * before ever reaching the server. The actual, unavoidable enforcement is
+ * the BEFORE INSERT/UPDATE trigger on profiles/messages/posts/trainings,
+ * which runs regardless of whether this check ever happens - a modified
+ * client skipping this call still gets its write rejected server-side
+ * (the trigger returns NULL, cancelling the row), it just doesn't get the
+ * friendly message first and instead sees a generic save/send failure.
  *
  * Fails open like every other optional-status RPC in this app
  * (fetchDiscoverDailyStatus, fetchMessagesDailyStatus, ...): a failure
- * here (RPC not deployed yet, network hiccup) is logged, not thrown -
- * the caller proceeds as if nothing matched rather than blocking a
- * legitimate send/save because the *warning* mechanism itself failed.
+ * here (RPC not deployed yet, network hiccup) is logged, not thrown - the
+ * caller proceeds as if nothing matched. The server-side trigger is the
+ * real backstop if that guess turns out to be wrong.
  */
 export async function checkContentFilter(text: string): Promise<string[]> {
   if (!text || !text.trim()) return [];
@@ -29,21 +30,16 @@ export async function checkContentFilter(text: string): Promise<string[]> {
 }
 
 /**
- * Shows the "mogelijk ongepaste taal"-confirmation and resolves to
- * whether the caller chose to proceed anyway. `what`/`verb` fill in the
- * two content-specific words ("bericht"/"versturen", "bio"/"opslaan",
- * ...) so the same dialog reads naturally across all four call sites.
+ * Shows the "kan niet worden verstuurd/opgeslagen"-blocking alert - a
+ * single "OK" button, no way to proceed anyway. `what`/`participle` fill
+ * in the two content-specific words ("bericht"/"verstuurd",
+ * "bio"/"opgeslagen", ...) so the same alert reads naturally across all
+ * call sites.
  */
-export function confirmFlaggedContent(what: string, verb: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    Alert.alert(
-      "Mogelijk ongepaste taal",
-      `Dit ${what} bevat mogelijk ongepaste taal. Pas het aan, of ${verb} het toch - dat wordt dan gemarkeerd voor beoordeling.`,
-      [
-        { text: "Aanpassen", style: "cancel", onPress: () => resolve(false) },
-        { text: `Toch ${verb}`, style: "destructive", onPress: () => resolve(true) },
-      ],
-      { cancelable: true, onDismiss: () => resolve(false) }
-    );
-  });
+export function showContentFilterBlockedAlert(what: string, participle: string): void {
+  Alert.alert(
+    "Ongepaste taal",
+    `Dit ${what} bevat ongepaste taal en kan niet worden ${participle}. Pas het aan en probeer opnieuw.`,
+    [{ text: "OK" }]
+  );
 }

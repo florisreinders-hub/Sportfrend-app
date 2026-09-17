@@ -10,7 +10,7 @@ import { TimePickerModal } from "@/components/TimePickerModal";
 import { formatTrainingWhen } from "@/components/TrainingCard";
 import { SPORT_OPTIONS } from "@/constants/sports";
 import { TrainingProposalFields } from "@/lib/api";
-import { checkContentFilter, confirmFlaggedContent } from "@/lib/contentFilter";
+import { checkContentFilter, showContentFilterBlockedAlert } from "@/lib/contentFilter";
 
 const TRAINING_SPORT_OPTIONS = SPORT_OPTIONS.filter((o) => o.value !== null);
 
@@ -63,8 +63,8 @@ export function TrainingFormModal({ visible, title, submitLabel, initialValues, 
     if (note.trim()) {
       const flagged = await checkContentFilter(note);
       if (flagged.length > 0) {
-        const proceed = await confirmFlaggedContent("opmerking", "versturen");
-        if (!proceed) return;
+        showContentFilterBlockedAlert("opmerking", "verstuurd");
+        return;
       }
     }
     setSubmitting(true);

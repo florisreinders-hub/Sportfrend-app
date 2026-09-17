@@ -1164,29 +1164,39 @@ Apple's App Store Review Guideline 1.2 (User-Generated Content), die van
 apps met UGC verlangt dat ze objectionable content kunnen filteren en een
 manier hebben om het te verwijderen.
 
-**Afweging: waarschuwen-met-doorsturen, niet hard blokkeren.** Redenen
-(volledig uitgeschreven bovenaan `0027_content_filter.sql`):
+**Hard blokkeren, niet waarschuwen-met-doorsturen.** `0027_content_filter.sql`
+koos aanvankelijk voor "waarschuwen + toch kunnen versturen + markeren"
+(afweging nog steeds volledig uitgeschreven bovenaan dat bestand, als
+achtergrond). `0028_content_filter_hard_block.sql` verandert dit naar
+een expliciete, bewuste productbeslissing: een treffer wordt nu
+**geweigerd**, niet alleen gemarkeerd - er is geen "toch versturen"-optie
+meer, de gebruiker moet de tekst aanpassen.
 
-1. Een woordenlijst-filter heeft onvermijdelijk valse positieven (het
-   "Scunthorpe-probleem"). Hard blokkeren weigert dan legitieme content
-   zonder beroepsmogelijkheid - riskant voor een klein team zonder eigen
-   moderatiedashboard om zulke false positives snel te herstellen.
-2. Apple's richtlijn 1.2 vraagt geen harde pre-publicatie-blokkade; de
-   combinatie "filter + melden + contentverwijdering/ban door de
-   developer" (dit project heeft al `reports`/`blocks`, zie
-   `0012_moderation_reports_blocks.sql`) voldoet.
-3. Consistent met de rest van dit project: harde afdwinging via RLS is
-   hier gereserveerd voor misbruik met een ondubbelzinnige grens
-   (dagelijkse limieten, plan-gating) - "is dit woord aanstootgevend in
-   deze context" is een inhoudsoordeel, en hoort bij een moderator.
+**Hoe het hard blokkeren technisch werkt** (zie de volledige uitleg
+bovenaan `0028_content_filter_hard_block.sql`): de vier triggers zijn
+`BEFORE INSERT/UPDATE` (was `AFTER`). Bij een treffer schrijft
+`flag_content_if_needed()` eerst een rij naar `flagged_content`, en geeft
+daarna `return NULL` - Postgres' ingebouwde manier om die ene rij
+stilletjes te annuleren zónder een fout op te werpen die ook de
+zojuist geschreven audit-rij zou terugdraaien (`raise exception` zou dat
+wél doen - Postgres kent geen "onafhankelijke" subtransactie binnen
+dezelfde triggeraanroep zonder een aparte databaseverbinding, bv. via
+`dblink` - een afhankelijkheid die hier bewust vermeden is). Een
+geannuleerde INSERT/UPDATE meldt zich bij de client als "0 rijen
+geraakt", niet als een foutmelding - daarom gebruikt elke schrijfactie nu
+`.select().single()` (`sendMessage()`, `createPost()`,
+`createTraining()`/`updateTrainingProposal()` in `lib/api.ts`, en de
+profiel-upsert in `EditProfileScreen.tsx`): PostgREST geeft dan een
+expliciete, herkenbare fout (`PGRST116`, "0 rows") in plaats van een
+stille no-op die de gebruiker laat denken dat het gelukt is.
+`getDataErrorMessage()` (`lib/api.ts`) vertaalt die `PGRST116`-fout naar
+een vriendelijke melding - dit is puur het server-side vangnet voor een
+client die de onderstaande client-side check overslaat; de normale flow
+komt hier nooit, omdat `checkContentFilter()` de aanvraag al client-side
+tegenhoudt vóórdat de server ooit bereikt wordt.
 
-Wél hard afgedwongen, ongeacht wat de client doet: het *markeren* zelf,
-via een `AFTER INSERT/UPDATE`-trigger op elke tabel. Een aangepaste
-client die de waarschuwing overslaat, slaat dus nooit de audit trail
-zelf over.
-
-**Opbouw** (`0027_content_filter.sql`, gemirrored in `0001_init.sql` voor
-nieuwe installaties):
+**Opbouw** (`0027_content_filter.sql` + `0028_content_filter_hard_block.sql`,
+gemirrored in `0001_init.sql` voor nieuwe installaties):
 
 - `content_filter_words` — de woordenlijst zelf: `word`, `language`
   (`nl`/`en`), `category` (`scheldwoord`/`seksueel`/`haatdragend`),
@@ -1211,69 +1221,90 @@ nieuwe installaties):
   aanroepen voor de waarschuwing vóór versturen, zonder zelf `SELECT` op
   de ruwe woordenlijst nodig te hebben (die blijft zo onzichtbaar voor de
   client).
-- `flagged_content` — audit trail: `user_id`, `source_table`
-  (`profiles`/`messages`/`posts`/`trainings`), `source_id`,
-  `matched_words`, `reason`, `status` (`pending`/`reviewed`/`dismissed`),
-  `created_at`. RLS aan, bewust **geen** policies - anders dan `reports`
-  kan zelfs de gemarkeerde gebruiker zijn eigen flags niet zien (dat zou
-  het triggerende woord weglekken). Bedoeld voor het moderatie-overzicht
-  (aparte taak) via directe service-role-toegang.
+- `flagged_content` — audit trail van **geweigerde pogingen** (sinds
+  `0028`; vóór `0028` was dit een audit trail van gepubliceerde-maar-
+  gemarkeerde content): `user_id`, `source_table`
+  (`profiles`/`messages`/`posts`/`trainings`), `source_id` (bij een
+  geweigerde INSERT: het al gegenereerde maar nooit weggeschreven id van
+  die rij - Postgres vult kolomdefaults al in vóórdat een BEFORE-trigger
+  draait; bij een geweigerde UPDATE: het echte id van de bestaande,
+  ongewijzigd gebleven rij), `matched_words`, `reason`, `status`
+  (`pending`/`reviewed`/`dismissed`), `created_at`. RLS aan, bewust
+  **geen** policies - anders dan `reports` kan zelfs de geweigerde
+  gebruiker zijn eigen rijen hier niet zien (dat zou het triggerende
+  woord weglekken). Bedoeld voor het moderatie-overzicht (aparte taak)
+  via directe service-role-toegang.
 - `flag_content_if_needed()` — de trigger-functie, kijkt via
   `TG_TABLE_NAME` welke tekstkolom/eigenaar-kolom hoort bij de tabel die
-  hem aanriep, en schrijft bij een treffer een rij naar `flagged_content`.
-  Slaat de INSERT/UPDATE zelf nooit over (altijd `return NEW`).
-- Vier triggers: `flag_bio_content` (`profiles`, `insert or update of
-  bio`), `flag_message_content` (`messages`, `insert`), `flag_post_content`
-  (`posts`, `insert`), `flag_training_content` (`trainings`, `insert or
-  update of note`).
+  hem aanriep. Bij een treffer: schrijft een rij naar `flagged_content`,
+  daarna `return NULL` (annuleert de INSERT/UPDATE). Zonder treffer:
+  `return NEW` (gaat gewoon door).
+- Vier `BEFORE`-triggers: `flag_bio_content` (`profiles`, `insert or
+  update of bio`), `flag_message_content` (`messages`, `insert`),
+  `flag_post_content` (`posts`, `insert`), `flag_training_content`
+  (`trainings`, `insert or update of note`).
 - `lib/contentFilter.ts` — client-side helpers: `checkContentFilter(text)`
   roept `find_flagged_words()` aan (faalt open - een mislukte aanroep
-  blokkeert nooit het versturen, net als elke andere optionele status-RPC
-  in dit project) en `confirmFlaggedContent(what, verb)` toont de
-  "Mogelijk ongepaste taal"-waarschuwing met de keuze om alsnog te
-  versturen. Aangeroepen vanuit `EditProfileScreen.tsx` (bio),
+  laat de poging client-side doorgaan, de server-side trigger hierboven
+  is dan het vangnet, net als elke andere optionele status-RPC in dit
+  project) en `showContentFilterBlockedAlert(what, participle)` toont de
+  "Ongepaste taal"-melding met alleen een "OK"-knop - geen "toch
+  versturen"-optie. Aangeroepen vanuit `EditProfileScreen.tsx` (bio),
   `ChatDetailScreen.tsx` (bericht, ook bij een afbeelding met bijschrift),
-  `NewPostScreen.tsx` (post) en `TrainingFormModal.tsx` (opmerking,
-  alleen als niet leeg).
+  `NewPostScreen.tsx` (post), `TrainingFormModal.tsx` (opmerking, alleen
+  als niet leeg) en `MatchScreen.tsx` (het allereerste bericht na een
+  nieuwe match/"CONNECTIE!").
 
-Draai `0027_content_filter.sql` op je bestaande database - `0001_init.sql`
-is ook bijgewerkt voor nieuwe installaties. Controleer na het draaien met:
+Draai `0027_content_filter.sql` gevolgd door
+`0028_content_filter_hard_block.sql` op je bestaande database (als
+`0027` al gedraaid is, volstaat alleen `0028`) - `0001_init.sql` is ook
+bijgewerkt voor nieuwe installaties. Controleer na het draaien met:
 
 ```sql
 select
-  (select count(*) from public.content_filter_words) as word_count,
-  (select count(*) from pg_proc where proname = 'find_flagged_words'
-     and pronamespace = 'public'::regnamespace) as has_check_fn,
-  (select count(*) from pg_proc where proname = 'flag_content_if_needed'
-     and pronamespace = 'public'::regnamespace) as has_trigger_fn,
-  (select count(*) from pg_trigger where tgname = 'flag_bio_content' and not tgisinternal) as has_profiles_trigger,
-  (select count(*) from pg_trigger where tgname = 'flag_message_content' and not tgisinternal) as has_messages_trigger,
-  (select count(*) from pg_trigger where tgname = 'flag_post_content' and not tgisinternal) as has_posts_trigger,
-  (select count(*) from pg_trigger where tgname = 'flag_training_content' and not tgisinternal) as has_trainings_trigger,
-  public.find_flagged_words('die training was echt kut vandaag') as test_match,
-  public.find_flagged_words('een heel normale nette bio zonder problemen') as test_no_match;
--- verwacht: word_count > 0, 1, 1, 1, 1, 1, 1, {kut}, {}
+  tgname,
+  case when tgtype & 2 = 2 then 'BEFORE' else 'AFTER' end as timing
+from pg_trigger
+where tgname in ('flag_bio_content', 'flag_message_content', 'flag_post_content', 'flag_training_content')
+  and not tgisinternal
+order by tgname;
+-- verwacht: alle vier op 'BEFORE'
+
+select pg_get_functiondef('public.flag_content_if_needed()'::regprocedure) ilike '%return null%' as hard_blocks;
+-- verwacht: true
+
+select public.find_flagged_words('die training was echt kut vandaag') as test_match;
+-- verwacht: {kut}
 ```
 
-De migratie zelf bevat ook een zelfcontrolerend `do $$ ... $$`-blok
+Beide migraties bevatten ook een zelfcontrolerend `do $$ ... $$`-blok
 onderaan (zelfde aanpak als `0022`/`0023`/`0024`/`0026`) dat bij het
 draaien zelf al een specifieke `EXCEPTION` opwerpt zodra iets hiervan
 niet klopt.
 
 **Getest**: lokaal (los Postgres-schema met minimale stand-ins voor
 `profiles`/`messages`/`posts`/`trainings`, geen netwerktoegang tot
-Supabase vanuit deze omgeving) - de migratie draait idempotent (tweemaal
-achter elkaar, geen dubbele woorden, geen fouten); een schone bio/bericht/
-post/trainingsopmerking geeft nooit een rij in `flagged_content`; een
-tekst met een woord uit de lijst (Nederlands én Engels getest) geeft
-precies één rij, met het juiste `source_table`/`source_id`/
-`matched_words`; alle vier de schrijfacties slagen altijd, ongeacht een
-treffer (nooit geblokkeerd); `authenticated` kan `content_filter_words`
-noch `flagged_content` direct uitlezen (RLS zonder policies, ook niet de
-eigen flags van de gemarkeerde gebruiker), maar kan `find_flagged_words()`
-wel aanroepen. `npx tsc --noEmit` blijft schoon na het aankoppelen van de
-vier schermen, en een `expo export`-bundel bevat de nieuwe
-`find_flagged_words`/waarschuwing-strings en alle vier de aanroeppunten.
+Supabase vanuit deze omgeving) - beide migraties draaien idempotent; een
+schone bio/bericht/post/trainingsopmerking slaagt gewoon (1 rij
+geraakt/geretourneerd); een tekst met een woord uit de lijst
+(Nederlands én Engels getest) wordt voor alle vier de tabellen
+daadwerkelijk geweigerd (`UPDATE 0`/`INSERT 0 0`, 0 rijen
+`RETURNING`, de bio/opmerking blijft op de vorige waarde staan, er
+wordt geen nieuwe message/post-rij aangemaakt) én levert precies één rij
+op in `flagged_content` met het juiste `source_table`/`matched_words`;
+`authenticated` kan `content_filter_words` noch `flagged_content` direct
+uitlezen, maar wel `find_flagged_words()` aanroepen. `npx tsc --noEmit`
+blijft schoon na het omzetten van alle vijf de aanroeppunten (inclusief
+`MatchScreen.tsx`, een eerder gemiste aanroepplek - zie hieronder), en
+een `expo export`-bundel bevat de nieuwe "Ongepaste taal"-melding en
+geen spoor meer van de oude "toch versturen"-dialoog.
+
+**Bijvangst tijdens deze wijziging**: `MatchScreen.tsx` (het
+"CONNECTIE!"-scherm met het invoerveld voor het allereerste bericht na
+een match) riep `sendMessage()` altijd al rechtstreeks aan, zonder ooit
+door `checkContentFilter()` te zijn gegaan - een aparte aanroepplek naast
+`ChatDetailScreen.tsx`'s `onSend`, gemist bij de oorspronkelijke
+implementatie in `0027`. Nu ook aangekoppeld.
 
 ## Scripts
 

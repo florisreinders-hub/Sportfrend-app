@@ -1485,9 +1485,10 @@ alter table public.flagged_content enable row level security;
 -- flag_content_if_needed: de trigger-functie zelf - kijkt welke tabel
 -- hem aanriep (TG_TABLE_NAME) om de juiste tekstkolom en eigenaar-kolom
 -- te pakken, en schrijft bij een treffer een rij naar flagged_content.
--- Slaat NOOIT de INSERT/UPDATE zelf over (altijd `return NEW`) - dat is
--- precies de "waarschuwen, niet blokkeren"-afweging hierboven, nu op
--- database-niveau in plaats van alleen client-side.
+-- Sinds 0028_content_filter_hard_block.sql: BEFORE-trigger die bij een
+-- treffer `return NULL` geeft (annuleert de INSERT/UPDATE, geen fout die
+-- ook de flagged_content-insert zou terugdraaien) - hard blokkeren, niet
+-- meer alleen markeren. Zie 0028 voor de volledige uitleg.
 create or replace function public.flag_content_if_needed()
 returns trigger
 language plpgsql
@@ -1523,34 +1524,36 @@ begin
 
   if array_length(v_matched, 1) > 0 then
     insert into public.flagged_content (user_id, source_table, source_id, matched_words, reason)
-    values (v_user_id, TG_TABLE_NAME, NEW.id, v_matched, 'Automatisch gedetecteerd door woordenlijst-filter');
+    values (v_user_id, TG_TABLE_NAME, NEW.id, v_matched, 'Automatisch geweigerd door woordenlijst-filter (hard block)');
+
+    return NULL;
   end if;
 
   return NEW;
 end;
 $$;
 
--- Alleen op INSERT, en op UPDATE alleen wanneer de relevante tekstkolom
--- daadwerkelijk in de UPDATE-statement zit (`update of <kolom>`) - zonder
--- dat zou bv. elke keer dat iemand zijn Ontdekken-zichtbaarheid toggelt
--- (een heel andere kolom op profiles) een overbodige herscan van de bio
--- triggeren.
+-- BEFORE (niet AFTER): annuleert de rij zelf bij een treffer. Alleen op
+-- INSERT, en op UPDATE alleen wanneer de relevante tekstkolom daadwerkelijk
+-- in de UPDATE-statement zit (`update of <kolom>`) - zonder dat zou bv.
+-- elke keer dat iemand zijn Ontdekken-zichtbaarheid toggelt (een heel
+-- andere kolom op profiles) een overbodige herscan van de bio triggeren.
 drop trigger if exists flag_bio_content on public.profiles;
 create trigger flag_bio_content
-  after insert or update of bio on public.profiles
+  before insert or update of bio on public.profiles
   for each row execute function public.flag_content_if_needed();
 
 drop trigger if exists flag_message_content on public.messages;
 create trigger flag_message_content
-  after insert on public.messages
+  before insert on public.messages
   for each row execute function public.flag_content_if_needed();
 
 drop trigger if exists flag_post_content on public.posts;
 create trigger flag_post_content
-  after insert on public.posts
+  before insert on public.posts
   for each row execute function public.flag_content_if_needed();
 
 drop trigger if exists flag_training_content on public.trainings;
 create trigger flag_training_content
-  after insert or update of note on public.trainings
+  before insert or update of note on public.trainings
   for each row execute function public.flag_content_if_needed();

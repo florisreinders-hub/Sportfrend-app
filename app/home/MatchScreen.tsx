@@ -11,7 +11,7 @@ import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { getDataErrorMessage, sendMessage } from "@/lib/api";
-import { checkContentFilter, confirmFlaggedContent } from "@/lib/contentFilter";
+import { checkContentFilter, showContentFilterBlockedAlert } from "@/lib/contentFilter";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Match">;
 
@@ -46,8 +46,8 @@ export default function MatchScreen({ route, navigation }: Props) {
     if (!body || !session?.user) return;
     const flagged = await checkContentFilter(body);
     if (flagged.length > 0) {
-      const proceed = await confirmFlaggedContent("bericht", "versturen");
-      if (!proceed) return;
+      showContentFilterBlockedAlert("bericht", "verstuurd");
+      return;
     }
     setError(null);
     setSending(true);

@@ -28,6 +28,17 @@ export function getDataErrorMessage(error: unknown): string {
       case "PGRST205":
       case "42P01":
         return "De database is nog niet volledig ingericht: de benodigde tabel bestaat niet. Voer de SQL-migratie (supabase/migrations/0001_init.sql) uit via de Supabase SQL editor of CLI.";
+      case "PGRST116":
+        // .single() got 0 rows back - in every place this app uses
+        // .select().single() on a write, that almost always means the
+        // content-filter's BEFORE trigger cancelled the row
+        // (0028_content_filter_hard_block.sql's `return NULL`). The normal
+        // flow never reaches this (checkContentFilter() blocks it
+        // client-side first, before this request is even sent) - this is
+        // the defense-in-depth fallback for when that pre-check didn't run
+        // (RPC failure, modified client) but the server-side trigger still
+        // rejected the write.
+        return "Dit bevat mogelijk ongepaste taal en is geweigerd. Pas de tekst aan en probeer opnieuw.";
       case "42501":
       case "PGRST301":
         return "Je hebt geen toegang tot deze gegevens. Log opnieuw in en probeer het nogmaals.";
@@ -665,13 +676,22 @@ export type NewPostFields = {
 // the only "wanneer" field wanted now anyway, no time-of-day); sport stays
 // since it's still wanted, backed by migration 0003 instead.
 export async function createPost(authorId: string, body: string, fields: NewPostFields = {}) {
-  const { error } = await supabase.from("posts").insert({
-    author_id: authorId,
-    body,
-    image_url: fields.imageUrl ?? null,
-    sport: fields.sport ?? null,
-    event_date: fields.eventDate ?? null,
-  });
+  // .select("id").single() (not a bare insert): the only way to detect a
+  // server-side content-filter rejection (0028_content_filter_hard_block.sql's
+  // BEFORE trigger cancels the row via `return NULL`, which a plain
+  // insert without .select() can't distinguish from success - both report
+  // no error and no data).
+  const { error } = await supabase
+    .from("posts")
+    .insert({
+      author_id: authorId,
+      body,
+      image_url: fields.imageUrl ?? null,
+      sport: fields.sport ?? null,
+      event_date: fields.eventDate ?? null,
+    })
+    .select("id")
+    .single();
   if (error) throw error;
 }
 
