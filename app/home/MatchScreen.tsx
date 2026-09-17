@@ -8,7 +8,7 @@ import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { Input } from "@/components/Input";
 import { Button } from "@/components/Button";
-import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
+import { BOTTOM_NAV_HEIGHT, colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { getDataErrorMessage, sendMessage } from "@/lib/api";
 import { checkContentFilter, showContentFilterBlockedAlert } from "@/lib/contentFilter";
@@ -100,7 +100,7 @@ export default function MatchScreen({ route, navigation }: Props) {
       </View>
 
       <Button
-        label="Verder zoeken"
+        label="Verder swipen"
         onPress={() => navigation.replace("Home", { tab: "ontdekken" })}
         style={styles.cta}
       />
@@ -163,6 +163,15 @@ const styles = StyleSheet.create({
   cta: {
     marginHorizontal: spacing.md,
     marginTop: spacing.sm,
-    marginBottom: spacing.md,
+    // BOTTOM_NAV_HEIGHT clearance (not just spacing.md): photoWrap is
+    // flex: 1, so it stretches to fill all remaining vertical space,
+    // pushing this button all the way down to the very bottom of
+    // ScreenContainer's content box (withBottomPadding={false} here, like
+    // almost every screen - see SettingsScreen.tsx's own ScrollView fix
+    // for the same root cause). Without this, the button's full 48px
+    // height plus its old 16px margin (64px total) landed entirely inside
+    // BottomNav's absolutely-positioned 78px-tall bar, rendered underneath
+    // it - present in the tree, invisible and untappable on every device.
+    marginBottom: BOTTOM_NAV_HEIGHT + spacing.md,
   },
 });
