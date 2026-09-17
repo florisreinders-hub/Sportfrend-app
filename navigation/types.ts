@@ -25,4 +25,5 @@ export type RootStackParamList = {
   ChangeEmail: undefined;
   DataExport: undefined;
   MyTrainings: undefined;
+  Moderation: undefined;
 };

@@ -1306,6 +1306,113 @@ door `checkContentFilter()` te zijn gegaan - een aparte aanroepplek naast
 `ChatDetailScreen.tsx`'s `onSend`, gemist bij de oorspronkelijke
 implementatie in `0027`. Nu ook aangekoppeld.
 
+## Moderatie-overzicht
+
+Basaal moderatiescherm, ter voorbereiding op Apple's App Store Review
+Guideline 1.2 (binnen 24 uur kunnen reageren op gerapporteerde/gemarkeerde
+content). Alleen toegankelijk voor één account
+(`floris.reinders@gmail.com`) - een e-mailadres-check, bewust geen
+rollen-tabel/systeem (dit project heeft nog geen ander gebruik voor
+rollen, en één hardcoded adres is eenvoudiger te auditen dan een tabel
+met precies één rij).
+
+**Toegang - twee lagen, met verschillende sterkte**:
+
+1. **Client-side (UX, geen beveiliging)**: `constants/moderator.ts`
+   exporteert `MODERATOR_EMAIL` - de enige plek in de app waar dit adres
+   staat. `SettingsScreen.tsx` toont de "Moderatie"-rij alleen wanneer
+   `session.user.email === MODERATOR_EMAIL`; voor elk ander account
+   bestaat de ingang eenvoudigweg niet ("verborgen/beperkte route" uit de
+   opdracht). `ModerationScreen.tsx` zelf checkt hetzelfde nog eens en
+   toont "Geen toegang" als iemand de route toch weet te raden/forceren.
+2. **Database (de echte grens)**: `public.is_moderator()`
+   (`0029_moderation_dashboard.sql`) is de enige plek waar dit adres
+   *server-side* staat - een `security definer`-functie die `auth.users`
+   opzoekt via `auth.uid()` (nodig omdat `authenticated` zelf geen
+   toegang tot `auth.users` heeft) en vergelijkt met het hardcoded adres.
+   Elke RLS-policy hieronder roept deze functie aan, dus zelfs een
+   client die de check in stap 1 volledig overslaat (gewijzigde app,
+   directe API-aanroep) krijgt gewoon niets terug.
+
+**RLS-policies** (permissive - ze voegen toe aan de bestaande policies,
+nemen niets weg bij een gewone gebruiker):
+- `reports`: "Moderator can view all reports" (SELECT, alle rapportages,
+  niet alleen de eigen rapportages van `0012_moderation_reports_blocks.sql`)
+  en "Moderator can update reports" (UPDATE, voor de "Afgehandeld"-knop).
+- `flagged_content`: "Moderator can view flagged content" (SELECT) - deze
+  tabel had sinds `0027_content_filter.sql` bewust **geen enkele**
+  policy (ook de gemarkeerde gebruiker zelf kon zijn eigen rijen niet
+  zien); dit is de eerste keer dat iemand dit via de app kan lezen.
+
+**Het scherm** (`app/settings/ModerationScreen.tsx`) toont twee lijsten:
+- Openstaande rapportages (`status in ('open', 'reviewing')`) met
+  melder, gerapporteerde gebruiker, reden, details, tijdstip
+  (`fetchOpenReports()`, `lib/api.ts`).
+- De 50 meest recente `flagged_content`-rijen: gebruiker, brontabel,
+  getriggerde woord(en), tijdstip (`fetchRecentFlaggedContent()`).
+
+Twee acties, elk met een paar tikken:
+- **"Afgehandeld"** op een rapportage → `resolveReport()` zet `status`
+  op `'resolved'` (bestaande waarde uit `0012`'s check-constraint, geen
+  nieuwe status nodig).
+- **"Verwijder gebruiker"** (op zowel een rapportage- als een
+  flagged_content-rij) → hergebruikt de bestaande
+  account-verwijderfunctionaliteit: `deleteAccount(userId)`
+  (`lib/auth.ts`) roept dezelfde `delete-account` Edge Function aan als
+  "Account verwijderen" in Instellingen, nu met een optionele
+  `target_user_id` in de request body. De Edge Function checkt zelf
+  (opnieuw, via de JWT van de aanroeper - niet via wat de request body
+  beweert) `is_moderator()` voordat een `target_user_id` die niet de
+  aanroeper zelf is, wordt gehonoreerd; zie de uitgebreide comment
+  bovenaan `supabase/functions/delete-account/index.ts`. Er is geen
+  aparte "schorsen" (tijdelijk) geïmplementeerd - de opdracht vroeg
+  expliciet om de bestaande verwijderfunctionaliteit te hergebruiken
+  "indien mogelijk", en permanent verwijderen is wat er al bestond.
+
+Draai `0029_moderation_dashboard.sql` op je bestaande database -
+`0001_init.sql` is ook bijgewerkt voor nieuwe installaties. Deploy
+daarna de bijgewerkte Edge Function opnieuw (`supabase functions deploy
+delete-account`) - anders blijft "Verwijder gebruiker" in het
+moderatie-overzicht een "Geen toegang"-fout geven, ook al is de
+database-kant klaar. Controleer na het draaien van de migratie met:
+
+```sql
+select
+  (select count(*) from pg_proc where proname = 'is_moderator' and pronamespace = 'public'::regnamespace) as has_is_moderator,
+  has_function_privilege('authenticated', 'public.is_moderator()', 'execute') as authenticated_can_call,
+  (select count(*) from pg_policies where tablename = 'reports' and policyname = 'Moderator can view all reports') as reports_select_policy,
+  (select count(*) from pg_policies where tablename = 'reports' and policyname = 'Moderator can update reports') as reports_update_policy,
+  (select count(*) from pg_policies where tablename = 'flagged_content' and policyname = 'Moderator can view flagged content') as flagged_select_policy;
+-- verwacht: 1, true, 1, 1, 1
+```
+
+De migratie zelf bevat ook een zelfcontrolerend `do $$ ... $$`-blok
+onderaan (zelfde aanpak als `0022`-`0028`) dat bij het draaien zelf al
+een specifieke `EXCEPTION` opwerpt zodra iets hiervan niet klopt.
+
+**Getest**: lokaal (los Postgres-schema met minimale stand-ins voor
+`auth.users`/`profiles`/`reports`/`flagged_content`, geen netwerktoegang
+tot Supabase vanuit deze omgeving) - de migratie draait idempotent;
+`is_moderator()` geeft `true` voor het moderator-e-mailadres en `false`
+voor elk ander account; de moderator kan alle rapportages lezen (niet
+alleen de eigen) én de status bijwerken; een gewone gebruiker (de
+melder) kan nog steeds alleen zijn eigen rapportage lezen (de
+pre-existing `0012`-policy blijft ongewijzigd werken) maar kan die
+**niet** updaten (`UPDATE 0`, RLS weigert het stil); de gerapporteerde
+gebruiker zelf ziet 0 rapportages; de moderator kan `flagged_content`
+lezen, een gewone/gemarkeerde gebruiker ziet daar nog steeds 0 rijen
+(ongewijzigd tov. `0027`); een onbevoegde/niet-ingelogde rol (`anon`)
+ziet 0 rijen in beide tabellen. `npx tsc --noEmit` blijft schoon, en een
+`expo export`-bundel bevat de nieuwe schermtekst en precies één
+voorkomen van het moderator-e-mailadres (bevestigt dat
+`constants/moderator.ts` de enige bron is, geen losse kopieën die uit
+elkaar kunnen lopen). De Edge Function zelf (Deno, buiten `tsc`'s
+scope - `supabase/functions/**` staat expliciet in `tsconfig.json`'s
+`exclude`) is handmatig nagelopen op de nieuwe
+`target_user_id`/`is_moderator()`-tak; een end-to-end test daarvan kan
+alleen tegen een echte Supabase-deployment (geen netwerktoegang tot
+Supabase vanuit deze omgeving).
+
 ## Scripts
 
 - `npm start` — start de Expo dev server

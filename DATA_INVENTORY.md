@@ -1,10 +1,10 @@
 # Data-inventaris: persoonsgegevens in Sportfrend
 
-Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0028_content_filter_hard_block.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest, inclusief `lib/sentry.ts` (crash-reporting, geen migratie) en `lib/contentFilter.ts` (client-side deel van de contentfilter).
+Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0029_moderation_dashboard.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest, inclusief `lib/sentry.ts` (crash-reporting, geen migratie) en `lib/contentFilter.ts` (client-side deel van de contentfilter).
 
 **Dit is een technische inventaris, geen juridisch document.** Voor een AVG/GDPR-verwerkersregister, verwerkersovereenkomsten met Supabase/Resend/Expo/RevenueCat/Sentry, en een officiële bewaartermijnenbeleid is juridisch advies nodig - dit document is bedoeld als de feitelijke basis daarvoor.
 
-Laatst bijgewerkt: bij migratie `0028_content_filter_hard_block.sql` (de contentfilter weigert een treffer nu daadwerkelijk in plaats van alleen te markeren) - zie §2 (`flagged_content`).
+Laatst bijgewerkt: bij migratie `0029_moderation_dashboard.sql` (moderatie-overzicht: één account kan nu alle `reports` en `flagged_content` lezen, rapportages afhandelen en accounts verwijderen) - zie §2 (`reports`, `flagged_content`).
 
 Gebruikers kunnen zelf een overzicht van (vrijwel) alle onderstaande gegevens opvragen via **Instellingen → "Mijn gegevens opvragen"** - zie README.md §"Mijn gegevens opvragen (recht op inzage/dataportabiliteit)" en `lib/dataExport.ts`.
 
@@ -21,7 +21,7 @@ Buiten de eigen tabellen om beheert Supabase Auth zelf al persoonsgegevens - dit
 | Sessie-/refresh-tokens | Gevoelig (credential) | Tot uitloggen of verlopen |
 | Aanmaakdatum, laatste inlogtijd (Supabase-interne velden) | Persoonsgegeven | Tot accountverwijdering |
 
-Wordt volledig verwijderd door **"Account verwijderen"** in Instellingen (`supabase/functions/delete-account`), via `auth.admin.deleteUser()`. Omdat `profiles.id references auth.users(id) on delete cascade`, cascadeert die ene verwijdering automatisch door naar alle tabellen hieronder.
+Wordt volledig verwijderd door **"Account verwijderen"** in Instellingen (`supabase/functions/delete-account`), via `auth.admin.deleteUser()`. Omdat `profiles.id references auth.users(id) on delete cascade`, cascadeert die ene verwijdering automatisch door naar alle tabellen hieronder. Sinds migratie `0029_moderation_dashboard.sql` kan dezelfde Edge Function ook het account van een ándere gebruiker verwijderen ("Verwijder gebruiker" in het moderatie-overzicht) - alleen wanneer de aanroeper zelf `is_moderator()` doorstaat (server-side herverifieerd via diens eigen JWT, niet vertrouwd op wat de aanvraag beweert).
 
 ---
 
@@ -112,7 +112,7 @@ Alleen een actief Elite-abonnement (`has_elite_access()`, zie §"subscriptions")
 | `reason`, `details` | Ja, kan gevoelige beschuldigingen bevatten | Ja | idem |
 | `status` | Nee (moderatie-workflow) | - | - |
 
-Alleen de melder zelf kan zijn eigen rapportages lezen; er is geen moderator-rol/dashboard in de app zelf (moderatie gebeurt nu via directe databasetoegang met de service-role key).
+De melder zelf kan zijn eigen rapportages lezen. Sinds migratie `0029_moderation_dashboard.sql` kan daarnaast precies één account (`floris.reinders@gmail.com`, via de `security definer`-functie `public.is_moderator()` - zie README.md §"Moderatie-overzicht") **alle** rapportages lezen én de status bijwerken (bv. naar `resolved`), vanuit een in-app moderatiescherm (`ModerationScreen.tsx`, alleen bereikbaar voor dat ene account). Geen apart rollen-systeem - één hardcoded e-mailadres, uitsluitend server-side afgedwongen via RLS.
 
 Sinds migratie `0026_reports_and_support_daily_limits.sql` mag een account maximaal 10 rapportages per dag aanmaken (`can_submit_report_today()`, afgedwongen op de INSERT-policy) - voorheen onbeperkt, een mogelijk intimidatiemiddel (iemand overspoelen met valse meldingen).
 
@@ -145,7 +145,7 @@ Sinds migratie `0026_reports_and_support_daily_limits.sql` mag een account maxim
 | `user_id` | Ja | Ja (moderatiegegeven) | Tot accountverwijdering - geen eigen verwijderfunctie |
 | `source_table`, `source_id`, `matched_words`, `reason`, `status` | Nee (verwijst terug naar de bron-rij; `matched_words` is het/de getriggerde woord(en) uit de lijst, geen los stuk vrije tekst) | Matig | idem |
 
-Sinds migratie `0027_content_filter.sql`: automatische controle wanneer `bio` (`profiles`), een chatbericht (`messages`), een post (`posts`) of een trainingsopmerking (`trainings.note`) een woord uit `content_filter_words` bevat (woordgrens-matching, Nederlands + Engels, scheldwoorden/seksueel-expliciet/haatdragend - zie README.md §"Contentfilter"). Sinds migratie `0028_content_filter_hard_block.sql` wordt de content bij een treffer **daadwerkelijk geweigerd** (niet alleen gemarkeerd) - een `BEFORE INSERT/UPDATE`-trigger annuleert de schrijfactie zelf, dus een rij hier betekent voortaan altijd "geweigerde poging", nooit meer "gepubliceerde-maar-gemarkeerde content". Deze weigering is niet te omzeilen (database-niveau, ongeacht wat de client doet); de `content` zelf staat dus nergens meer opgeslagen bij een treffer, alleen het feit dát er een poging was, met welk(e) woord(en). RLS staat aan zonder policies: zelfs de geweigerde gebruiker zelf kan zijn eigen rijen hier niet lezen (dat zou het triggerende woord weglekken); alleen bedoeld voor een toekomstig moderatie-overzicht via directe service-role-toegang.
+Sinds migratie `0027_content_filter.sql`: automatische controle wanneer `bio` (`profiles`), een chatbericht (`messages`), een post (`posts`) of een trainingsopmerking (`trainings.note`) een woord uit `content_filter_words` bevat (woordgrens-matching, Nederlands + Engels, scheldwoorden/seksueel-expliciet/haatdragend - zie README.md §"Contentfilter"). Sinds migratie `0028_content_filter_hard_block.sql` wordt de content bij een treffer **daadwerkelijk geweigerd** (niet alleen gemarkeerd) - een `BEFORE INSERT/UPDATE`-trigger annuleert de schrijfactie zelf, dus een rij hier betekent voortaan altijd "geweigerde poging", nooit meer "gepubliceerde-maar-gemarkeerde content". Deze weigering is niet te omzeilen (database-niveau, ongeacht wat de client doet); de `content` zelf staat dus nergens meer opgeslagen bij een treffer, alleen het feit dát er een poging was, met welk(e) woord(en). RLS staat aan zonder policies voor een gewone gebruiker: zelfs de geweigerde gebruiker zelf kan zijn eigen rijen hier niet lezen (dat zou het triggerende woord weglekken). Sinds migratie `0029_moderation_dashboard.sql` kan het ene moderator-account (zie `reports` hierboven) deze rijen wel lezen, via het in-app moderatiescherm - de eerste keer dat deze tabel via de app in plaats van alleen via directe service-role-toegang bereikbaar is.
 
 `content_filter_words` (de woordenlijst zelf) bevat geen persoonsgegevens - puur beheerde configuratie, geen gebruikersdata, ook zonder policies voor `authenticated` (onzichtbaar voor de client, alleen bereikbaar via de `security definer`-functie `find_flagged_words()`).
 

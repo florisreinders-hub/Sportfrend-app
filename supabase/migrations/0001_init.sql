@@ -1557,3 +1557,43 @@ drop trigger if exists flag_training_content on public.trainings;
 create trigger flag_training_content
   before insert or update of note on public.trainings
   for each row execute function public.flag_content_if_needed();
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Moderatie-overzicht: zie 0029_moderation_dashboard.sql voor de volledige
+-- uitleg. is_moderator() is de enige plek waar het moderator-e-mailadres
+-- staat (geen rollen-tabel) - alleen mirrored hier voor nieuwe installaties.
+-- ─────────────────────────────────────────────────────────────────────────
+create or replace function public.is_moderator()
+returns boolean
+language sql
+security definer
+set search_path = public, auth
+stable
+as $$
+  select exists (
+    select 1 from auth.users
+    where id = auth.uid()
+      and email = 'floris.reinders@gmail.com'
+  );
+$$;
+
+grant execute on function public.is_moderator() to authenticated;
+
+drop policy if exists "Moderator can view all reports" on public.reports;
+create policy "Moderator can view all reports"
+  on public.reports for select
+  to authenticated
+  using (public.is_moderator());
+
+drop policy if exists "Moderator can update reports" on public.reports;
+create policy "Moderator can update reports"
+  on public.reports for update
+  to authenticated
+  using (public.is_moderator())
+  with check (public.is_moderator());
+
+drop policy if exists "Moderator can view flagged content" on public.flagged_content;
+create policy "Moderator can view flagged content"
+  on public.flagged_content for select
+  to authenticated
+  using (public.is_moderator());

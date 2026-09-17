@@ -991,3 +991,75 @@ export async function fetchOwnBlocks(userId: string): Promise<OwnBlock[]> {
   if (error) throw error;
   return (data ?? []) as unknown as OwnBlock[];
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Moderatie-overzicht (ModerationScreen.tsx) - zie
+// 0029_moderation_dashboard.sql. Elke functie hieronder werkt voor elke
+// ingelogde gebruiker even goed clientside, maar levert voor iedereen
+// behalve de moderator een lege set op (of een RLS-fout bij de
+// update-functies) - is_moderator() in de database is de echte grens, dit
+// is geen aparte clientside toegangscontrole.
+// ─────────────────────────────────────────────────────────────────────────
+export type ModerationReport = {
+  id: string;
+  reporter_id: string;
+  reported_id: string;
+  reason: string;
+  details: string | null;
+  status: string;
+  created_at: string;
+  reporter: Profile | null;
+  reported: Profile | null;
+};
+
+/** Alleen 'open'/'reviewing' - een 'resolved'/'dismissed' rapportage hoeft niet meer in het overzicht te staan. */
+export async function fetchOpenReports(): Promise<ModerationReport[]> {
+  const { data, error } = await supabase
+    .from("reports")
+    .select(
+      `id, reporter_id, reported_id, reason, details, status, created_at,
+       reporter:profiles!reports_reporter_id_fkey(${PROFILE_COLUMNS}),
+       reported:profiles!reports_reported_id_fkey(${PROFILE_COLUMNS})`
+    )
+    .in("status", ["open", "reviewing"])
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as unknown as ModerationReport[];
+}
+
+/**
+ * .select().single() (not a bare update): the only reliable way to detect
+ * that the moderator-only RLS policy actually rejected this (0 rows
+ * matched/updated) instead of a bare `.update()` silently reporting
+ * success either way - same reasoning as the content-filter hard block's
+ * write paths (0028_content_filter_hard_block.sql).
+ */
+export async function resolveReport(reportId: string): Promise<void> {
+  const { error } = await supabase.from("reports").update({ status: "resolved" }).eq("id", reportId).select("id").single();
+  if (error) throw error;
+}
+
+export type ModerationFlaggedContent = {
+  id: string;
+  user_id: string;
+  source_table: string;
+  source_id: string;
+  matched_words: string[];
+  reason: string | null;
+  status: string;
+  created_at: string;
+  user: Profile | null;
+};
+
+export async function fetchRecentFlaggedContent(limit = 50): Promise<ModerationFlaggedContent[]> {
+  const { data, error } = await supabase
+    .from("flagged_content")
+    .select(
+      `id, user_id, source_table, source_id, matched_words, reason, status, created_at,
+       user:profiles!flagged_content_user_id_fkey(${PROFILE_COLUMNS})`
+    )
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []) as unknown as ModerationFlaggedContent[];
+}

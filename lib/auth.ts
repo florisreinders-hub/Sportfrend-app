@@ -33,26 +33,39 @@ export async function signOut() {
 }
 
 /**
- * Permanently deletes the signed-in user's account via the delete-account
- * Edge Function (service-role only - deleting the auth.users row and its
- * storage objects both need privileges no user session has). That single
- * deletion cascades (on delete cascade, all the way from auth.users down
- * through profiles) through every table holding this user's data: swipes,
- * matches, messages, posts, post_likes, subscriptions, support_requests,
- * reports, blocks - see the function's own comments for the full chain.
+ * Permanently deletes an account via the delete-account Edge Function
+ * (service-role only - deleting the auth.users row and its storage objects
+ * both need privileges no user session has). That single deletion cascades
+ * (on delete cascade, all the way from auth.users down through profiles)
+ * through every table holding that user's data: swipes, matches, messages,
+ * posts, post_likes, subscriptions, support_requests, reports, blocks,
+ * flagged_content - see the function's own comments for the full chain.
  *
- * Signs out locally afterwards so AuthContext's session clears immediately
- * and RootNavigator switches back to the signed-out stack - the server-side
- * deletion alone doesn't invalidate the token already held on this device.
+ * Two callers:
+ * - No argument: the signed-in user deletes their own account
+ *   ("Account verwijderen" in Instellingen). Signs out locally afterwards
+ *   so AuthContext's session clears immediately and RootNavigator switches
+ *   back to the signed-out stack - the server-side deletion alone doesn't
+ *   invalidate the token already held on this device.
+ * - `targetUserId`: the moderator (ModerationScreen.tsx) deletes someone
+ *   else's account. The Edge Function itself re-checks is_moderator() via
+ *   the caller's own JWT before honoring this - passing a targetUserId
+ *   here is not itself an access check, RLS/is_moderator() is. Does NOT
+ *   sign out locally, since the caller (the moderator) stays logged in to
+ *   their own account.
  */
-export async function deleteAccount() {
-  const { error } = await supabase.functions.invoke("delete-account");
+export async function deleteAccount(targetUserId?: string) {
+  const { error } = await supabase.functions.invoke("delete-account", {
+    body: targetUserId ? { target_user_id: targetUserId } : undefined,
+  });
   if (error) {
     const context = (error as { context?: Response }).context;
     const body = context ? await context.clone().json().catch(() => null) : null;
     throw body?.error ? new Error(body.error) : error;
   }
-  await supabase.auth.signOut();
+  if (!targetUserId) {
+    await supabase.auth.signOut();
+  }
 }
 
 const weakPasswordReasonLabels: Record<string, string> = {

@@ -11,12 +11,14 @@ import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { deleteAccount, signOut } from "@/lib/auth";
 import { fetchProfileSettings, getDataErrorMessage, updateProfileSettings } from "@/lib/api";
+import { MODERATOR_EMAIL } from "@/constants/moderator";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Settings">;
 
 export default function SettingsScreen({ navigation }: Props) {
   const { session } = useAuth();
   const userId = session?.user?.id;
+  const isModerator = session?.user?.email === MODERATOR_EMAIL;
   const [loading, setLoading] = useState(true);
   const [pushEnabled, setPushEnabled] = useState(true);
   const [profileVisible, setProfileVisible] = useState(true);
@@ -217,6 +219,17 @@ export default function SettingsScreen({ navigation }: Props) {
               {deleting ? "Account wordt verwijderd..." : "Account verwijderen"}
             </Text>
           </Pressable>
+
+          {isModerator ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Moderatie</Text>
+              <Pressable style={styles.row} onPress={() => navigation.navigate("Moderation")}>
+                <Ionicons name="shield-checkmark-outline" size={20} color={colors.black} />
+                <Text style={styles.rowLabel}>Moderatie-overzicht</Text>
+                <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+          ) : null}
 
           {__DEV__ ? (
             <View style={styles.section}>
