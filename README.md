@@ -1421,7 +1421,7 @@ scope - `supabase/functions/**` staat expliciet in `tsconfig.json`'s
 alleen tegen een echte Supabase-deployment (geen netwerktoegang tot
 Supabase vanuit deze omgeving).
 
-### "Moderatie"-rij niet zichtbaar? Exacte plek + hoofdlettergevoeligheid
+### "Moderatie"-rij niet zichtbaar? Exacte plek + de layout-bug die dit veroorzaakte
 
 De rij staat helemaal onderaan Instellingen: onder het "Account"-blok
 (Mijn profiel bewerken/E-mail wijzigen/Locatie wijzigen/Abonnement
@@ -1429,29 +1429,33 @@ beheren/Mijn gegevens opvragen), voorbij "Notificatievoorkeuren",
 "Privacy" en "Ondersteuning", **na** "Uitloggen" en "Account
 verwijderen" - als eigen "Moderatie"-sectie met precies één rij
 ("Moderatie-overzicht"), vlak boven de (`__DEV__`-only) "Ontwikkelaar"-
-sectie. Scroll dus helemaal naar beneden.
+sectie.
 
-Als hij daar ook na een volledige herstart niet staat: `0030_moderator_email_case_insensitive.sql`
-maakt zowel `is_moderator()` (database) als de client-side check in
-`SettingsScreen.tsx` hoofdletter-ongevoelig - een exacte, hoofdletter-
-gevoelige `===`/`=`-vergelijking (zoals `0029` en de oorspronkelijke
-`SettingsScreen.tsx` deden) faalt namelijk volledig stil zodra het
-opgeslagen e-mailadres in `auth.users` ook maar één letter anders
-hoofdlettert dan het hardcoded adres - geen foutmelding, de rij
-verschijnt gewoon nooit. Bevestig de daadwerkelijke schrijfwijze in je
-eigen database met:
+Twee eerdere, plausibele-maar-onjuiste verklaringen zijn hier al
+gehard tegen (blijven nuttig als achtergrond, maar waren niet de
+daadwerkelijke oorzaak): `0030_moderator_email_case_insensitive.sql`
+maakt `is_moderator()` én de client-side check hoofdletter-ongevoelig
+(`select email from auth.users where lower(email) = lower('floris.reinders@gmail.com');`
+om je eigen schrijfwijze te checken), en een EAS Update wordt pas
+*gedownload* bij het opstarten en pas *toegepast* bij de eerstvolgende
+herstart daarna (dus altijd twee keer volledig afsluiten en heropenen
+na een nieuwe preview build).
 
-```sql
-select email from auth.users where lower(email) = lower('floris.reinders@gmail.com');
-```
-
-De andere, minstens even waarschijnlijke oorzaak: een EAS Update wordt
-standaard pas *gedownload* bij het opstarten van de app en pas
-*toegepast* bij de eerstvolgende herstart daarna (zie ook de eerdere
-troubleshooting-sectie hierboven over de contentfilter-waarschuwing) -
-één herstart na het publiceren van een preview build is dus vaak niet
-genoeg. Sluit de app volledig af (niet alleen naar de achtergrond) en
-open hem twee keer opnieuw.
+**De daadwerkelijke oorzaak**: `SettingsScreen.tsx` had helemaal geen
+`ScrollView` - alle secties stonden in een platte `View`/Fragment
+direct in `ScreenContainer`'s `flex: 1`-content-`View`. Zolang het
+scherm weinig secties had paste alles nog net binnen de viewport, maar
+met de latere toevoeging van de Moderatie-sectie (en de nog steeds in
+de bundel aanwezige, alleen verborgen "Mijn trainingen"-rij) werd de
+totale inhoud hoger dan het scherm - zonder `ScrollView` is er dan
+simpelweg niets om verder te scrollen, en blijft alles voorbij de
+zichtbare viewport (deels achter de vast gepositioneerde `BottomNav`,
+`position: "absolute"`, zie `components/BottomNav.tsx`) onbereikbaar.
+Opgelost door alle secties in een `<ScrollView
+contentContainerStyle={styles.scrollContent}>` te wrappen (met
+`paddingBottom: BOTTOM_NAV_HEIGHT + spacing.md`, exact hetzelfde
+patroon als `MyTrainingsScreen.tsx` en `ModerationScreen.tsx` al
+gebruikten) - puur een layout-fix, geen gedragswijziging.
 
 ## Scripts
 

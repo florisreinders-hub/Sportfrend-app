@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Switch, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
@@ -7,7 +7,7 @@ import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
-import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
+import { BOTTOM_NAV_HEIGHT, colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { deleteAccount, signOut } from "@/lib/auth";
 import { fetchProfileSettings, getDataErrorMessage, updateProfileSettings } from "@/lib/api";
@@ -148,7 +148,7 @@ export default function SettingsScreen({ navigation }: Props) {
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: spacing.xl }} />
       ) : (
-        <>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Account</Text>
             <Pressable style={styles.row} onPress={() => navigation.navigate("EditProfile")}>
@@ -264,7 +264,7 @@ export default function SettingsScreen({ navigation }: Props) {
               </Text>
             </View>
           ) : null}
-        </>
+        </ScrollView>
       )}
 
       <BottomNav active="menu" />
@@ -273,6 +273,9 @@ export default function SettingsScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
+  scrollContent: {
+    paddingBottom: BOTTOM_NAV_HEIGHT + spacing.md,
+  },
   header: {
     fontFamily: fonts.display,
     fontSize: fontSizes.lg,
