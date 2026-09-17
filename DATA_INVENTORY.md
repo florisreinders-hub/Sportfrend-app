@@ -1,10 +1,10 @@
 # Data-inventaris: persoonsgegevens in Sportfrend
 
-Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0029_moderation_dashboard.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest, inclusief `lib/sentry.ts` (crash-reporting, geen migratie) en `lib/contentFilter.ts` (client-side deel van de contentfilter).
+Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0030_moderator_email_case_insensitive.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest, inclusief `lib/sentry.ts` (crash-reporting, geen migratie) en `lib/contentFilter.ts` (client-side deel van de contentfilter).
 
 **Dit is een technische inventaris, geen juridisch document.** Voor een AVG/GDPR-verwerkersregister, verwerkersovereenkomsten met Supabase/Resend/Expo/RevenueCat/Sentry, en een officiële bewaartermijnenbeleid is juridisch advies nodig - dit document is bedoeld als de feitelijke basis daarvoor.
 
-Laatst bijgewerkt: bij migratie `0029_moderation_dashboard.sql` (moderatie-overzicht: één account kan nu alle `reports` en `flagged_content` lezen, rapportages afhandelen en accounts verwijderen) - zie §2 (`reports`, `flagged_content`).
+Laatst bijgewerkt: bij migratie `0030_moderator_email_case_insensitive.sql` (geen nieuwe gegevenscategorie - `is_moderator()` uit `0029_moderation_dashboard.sql` vergelijkt het moderator-e-mailadres nu hoofdletter-ongevoelig, puur een betrouwbaarheidsfix van de toegangscontrole uit §2 `reports`/`flagged_content`).
 
 Gebruikers kunnen zelf een overzicht van (vrijwel) alle onderstaande gegevens opvragen via **Instellingen → "Mijn gegevens opvragen"** - zie README.md §"Mijn gegevens opvragen (recht op inzage/dataportabiliteit)" en `lib/dataExport.ts`.
 

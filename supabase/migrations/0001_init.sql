@@ -1562,6 +1562,8 @@ create trigger flag_training_content
 -- Moderatie-overzicht: zie 0029_moderation_dashboard.sql voor de volledige
 -- uitleg. is_moderator() is de enige plek waar het moderator-e-mailadres
 -- staat (geen rollen-tabel) - alleen mirrored hier voor nieuwe installaties.
+-- lower(...) op beide kanten (sinds 0030_moderator_email_case_insensitive.sql)
+-- zodat een verschil in hoofdlettergebruik dit nooit stilletjes laat falen.
 -- ─────────────────────────────────────────────────────────────────────────
 create or replace function public.is_moderator()
 returns boolean
@@ -1573,7 +1575,7 @@ as $$
   select exists (
     select 1 from auth.users
     where id = auth.uid()
-      and email = 'floris.reinders@gmail.com'
+      and lower(email) = lower('floris.reinders@gmail.com')
   );
 $$;
 

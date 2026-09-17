@@ -754,6 +754,14 @@ deed. Geaccepteerde trainingen staan ook onder Instellingen →
 "Mijn trainingen" (`app/settings/MyTrainingsScreen.tsx`), voor beide
 deelnemers, ongeacht ieders eigen abonnement.
 
+**De "Mijn trainingen"-rij in Instellingen is tijdelijk verborgen** (op
+verzoek, `SHOW_MY_TRAININGS_ROW` in `SettingsScreen.tsx` staat op
+`false`) - de rest van de functie hierboven (voorstellen, accepteren,
+wijzigen, afwijzen, de kaart in de chat) is onveranderd actief. Het
+scherm/de route zelf (`MyTrainingsScreen.tsx`, `navigation/types.ts`'s
+`"MyTrainings"`) bestaat nog gewoon; alleen de link ernaartoe is weg.
+Zet `SHOW_MY_TRAININGS_ROW` terug op `true` om de rij weer te tonen.
+
 Migratie `supabase/migrations/0024_trainings_planner.sql` (en, voor nieuwe
 installaties, hetzelfde blok in `0001_init.sql`) legt dit vast:
 
@@ -1412,6 +1420,38 @@ scope - `supabase/functions/**` staat expliciet in `tsconfig.json`'s
 `target_user_id`/`is_moderator()`-tak; een end-to-end test daarvan kan
 alleen tegen een echte Supabase-deployment (geen netwerktoegang tot
 Supabase vanuit deze omgeving).
+
+### "Moderatie"-rij niet zichtbaar? Exacte plek + hoofdlettergevoeligheid
+
+De rij staat helemaal onderaan Instellingen: onder het "Account"-blok
+(Mijn profiel bewerken/E-mail wijzigen/Locatie wijzigen/Abonnement
+beheren/Mijn gegevens opvragen), voorbij "Notificatievoorkeuren",
+"Privacy" en "Ondersteuning", **na** "Uitloggen" en "Account
+verwijderen" - als eigen "Moderatie"-sectie met precies één rij
+("Moderatie-overzicht"), vlak boven de (`__DEV__`-only) "Ontwikkelaar"-
+sectie. Scroll dus helemaal naar beneden.
+
+Als hij daar ook na een volledige herstart niet staat: `0030_moderator_email_case_insensitive.sql`
+maakt zowel `is_moderator()` (database) als de client-side check in
+`SettingsScreen.tsx` hoofdletter-ongevoelig - een exacte, hoofdletter-
+gevoelige `===`/`=`-vergelijking (zoals `0029` en de oorspronkelijke
+`SettingsScreen.tsx` deden) faalt namelijk volledig stil zodra het
+opgeslagen e-mailadres in `auth.users` ook maar één letter anders
+hoofdlettert dan het hardcoded adres - geen foutmelding, de rij
+verschijnt gewoon nooit. Bevestig de daadwerkelijke schrijfwijze in je
+eigen database met:
+
+```sql
+select email from auth.users where lower(email) = lower('floris.reinders@gmail.com');
+```
+
+De andere, minstens even waarschijnlijke oorzaak: een EAS Update wordt
+standaard pas *gedownload* bij het opstarten van de app en pas
+*toegepast* bij de eerstvolgende herstart daarna (zie ook de eerdere
+troubleshooting-sectie hierboven over de contentfilter-waarschuwing) -
+één herstart na het publiceren van een preview build is dus vaak niet
+genoeg. Sluit de app volledig af (niet alleen naar de achtergrond) en
+open hem twee keer opnieuw.
 
 ## Scripts
 

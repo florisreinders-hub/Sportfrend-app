@@ -15,10 +15,27 @@ import { MODERATOR_EMAIL } from "@/constants/moderator";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Settings">;
 
+// Tijdelijk verborgen op verzoek (de rest van de Trainings & Buddy
+// Planner-functie - "Plan een training" in de chat, voorstellen/
+// accepteren/afwijzen - blijft gewoon actief; alleen dit
+// overzichtsscherm in Instellingen is uit het zicht). Zet terug op
+// `true` om de rij weer te tonen - de route/het scherm zelf
+// (MyTrainingsScreen, navigation/types.ts's "MyTrainings") is niet
+// verwijderd.
+const SHOW_MY_TRAININGS_ROW = false;
+
 export default function SettingsScreen({ navigation }: Props) {
   const { session } = useAuth();
   const userId = session?.user?.id;
-  const isModerator = session?.user?.email === MODERATOR_EMAIL;
+  // .toLowerCase() aan beide kanten: Supabase Auth normaliseert een
+  // e-mailadres doorgaans naar lowercase, maar een exacte === zonder dit
+  // zou bij de kleinste afwijking (bv. een adres dat ooit met een
+  // hoofdletter is ingevoerd) deze rij stilletjes nooit tonen, zonder
+  // enige foutmelding - precies zo'n stil-falende vergelijking is de
+  // dienst geweest bij eerdere bugs in dit project. is_moderator() in de
+  // database (0030_moderator_email_case_insensitive.sql) is op dezelfde
+  // manier gehard, want dat is de échte grens - dit hier is alleen UX.
+  const isModerator = session?.user?.email?.toLowerCase() === MODERATOR_EMAIL.toLowerCase();
   const [loading, setLoading] = useState(true);
   const [pushEnabled, setPushEnabled] = useState(true);
   const [profileVisible, setProfileVisible] = useState(true);
@@ -159,11 +176,13 @@ export default function SettingsScreen({ navigation }: Props) {
               <Text style={styles.rowLabel}>Mijn gegevens opvragen</Text>
               <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
             </Pressable>
-            <Pressable style={styles.row} onPress={() => navigation.navigate("MyTrainings")}>
-              <Ionicons name="barbell-outline" size={20} color={colors.black} />
-              <Text style={styles.rowLabel}>Mijn trainingen</Text>
-              <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
-            </Pressable>
+            {SHOW_MY_TRAININGS_ROW ? (
+              <Pressable style={styles.row} onPress={() => navigation.navigate("MyTrainings")}>
+                <Ionicons name="barbell-outline" size={20} color={colors.black} />
+                <Text style={styles.rowLabel}>Mijn trainingen</Text>
+                <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+              </Pressable>
+            ) : null}
           </View>
 
           <View style={styles.section}>
