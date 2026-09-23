@@ -36,7 +36,6 @@ import MyTrainingsScreen from "@/app/settings/MyTrainingsScreen";
 import ModerationScreen from "@/app/settings/ModerationScreen";
 
 import PricingScreen from "@/app/premium/PricingScreen";
-import PaymentScreen from "@/app/premium/PaymentScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -94,7 +93,6 @@ export function RootNavigator() {
           <Stack.Screen name="MyTrainings" component={MyTrainingsScreen} />
           <Stack.Screen name="Moderation" component={ModerationScreen} />
           <Stack.Screen name="Pricing" component={PricingScreen} />
-          <Stack.Screen name="Payment" component={PaymentScreen} />
         </>
       )}
     </Stack.Navigator>

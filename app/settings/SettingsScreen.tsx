@@ -12,6 +12,7 @@ import { useAuth } from "@/lib/AuthContext";
 import { deleteAccount, signOut } from "@/lib/auth";
 import { fetchProfileSettings, getDataErrorMessage, updateProfileSettings } from "@/lib/api";
 import { MODERATOR_EMAIL } from "@/constants/moderator";
+import { presentCustomerCenter } from "@/lib/purchases";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Settings">;
 
@@ -25,7 +26,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Settings">;
 const SHOW_MY_TRAININGS_ROW = false;
 
 export default function SettingsScreen({ navigation }: Props) {
-  const { session } = useAuth();
+  const { session, plan } = useAuth();
   const userId = session?.user?.id;
   // .toLowerCase() aan beide kanten: Supabase Auth normaliseert een
   // e-mailadres doorgaans naar lowercase, maar een exacte === zonder dit
@@ -82,6 +83,24 @@ export default function SettingsScreen({ navigation }: Props) {
     } catch (e) {
       setProfileVisible(!value);
       Alert.alert("Opslaan mislukt", getDataErrorMessage(e));
+    }
+  };
+
+  // "Abonnement beheren": Pricing (choose/upgrade) for a Basis account,
+  // RevenueCat's own Customer Center (cancel, change plan, view purchase
+  // history, request a refund on iOS) for an already-paying one - there's
+  // nothing to "manage" via Pricing once a plan is active, and presenting
+  // the paywall again for an upgrade/downgrade is exactly what Customer
+  // Center's own "change plans" option already covers.
+  const onManageSubscription = async () => {
+    if (plan === "basis") {
+      navigation.navigate("Pricing");
+      return;
+    }
+    try {
+      await presentCustomerCenter();
+    } catch (e) {
+      Alert.alert("Kon niet openen", getDataErrorMessage(e));
     }
   };
 
@@ -166,7 +185,7 @@ export default function SettingsScreen({ navigation }: Props) {
               <Text style={styles.rowLabel}>Locatie wijzigen</Text>
               <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
             </Pressable>
-            <Pressable style={styles.row} onPress={() => navigation.navigate("Pricing")}>
+            <Pressable style={styles.row} onPress={onManageSubscription}>
               <Ionicons name="star-outline" size={20} color={colors.black} />
               <Text style={styles.rowLabel}>Abonnement beheren</Text>
               <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />

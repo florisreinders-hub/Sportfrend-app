@@ -726,31 +726,26 @@ export async function toggleLike(postId: string, userId: string, liked: boolean)
   }
 }
 
+/**
+ * Since 0031_subscriptions_webhook_only.sql, this is read-only: RevenueCat
+ * (via supabase/functions/revenuecat-webhook, running server-side with the
+ * service-role key) is the only writer of public.subscriptions -
+ * `authenticated` no longer has INSERT/UPDATE on this table at all, so a
+ * client can no longer grant itself a paid plan without actually paying
+ * (the gap the old upsertSubscription()/selectPendingPlan() sandbox
+ * functions left open). Screens that need to know the *current* plan for
+ * UI purposes (PricingScreen.tsx, SettingsScreen.tsx) read RevenueCat's
+ * own CustomerInfo directly instead (lib/purchases.ts's
+ * fetchCustomerInfo()/getPlanFromCustomerInfo()) - it updates the instant
+ * a purchase completes, without waiting on the webhook round trip.
+ * fetchSubscription() below is for read-only displays where a few
+ * seconds' lag until the webhook lands is fine (e.g. "Mijn gegevens
+ * opvragen" - lib/dataExport.ts).
+ */
 export async function fetchSubscription(userId: string) {
   const { data, error } = await supabase.from("subscriptions").select("*").eq("user_id", userId).maybeSingle();
   if (error) throw error;
   return data;
-}
-
-export async function upsertSubscription(userId: string, plan: "basis" | "premium" | "elite", priceCents: number) {
-  const { error } = await supabase
-    .from("subscriptions")
-    .upsert({ user_id: userId, plan, price_cents: priceCents, status: "active" }, { onConflict: "user_id" });
-  if (error) throw error;
-}
-
-/**
- * Records a plan chosen on the Pricing screen ahead of the (not yet real)
- * payment flow - status "pending", not "active", so a mere selection is
- * never mistaken for a completed payment. PaymentScreen's own checkout
- * still calls upsertSubscription() with status "active" once it actually
- * "pays".
- */
-export async function selectPendingPlan(userId: string, plan: "premium" | "elite", priceCents: number) {
-  const { error } = await supabase
-    .from("subscriptions")
-    .upsert({ user_id: userId, plan, price_cents: priceCents, status: "pending" }, { onConflict: "user_id" });
-  if (error) throw error;
 }
 
 export const WEEKDAY_OPTIONS: { key: string; label: string }[] = [

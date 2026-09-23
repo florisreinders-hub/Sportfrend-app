@@ -930,52 +930,153 @@ getest worden. Dit moet jij zelf doen:
    secret `RESEND_FROM_EMAIL` (bijv. `Sportfrend <support@sportfrend.app>`)
    voor een eigen afzenderadres.
 
-## RevenueCat (Betalen-scherm)
+## RevenueCat (Premium/Elite-abonnementen)
 
-Het Betalen-scherm (`app/premium/PaymentScreen.tsx`) draait nu in een
-**sandbox-modus** die duidelijk als zodanig gelabeld is in de app: er wordt
-geen echte betaling verwerkt, en `react-native-purchases` (RevenueCat's SDK)
-is nog niet geïnstalleerd. Dat is een bewuste keuze, geen omissie: die SDK is
-een native module die niet in Expo Go zit (in tegenstelling tot bijv.
-`expo-image-picker` of `@react-native-community/datetimepicker`, die dat wel
-zijn) - installeren zou een custom EAS development/production build vereisen,
-en Expo Go (waarmee dit hele project tot nu toe getest is) zou de app dan
-niet meer kunnen draaien.
+Echte RevenueCat-integratie (`react-native-purchases` +
+`react-native-purchases-ui`) - de eerdere sandbox-modus
+(`purchasePlanSandbox`/`restorePurchasesSandbox`, een los custom
+`PaymentScreen.tsx`) is vervangen. Beide pakketten zijn native modules,
+net als `@sentry/react-native` - ze draaien niet in Expo Go, alleen in een
+custom EAS dev/production build (zie "Development build op Android"
+hierboven).
 
-`lib/purchases.ts` bevat wel al de productconfiguratie (product-ID's,
-entitlements) die een echte koppeling zou gebruiken, en sandbox-versies van
-de functies (`purchasePlanSandbox`, `restorePurchasesSandbox`) met exact de
-vorm die de echte RevenueCat SDK-aanroepen straks zouden hebben - het
-vervangen van die twee functies door echte `Purchases.purchasePackage()` /
-`Purchases.restorePurchases()`-aanroepen zou de enige codewijziging moeten
-zijn wanneer de SDK er eenmaal in zit.
+**Wat er nu staat:**
 
-**Stappen die jij zelf moet zetten om dit later echt te maken:**
+- Twee entitlements, `premium` en `elite` (matcht dit project se
+  bestaande drie-lagen-abonnement: Basis/Premium/Elite blijft ongewijzigd
+  - zie de "Welke Ontdekken-filters een abonnement mag gebruiken"-sectie
+  hierboven voor hoe `subscriptions.plan` overal in de database gebruikt
+  wordt).
+- Vier producten (maandelijks + jaarlijks per plan), zie
+  `REVENUECAT_PRODUCT_IDS` in `lib/purchases.ts`:
+  - Premium maandelijks — `sportfrend_premium_monthly` (iOS) /
+    `sportfrend:premium-monthly` (Android)
+  - Premium jaarlijks — `sportfrend_premium_yearly` (iOS) /
+    `sportfrend:premium-yearly` (Android)
+  - Elite maandelijks — `sportfrend_elite_monthly` (iOS) /
+    `sportfrend:elite-monthly` (Android)
+  - Elite jaarlijks — `sportfrend_elite_yearly` (iOS) /
+    `sportfrend:elite-yearly` (Android)
+- Twee Offerings in RevenueCat, geïdentificeerd als `premium` en `elite`
+  (`REVENUECAT_OFFERING_IDS`), elk met een maandelijks en een jaarlijks
+  package. `PricingScreen.tsx`'s "Kies"-knop op de Premium-kaart
+  presenteert de `premium`-offering, de Elite-kaart de `elite`-offering -
+  via RevenueCat's eigen, kant-en-klare **Paywall**
+  (`RevenueCatUI.presentPaywall({ offering })`,
+  `presentPaywallForPlan()` in `lib/purchases.ts`). Die paywall regelt
+  zelf package-selectie, de native store-aankoopdialoog,
+  laad-/foutstatussen én "aankopen herstellen" - er is geen eigen
+  betaalscherm meer nodig.
+- **Customer Center** (`RevenueCatUI.presentCustomerCenter()`) voor
+  zelfservice-abonnementsbeheer (opzeggen, wisselen van plan,
+  aankoopgeschiedenis, restitutie aanvragen op iOS) - volledig
+  geconfigureerd vanuit het RevenueCat-dashboard, geen eigen UI nodig.
+  Instellingen → "Abonnement beheren" opent dit voor een account met een
+  actief betaald abonnement, en `PricingScreen` (kiezen/upgraden) voor
+  een Basis-account (`SettingsScreen.tsx`'s `onManageSubscription`).
+- `lib/AuthContext.tsx` koppelt de RevenueCat-identiteit aan de
+  Supabase-sessie: `Purchases.logIn(userId)` bij inloggen,
+  `Purchases.logOut()` bij uitloggen, en een app-brede
+  `CustomerInfoUpdateListener` die `customerInfo`/`plan` in de context
+  actueel houdt (reactief, geen polling) - elk scherm leest dit via
+  `useAuth()` in plaats van zelf RevenueCat aan te roepen.
 
-1. Maak een account aan op [revenuecat.com](https://app.revenuecat.com) en
-   maak een nieuw project aan.
-2. Voeg in dat project een iOS-app en een Android-app toe (App Store
-   Connect-bundle-ID / Google Play-pakketnaam van deze app).
-3. Maak in **App Store Connect** en **Google Play Console** twee
-   auto-renewable/abonnement-producten aan:
-   - Premium — €4,99/maand — product-ID `sportfrend_premium_monthly` (iOS) /
-     `sportfrend:premium-monthly` (Android)
-   - Elite — €9,99/maand — product-ID `sportfrend_elite_monthly` (iOS) /
-     `sportfrend:elite-monthly` (Android)
-   (Deze exacte ID's staan ook in `lib/purchases.ts` - als je andere ID's
-   kiest, moeten ze daar aangepast worden.)
-4. Koppel die producten in RevenueCat aan twee entitlements, `premium` en
-   `elite`, en maak een Offering met beide als packages.
-5. Kopieer de **Public API keys** (RevenueCat-dashboard → Project settings →
-   API keys) voor iOS en Android, en zet ze als
-   `EXPO_PUBLIC_REVENUECAT_IOS_KEY` / `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY` -
-   zowel lokaal in `.env` als in de EAS-omgevingsvariabelen (dezelfde plek
-   waar `EXPO_PUBLIC_SUPABASE_URL` nu al staat).
-6. Laat daarna de daadwerkelijke SDK-installatie en -koppeling bouwen (een
-   vervolgstap: `react-native-purchases` toevoegen, `lib/purchases.ts`'s
-   sandbox-functies vervangen door echte SDK-aanroepen, en een nieuwe
-   EAS-build maken) - dat kan pas nadat stap 1 t/m 5 hierboven staan, en dat
-   testen kan dan niet meer via Expo Go.
+**Waarom de database niet zomaar de client vertrouwt** (de belangrijkste
+architectuurkeuze hier): de RevenueCat-SDK op een toestel is geen
+vertrouwde bron voor wat de *database* moet geloven over iemands
+abonnement - een aangepaste client zou zelf kunnen claimen "ik heb
+Elite". De oude sandbox-flow had precies dit gat (`upsertSubscription()`
+was gewoon door de client zelf aan te roepen, RLS controleerde alleen
+"is dit je eigen rij", nooit "heb je hiervoor betaald"). Sinds
+`0031_subscriptions_webhook_only.sql` mag `authenticated` niet meer
+zelf naar `subscriptions` schrijven (alleen nog SELECT op de eigen rij)
+- de **enige** schrijver is nu `supabase/functions/revenuecat-webhook`,
+een server-side Edge Function (service-role key) die bij elke
+RevenueCat-gebeurtenis de subscriber opnieuw opvraagt via RevenueCat's
+eigen REST API (niet vertrouwen op de payload van één webhook-event
+alleen, dat rapporteert maar één entitlement tegelijk) en op basis
+daarvan `plan`/`status`/`price_cents`/`current_period_end` bijwerkt. De
+client zelf gebruikt `CustomerInfo` nog wél rechtstreeks voor *directe*
+UI-feedback (geen wachttijd op de webhook), maar de database - en dus
+elke RLS-policy/SQL-functie die een betaalde functie afschermt - vertrouwt
+uitsluitend wat via de webhook binnenkomt.
+
+**Dashboard-setup die jij zelf moet doen** (kan niet vanuit deze sandbox
+- geen netwerktoegang tot RevenueCat/App Store Connect/Play Console):
+
+1. Maak een account aan op [revenuecat.com](https://app.revenuecat.com)
+   en een project (of gebruik het bestaande project bij je meegegeven
+   sleutel `test_JLnrnMjweEhqJrGiLDFLTMDyAza`).
+2. Voeg een iOS-app en een Android-app toe aan dat project (App Store
+   Connect-bundle-ID `com.sportfrend.app` / Google Play-pakketnaam
+   `com.sportfrend.app`, zie `app.config.js`).
+3. Maak in **App Store Connect** en **Google Play Console** de acht
+   producten hierboven aan (auto-renewable/abonnement, maandelijks +
+   jaarlijks per plan).
+4. Koppel die producten in RevenueCat aan de entitlements `premium` en
+   `elite`.
+5. Maak twee Offerings, `premium` en `elite`, elk met een `$rc_monthly`-
+   en `$rc_annual`-package die naar het bijbehorende product wijst.
+6. Ontwerp voor beide Offerings een **Paywall** (Paywalls-tab in het
+   dashboard - geen code nodig, RevenueCatUI rendert 'm native).
+7. Zet **Customer Center** aan (Customer Center-tab) en configureer welke
+   management-opties (opzeggen, plan wijzigen, ...) beschikbaar zijn.
+8. Kopieer de **Public API keys** (Project settings → API keys → Public
+   API keys) voor iOS en Android naar `EXPO_PUBLIC_REVENUECAT_IOS_KEY` /
+   `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY` - lokaal in `.env` én als
+   EAS-omgevingsvariabelen (dezelfde plek als `EXPO_PUBLIC_SUPABASE_URL`).
+   De meegegeven sleutel (`test_JLnrnMjweEhqJrGiLDFLTMDyAza`) is zo'n
+   Public API key - controleer in het dashboard of dit de iOS- of de
+   Android-sleutel is (of dezelfde geldt voor beide) en vul de andere aan.
+9. Zet de webhook op (Project settings → Integrations → Webhooks → +
+   Add): URL = je gedeployde `revenuecat-webhook`-functie
+   (`https://<project-ref>.supabase.co/functions/v1/revenuecat-webhook`),
+   Authorization header value = een zelfgekozen random string.
+10. Deploy de functie en zet de bijbehorende secrets (nooit hier
+    committen):
+    ```
+    supabase functions deploy revenuecat-webhook --no-verify-jwt
+    supabase secrets set REVENUECAT_SECRET_KEY=<RevenueCat Secret API key>
+    supabase secrets set REVENUECAT_WEBHOOK_AUTH_HEADER=<dezelfde random string als stap 9>
+    ```
+    (`REVENUECAT_SECRET_KEY` is de **Secret** API key, niet de Public key
+    uit stap 8 - Project settings → API keys → Secret API keys. Deze mag
+    nooit in de client terechtkomen.)
+11. Maak sandbox/test-accounts aan (App Store Connect → Sandbox Testers,
+    Google Play Console → License testers) om een aankoop echt te kunnen
+    doorlopen zonder te betalen.
+
+**Build/testen - géén `eas update` (OTA) meer voor deze wijziging.**
+`react-native-purchases`/`react-native-purchases-ui` zijn native modules
+die net toegevoegd zijn - een bestaande, al geïnstalleerde preview/
+production build heeft die native code nog niet, en zou crashen op elke
+aanroep ernaartoe als je deze wijziging via een gewone OTA-update
+publiceert. Er is een **nieuwe native build** nodig, niet zomaar een
+JS-update:
+```
+npx eas-cli build --profile development --platform android
+npx eas-cli build:run --platform android --latest
+```
+(zelfde development-buildprofiel als in "Development build op Android"
+hierboven - stap 1 t/m 11 hierboven moeten wel eerst staan, anders is er
+niets om te testen).
+
+**Getest**: `npx tsc --noEmit` schoon (tegen de daadwerkelijk
+geïnstalleerde SDK's eigen TypeScript-definities, niet alleen aannames);
+`expo export` bundelt zonder fouten en de bundel bevat de nieuwe
+paywall-/customer-center-aanroepen en alle acht product-ID's. De
+`0031_subscriptions_webhook_only.sql`-migratie is lokaal getest (los
+Postgres-schema): vóór de migratie kon een ingelogde gebruiker zichzelf
+via een directe UPDATE naar `plan = 'elite'` zetten (de kwetsbaarheid
+bevestigd); ná de migratie weigert diezelfde UPDATE (0 rijen, RLS), een
+gebruiker kan nog wel zijn eigen rij lezen maar niet die van een ander,
+en een write via de service-role (wat de webhook gebruikt) werkt
+onveranderd. De Edge Function zelf (Deno, buiten `tsc`'s scope) en de
+daadwerkelijke aankoopflow (paywall, entitlement-toekenning,
+webhook-aflevering) zijn handmatig nagelopen tegen RevenueCat's
+gedocumenteerde API, maar kunnen alleen écht getest worden tegen een
+opgezet RevenueCat-project + een native build op een toestel/simulator -
+geen van beide is beschikbaar in deze sandbox.
 
 ## Sentry crash-reporting
 

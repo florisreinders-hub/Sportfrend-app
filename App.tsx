@@ -21,12 +21,19 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { handleAuthDeepLink } from "@/lib/deepLinking";
 import { initSentry } from "@/lib/sentry";
+import { configurePurchases } from "@/lib/purchases";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 
 // Module-level, not inside the component - must run once, before anything
 // else in the app can throw (including the very first render), and doesn't
 // depend on any component's lifecycle.
 initSentry();
+
+// Also module-level: configure() only needs to run once, and AuthContext's
+// identifyPurchaser()/resetPurchaserIdentity() (called on sign-in/out) and
+// its CustomerInfo listener both assume the SDK is already configured by
+// the time AuthProvider's own effect runs.
+configurePurchases();
 
 function App() {
   const [fontsLoaded, fontError] = useFonts({

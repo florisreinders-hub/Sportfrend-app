@@ -36,6 +36,8 @@
     "expo-updates": "~57.0.21",
     "react": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-purchases": "^10.10.1",
+    "react-native-purchases-ui": "^10.10.1",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-url-polyfill": "^2.0.0"

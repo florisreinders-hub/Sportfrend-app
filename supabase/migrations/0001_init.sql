@@ -613,21 +613,13 @@ create policy "Users can view their own subscription"
   to authenticated
   using (auth.uid() = user_id);
 
--- selectPendingPlan()/upsertSubscription() (lib/api.ts) both .upsert() -
--- Postgres compiles that to INSERT ... ON CONFLICT DO UPDATE, which needs
--- INSERT privilege even when the row already exists and the statement
--- ends up just updating it. Without this policy that upsert is blocked by
--- RLS unconditionally - see supabase/migrations/0007_subscriptions_insert_policy.sql.
-create policy "Users can insert their own subscription"
-  on public.subscriptions for insert
-  to authenticated
-  with check (auth.uid() = user_id);
-
-create policy "Users can update their own subscription"
-  on public.subscriptions for update
-  to authenticated
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
+-- No INSERT/UPDATE policy for `authenticated` here on purpose (see
+-- 0031_subscriptions_webhook_only.sql for the full write-up, needed for
+-- databases that already existed before this) - RevenueCat's webhook
+-- (supabase/functions/revenuecat-webhook), running with the service-role
+-- key, is the only writer of this table. A client-writable policy here
+-- would let an account set its own plan to 'elite' directly, without ever
+-- paying.
 
 -- Flat (not plan-dependent) daily caps on reports/support_requests - see
 -- 0026_reports_and_support_daily_limits.sql for the full writeup. Unlike

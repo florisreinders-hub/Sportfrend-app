@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
+import type { CustomerInfo } from "react-native-purchases";
 import { isSupabaseConfigured, supabase } from "./supabase";
 import { registerForPushNotificationsAsync } from "./notifications";
+import { addCustomerInfoListener, fetchCustomerInfo, getPlanFromCustomerInfo, identifyPurchaser, resetPurchaserIdentity } from "./purchases";
 
 type AuthContextValue = {
   session: Session | null;
@@ -10,6 +12,16 @@ type AuthContextValue = {
   hasLocation: boolean;
   /** True while the location check for the current session is in flight. */
   checkingLocation: boolean;
+  /**
+   * RevenueCat's CustomerInfo for the signed-in user (null while
+   * unconfigured/not yet fetched/signed out). Kept here, centrally,
+   * rather than each screen managing its own fetch + listener -
+   * addCustomerInfoListener() (lib/purchases.ts) keeps this current the
+   * instant a purchase/renewal/expiration happens, without polling.
+   */
+  customerInfo: CustomerInfo | null;
+  /** Derived from customerInfo - "basis" | "premium" | "elite". See lib/purchases.ts's getPlanFromCustomerInfo(). */
+  plan: "basis" | "premium" | "elite";
 };
 
 const AuthContext = createContext<AuthContextValue>({
@@ -17,6 +29,8 @@ const AuthContext = createContext<AuthContextValue>({
   initializing: true,
   hasLocation: false,
   checkingLocation: false,
+  customerInfo: null,
+  plan: "basis",
 });
 
 // Reads via get_my_location() (see PROFILE_COLUMNS's comment in lib/api.ts)
@@ -44,6 +58,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [initializing, setInitializing] = useState(true);
   const [hasLocation, setHasLocation] = useState(false);
   const [checkingLocation, setCheckingLocation] = useState(false);
+  const [customerInfo, setCustomerInfo] = useState<CustomerInfo | null>(null);
 
   // Tracks which user's location we've already checked, so a background
   // token refresh (onAuthStateChange fires for that too, not just a real
@@ -53,6 +68,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const checkedUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    // Registered once, for the app's whole lifetime, not re-registered per
+    // sign-in/out - RevenueCat's own logIn()/logOut() (called below)
+    // determines *which* customer this reflects; the listener itself just
+    // needs to exist to catch a purchase/renewal/expiration/refund
+    // whenever RevenueCat reports one, without polling getCustomerInfo()
+    // on a timer.
+    addCustomerInfoListener(setCustomerInfo);
+
     if (!isSupabaseConfigured) {
       // No valid Supabase project configured: don't hang on a network call that
       // will only ever fail, just fall through to the signed-out state.
@@ -73,6 +96,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // app's own loading state, and a denial/failure here isn't
           // fatal to anything else.
           registerForPushNotificationsAsync(data.session.user.id);
+          await identifyPurchaser(data.session.user.id);
+          setCustomerInfo(await fetchCustomerInfo());
         }
       })
       .catch((error) => {
@@ -89,6 +114,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!userId) {
         checkedUserIdRef.current = null;
         setHasLocation(false);
+        setCustomerInfo(null);
+        resetPurchaserIdentity();
         return;
       }
 
@@ -104,13 +131,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setCheckingLocation(false);
       });
       registerForPushNotificationsAsync(userId);
+      identifyPurchaser(userId).then(async () => {
+        setCustomerInfo(await fetchCustomerInfo());
+      });
     });
 
     return () => listener.subscription.unsubscribe();
   }, []);
 
   return (
-    <AuthContext.Provider value={{ session, initializing, hasLocation, checkingLocation }}>
+    <AuthContext.Provider
+      value={{
+        session,
+        initializing,
+        hasLocation,
+        checkingLocation,
+        customerInfo,
+        plan: getPlanFromCustomerInfo(customerInfo),
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

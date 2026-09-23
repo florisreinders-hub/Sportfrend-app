@@ -18,7 +18,6 @@ export type RootStackParamList = {
   NewPost: { eventDate?: string } | undefined;
   Settings: undefined;
   Pricing: undefined;
-  Payment: { plan: "premium" | "elite" };
   Helpdesk: undefined;
   Faq: undefined;
   Support: undefined;
