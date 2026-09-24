@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Alert, FlatList, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
@@ -269,49 +269,6 @@ export default function HomeScreen({ navigation, route }: Props) {
           ListHeaderComponent={
             <>
               {hasPostsAccess ? <PostComposer style={styles.composer} /> : null}
-              {connections.length > 0 ? (
-                <View style={styles.connectionsSection}>
-                  <Text style={styles.sectionTitle}>CONNECTIES</Text>
-                  {connections.map((item) => {
-                    const other = item.user_a_id === session?.user?.id ? item.user_b : item.user_a;
-                    return (
-                      <Pressable
-                        key={item.id}
-                        style={styles.connectionRow}
-                        onPress={() =>
-                          navigation.navigate("ChatDetail", {
-                            chatId: item.id,
-                            name: other?.full_name ?? "Sportmaatje",
-                            photo: other?.photo_url ?? avatarPlaceholder(other?.id ?? item.id),
-                            otherUserId: other?.id ?? item.id,
-                          })
-                        }
-                      >
-                        {/* Its own nested Pressable (RN resolves this before the
-                            row's own onPress) - viewing a connection's full
-                            profile is only reachable from here, after an
-                            actual match, never from Ontdekken. Falls back to
-                            just opening the chat (the row's own onPress) when
-                            other's real id isn't available. */}
-                        {other?.id ? (
-                          <Pressable onPress={() => navigation.navigate("SporterProfile", { sporterId: other.id })}>
-                            <Image source={{ uri: other?.photo_url ?? avatarPlaceholder(other.id) }} style={styles.avatar} />
-                          </Pressable>
-                        ) : (
-                          <Image
-                            source={{ uri: other?.photo_url ?? avatarPlaceholder(item.id) }}
-                            style={styles.avatar}
-                          />
-                        )}
-                        <View>
-                          <Text style={styles.connectionName}>{other?.full_name ?? "Sportmaatje"}</Text>
-                          <Text style={styles.connectionMeta}>{other?.sport ?? "Sport onbekend"}</Text>
-                        </View>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              ) : null}
               {hasPostsAccess ? (
                 <Text style={styles.sectionTitle}>BERICHTEN</Text>
               ) : (
@@ -438,38 +395,11 @@ const styles = StyleSheet.create({
     marginHorizontal: 0,
     marginBottom: spacing.sm,
   },
-  connectionsSection: {
-    marginBottom: spacing.sm,
-  },
   sectionTitle: {
     fontFamily: fonts.display,
     fontSize: fontSizes.lg,
     color: colors.black,
     marginBottom: spacing.xs,
-  },
-  connectionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.surface,
-  },
-  connectionName: {
-    fontFamily: fonts.accent,
-    fontSize: fontSizes.md,
-    color: colors.black,
-  },
-  connectionMeta: {
-    fontFamily: fonts.body,
-    fontSize: fontSizes.sm,
-    color: colors.textSecondary,
   },
   postsLockedCard: {
     alignItems: "center",
