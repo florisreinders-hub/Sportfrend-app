@@ -1,10 +1,10 @@
 # Data-inventaris: persoonsgegevens in Sportfrend
 
-Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0031_subscriptions_webhook_only.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest, inclusief `lib/sentry.ts` (crash-reporting, geen migratie), `lib/contentFilter.ts` (client-side deel van de contentfilter) en `lib/purchases.ts` (RevenueCat, geen migratie).
+Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0032_notifications.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest, inclusief `lib/sentry.ts` (crash-reporting, geen migratie), `lib/contentFilter.ts` (client-side deel van de contentfilter) en `lib/purchases.ts` (RevenueCat, geen migratie).
 
 **Dit is een technische inventaris, geen juridisch document.** Voor een AVG/GDPR-verwerkersregister, verwerkersovereenkomsten met Supabase/Resend/Expo/RevenueCat/Sentry, en een officiële bewaartermijnenbeleid is juridisch advies nodig - dit document is bedoeld als de feitelijke basis daarvoor.
 
-Laatst bijgewerkt: bij migratie `0031_subscriptions_webhook_only.sql` (echte RevenueCat-integratie: Premium/Elite-abonnementen worden nu daadwerkelijk via de App Store/Google Play verwerkt, en `subscriptions` is voortaan alleen nog server-side schrijfbaar) - zie §2 (`subscriptions`) en §4 (RevenueCat).
+Laatst bijgewerkt: bij migratie `0032_notifications.sql` (in-app meldingencentrum: nieuwe tabel `notifications`, automatisch gevuld via database-triggers bij een nieuwe match, nieuw bericht of afgehandelde rapportage) - zie §2 (`notifications`).
 
 Gebruikers kunnen zelf een overzicht van (vrijwel) alle onderstaande gegevens opvragen via **Instellingen → "Mijn gegevens opvragen"** - zie README.md §"Mijn gegevens opvragen (recht op inzage/dataportabiliteit)" en `lib/dataExport.ts`.
 
@@ -150,6 +150,15 @@ Sinds migratie `0026_reports_and_support_daily_limits.sql` mag een account maxim
 Sinds migratie `0027_content_filter.sql`: automatische controle wanneer `bio` (`profiles`), een chatbericht (`messages`), een post (`posts`) of een trainingsopmerking (`trainings.note`) een woord uit `content_filter_words` bevat (woordgrens-matching, Nederlands + Engels, scheldwoorden/seksueel-expliciet/haatdragend - zie README.md §"Contentfilter"). Sinds migratie `0028_content_filter_hard_block.sql` wordt de content bij een treffer **daadwerkelijk geweigerd** (niet alleen gemarkeerd) - een `BEFORE INSERT/UPDATE`-trigger annuleert de schrijfactie zelf, dus een rij hier betekent voortaan altijd "geweigerde poging", nooit meer "gepubliceerde-maar-gemarkeerde content". Deze weigering is niet te omzeilen (database-niveau, ongeacht wat de client doet); de `content` zelf staat dus nergens meer opgeslagen bij een treffer, alleen het feit dát er een poging was, met welk(e) woord(en). RLS staat aan zonder policies voor een gewone gebruiker: zelfs de geweigerde gebruiker zelf kan zijn eigen rijen hier niet lezen (dat zou het triggerende woord weglekken). Sinds migratie `0029_moderation_dashboard.sql` kan het ene moderator-account (zie `reports` hierboven) deze rijen wel lezen, via het in-app moderatiescherm - de eerste keer dat deze tabel via de app in plaats van alleen via directe service-role-toegang bereikbaar is.
 
 `content_filter_words` (de woordenlijst zelf) bevat geen persoonsgegevens - puur beheerde configuratie, geen gebruikersdata, ook zonder policies voor `authenticated` (onzichtbaar voor de client, alleen bereikbaar via de `security definer`-functie `find_flagged_words()`).
+
+### `notifications`
+
+| Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
+|---|---|---|---|
+| `user_id` | Ja (ontvanger van de melding) | - | Tot accountverwijdering - geen eigen verwijderfunctie |
+| `type`, `reference_id`, `is_read`, `created_at` | Nee (verwijst terug naar de bron-rij - een match, bericht of rapportage; geen los stuk vrije tekst) | - | idem |
+
+Sinds migratie `0032_notifications.sql`: het in-app meldingencentrum, gekoppeld aan het belletje-icoon in `TopBar` (dat voorheen ten onrechte naar het prikbord navigeerde). Rijen worden uitsluitend server-side aangemaakt door drie `security definer`-triggerfuncties (`authenticated` heeft geen INSERT-recht op deze tabel): bij een nieuwe match (`notify_on_new_match()`, voor beide betrokkenen), bij een nieuw bericht (`notify_on_new_message()`, alleen voor de ontvanger, niet de afzender) en wanneer een rapportage naar `status = 'resolved'` overgaat (`notify_on_report_resolved()`, alleen voor de melder, niet de gerapporteerde - en niet opnieuw bij een latere no-op update). RLS staat een gebruiker toe uitsluitend zijn eigen rijen te lezen en te markeren als gelezen (`is_read`) - geen INSERT-policy, dus een gebruiker kan zelf nooit een melding aanmaken of aan een ander toekennen. Zie README.md §"Meldingencentrum" voor de volledige architectuur.
 
 ---
 

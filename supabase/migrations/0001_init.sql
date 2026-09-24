@@ -1591,3 +1591,101 @@ create policy "Moderator can view flagged content"
   on public.flagged_content for select
   to authenticated
   using (public.is_moderator());
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Meldingencentrum: zie 0032_notifications.sql voor de volledige uitleg -
+-- alleen mirrored hier voor nieuwe installaties.
+-- ─────────────────────────────────────────────────────────────────────────
+create table if not exists public.notifications (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  type text not null check (type in ('match', 'message', 'moderation_update')),
+  reference_id uuid not null,
+  is_read boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists notifications_user_id_created_at_idx on public.notifications (user_id, created_at desc);
+create index if not exists notifications_user_id_unread_idx on public.notifications (user_id) where not is_read;
+
+alter table public.notifications enable row level security;
+
+drop policy if exists "Users can view their own notifications" on public.notifications;
+create policy "Users can view their own notifications"
+  on public.notifications for select
+  to authenticated
+  using (auth.uid() = user_id);
+
+drop policy if exists "Users can update their own notifications" on public.notifications;
+create policy "Users can update their own notifications"
+  on public.notifications for update
+  to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create or replace function public.notify_on_new_match()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.notifications (user_id, type, reference_id) values
+    (new.user_a_id, 'match', new.id),
+    (new.user_b_id, 'match', new.id);
+  return new;
+end;
+$$;
+
+drop trigger if exists notify_new_match on public.matches;
+create trigger notify_new_match
+  after insert on public.matches
+  for each row execute function public.notify_on_new_match();
+
+create or replace function public.notify_on_new_message()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_receiver_id uuid;
+begin
+  select case when m.user_a_id = new.sender_id then m.user_b_id else m.user_a_id end
+    into v_receiver_id
+  from public.matches m
+  where m.id = new.match_id;
+
+  if v_receiver_id is not null then
+    insert into public.notifications (user_id, type, reference_id)
+    values (v_receiver_id, 'message', new.match_id);
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists notify_new_message on public.messages;
+create trigger notify_new_message
+  after insert on public.messages
+  for each row execute function public.notify_on_new_message();
+
+create or replace function public.notify_on_report_resolved()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.status = 'resolved' and old.status is distinct from 'resolved' then
+    insert into public.notifications (user_id, type, reference_id)
+    values (new.reporter_id, 'moderation_update', new.id);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists notify_report_resolved on public.reports;
+create trigger notify_report_resolved
+  after update of status on public.reports
+  for each row execute function public.notify_on_report_resolved();

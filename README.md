@@ -1558,6 +1558,115 @@ contentContainerStyle={styles.scrollContent}>` te wrappen (met
 patroon als `MyTrainingsScreen.tsx` en `ModerationScreen.tsx` al
 gebruikten) - puur een layout-fix, geen gedragswijziging.
 
+## Meldingencentrum
+
+Het belletje-icoon in `TopBar.tsx` navigeerde voorheen naar `PostsFeedScreen`
+(het prikbord) - niets met meldingen te maken, puur een verkeerde koppeling.
+Dat is nu een echt meldingencentrum: een nieuwe `notifications`-tabel,
+gevuld via database-triggers (nooit door de client zelf - zie de RLS-
+afweging hieronder), en een nieuw scherm (`NotificationsScreen.tsx`).
+
+**`0032_notifications.sql`** - `public.notifications`: `id`, `user_id`
+(ontvanger), `type` (`match`/`message`/`moderation_update`),
+`reference_id`, `is_read`, `created_at`. `reference_id` heeft bewust
+**geen** foreign key - het wijst, afhankelijk van `type`, naar een
+`matches.id` (`match`/`message` - hetzelfde id dat `ChatDetail` als
+`chatId` gebruikt) of een `reports.id` (`moderation_update`). Een FK kan
+hier niet (het zou naar twee verschillende tabellen moeten kunnen wijzen
+afhankelijk van een andere kolom) - zelfde polymorfe patroon als
+`flagged_content.source_table`/`source_id` uit `0027_content_filter.sql`.
+
+Drie triggers vullen de tabel automatisch:
+- `notify_new_match` (`after insert on matches`) - een rij voor **beide**
+  betrokkenen zodra een match ontstaat.
+- `notify_new_message` (`after insert on messages`) - een rij voor de
+  **ontvanger** (nooit de afzender) - zoekt via `match_id` op welke van de
+  twee deelnemers niet de afzender is.
+- `notify_report_resolved` (`after update of status on reports`) - een
+  rij voor de **melder** (`reporter_id`, nooit de gerapporteerde persoon),
+  alleen bij een daadwerkelijke overgang náár `'resolved'`
+  (`old.status is distinct from 'resolved'` - voorkomt een dubbele
+  melding als status om wat voor reden dan ook nogmaals op `'resolved'`
+  gezet zou worden). Dit vuurt vanzelf zodra `ModerationScreen.tsx`'s
+  "Afgehandeld"-knop (`resolveReport()`) de status wijzigt - geen
+  aanpassing daar nodig.
+
+**RLS**: SELECT + UPDATE voor de eigen rijen (`auth.uid() = user_id`) -
+UPDATE is nodig voor "markeer als gelezen" vanuit de client. Bewust
+**geen** INSERT-policy: een melding aanmaken is uitsluitend iets wat de
+(`security definer`) triggerfuncties hierboven doen. Zonder die
+beperking zou een account voor zichzelf nepmeldingen kunnen aanmaken -
+onschuldig op zich (het is toch al hun eigen rij), maar er is ook geen
+enkele legitieme reden voor de client om dit rechtstreeks te doen, dus
+dicht bij de bron gehouden, zelfde redenering als `flagged_content`s
+ontbrekende policies.
+
+**Client-kant**:
+- `lib/api.ts`: `fetchNotifications(userId)` (leest de meldingen, en voor
+  `match`/`message`-rijen in een tweede round trip de bijbehorende matches
+  mét de andere deelnemer erbij - `reference_id` heeft geen FK, dus
+  PostgREST kan dit niet in één query embedden zoals `fetchConnections()`
+  wel kan via een echte FK), `fetchUnreadNotificationCount(userId)`,
+  `markNotificationRead(id)`.
+- `TopBar.tsx`: het belletje-icoon navigeert nu naar `"Notifications"`
+  (was `"PostsFeed"`), met een rood bolletje met het aantal ongelezen
+  meldingen (`fetchUnreadNotificationCount()`, opnieuw opgehaald via
+  `useFocusEffect` - TopBar is geen navigator-scherm zelf, maar zit wel
+  in de render-boom van welk scherm dan ook actief is, dus dit triggert
+  gewoon telkens wanneer dat omliggende scherm focus krijgt).
+- `NotificationsScreen.tsx`: chronologische lijst (nieuwste eerst), met
+  een korte beschrijving per type ("Nieuwe match met [naam]", "Nieuw
+  bericht van [naam]", "Je rapportage is afgehandeld"), een gevulde
+  achtergrond + vet lettertype + rood bolletje voor ongelezen rijen. Een
+  tik markeert altijd als gelezen (optimistisch, direct zichtbaar) én
+  navigeert naar `ChatDetail` voor `match`/`message` - **behalve** voor
+  `moderation_update` (geen chat/match om naartoe te gaan, zoals
+  gevraagd) of wanneer de bijbehorende match niet meer bestaat (bv. na
+  "Vriend verwijderen" - `otherUser` is dan `null`), in welk geval alleen
+  gemarkeerd wordt.
+- **Prikbord blijft bereikbaar**: via Menu → "Berichten"
+  (`MenuScreen.tsx`) - dat bestond al naast de (nu gecorrigeerde)
+  TopBar-koppeling, dus geen nieuwe ingang nodig.
+
+Draai `0032_notifications.sql` op je bestaande database - `0001_init.sql`
+is ook bijgewerkt voor nieuwe installaties. Controleer na het draaien met:
+
+```sql
+select
+  (select count(*) from pg_proc where proname = 'notify_on_new_match' and pronamespace = 'public'::regnamespace) as has_match_fn,
+  (select count(*) from pg_proc where proname = 'notify_on_new_message' and pronamespace = 'public'::regnamespace) as has_message_fn,
+  (select count(*) from pg_proc where proname = 'notify_on_report_resolved' and pronamespace = 'public'::regnamespace) as has_report_fn,
+  (select count(*) from pg_trigger where tgname = 'notify_new_match' and not tgisinternal) as has_match_trigger,
+  (select count(*) from pg_trigger where tgname = 'notify_new_message' and not tgisinternal) as has_message_trigger,
+  (select count(*) from pg_trigger where tgname = 'notify_report_resolved' and not tgisinternal) as has_report_trigger,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'notifications' and cmd = 'SELECT') as select_policy,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'notifications' and cmd = 'UPDATE') as update_policy,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'notifications' and cmd = 'INSERT') as insert_policy;
+-- verwacht: 1, 1, 1, 1, 1, 1, 1, 1, 0
+```
+
+De migratie zelf bevat ook een zelfcontrolerend `do $$ ... $$`-blok
+onderaan (zelfde aanpak als `0022`-`0031`) dat bij het draaien zelf al
+een specifieke `EXCEPTION` opwerpt zodra iets hiervan niet klopt.
+
+**Getest**: lokaal (los Postgres-schema met `profiles`/`matches`/
+`messages`/`reports`/`notifications`, geen netwerktoegang tot Supabase
+vanuit deze omgeving) - de migratie draait idempotent; een nieuwe match
+geeft precies 2 rijen (één per deelnemer); een nieuw bericht geeft
+precies 1 rij, voor de ontvanger, nooit voor de afzender (in beide
+richtingen getest); een rapportage die naar `'resolved'` gaat geeft
+precies 1 rij voor de melder, nooit voor de gerapporteerde gebruiker;
+nogmaals naar `'resolved'` zetten (no-op-overgang) of naar `'dismissed'`
+zetten geeft geen (extra) melding; RLS bevestigd: een gebruiker ziet en
+markeert alleen zijn eigen rijen (niet die van een ander), een directe
+INSERT door `authenticated` wordt geweigerd (geen INSERT-policy - alleen
+de triggerfuncties mogen schrijven), en `anon` ziet niets.
+`npx tsc --noEmit` blijft schoon, en een `expo export`-bundel bevat de
+nieuwe schermtekst ("MELDINGEN", de drie beschrijvingsvarianten) en de
+nieuwe API-functies. Een live tik-test op een device (badge-telling,
+navigatie, gelezen-status) was niet mogelijk in deze sandbox (geen
+netwerktoegang tot Supabase om in te loggen).
+
 ## Scripts
 
 - `npm start` — start de Expo dev server

@@ -578,6 +578,84 @@ export async function fetchConversations(userId: string): Promise<Conversation[]
     });
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Meldingencentrum (NotificationsScreen.tsx, TopBar.tsx's belletje-icoon) -
+// zie 0032_notifications.sql voor de triggers die deze rijen aanmaken.
+// ─────────────────────────────────────────────────────────────────────────
+export type NotificationType = "match" | "message" | "moderation_update";
+
+export type AppNotification = {
+  id: string;
+  type: NotificationType;
+  reference_id: string;
+  is_read: boolean;
+  created_at: string;
+  /** Alleen gezet voor 'match'/'message' - de andere deelnemer van de match die reference_id is. null voor 'moderation_update', of wanneer die match inmiddels niet meer bestaat (bv. "Vriend verwijderen"). */
+  otherUser: Profile | null;
+};
+
+/**
+ * notifications.reference_id heeft bewust geen foreign key (zie
+ * 0032_notifications.sql - het wijst naar matches óf reports, afhankelijk
+ * van `type`), dus PostgREST kan dit niet in één query embedden zoals
+ * fetchConnections() dat wel kan voor een echte FK. Twee round trips in
+ * plaats van één: eerst de meldingen zelf, dan (alleen voor 'match'/
+ * 'message'-rijen) de betrokken matches met de andere deelnemer erbij -
+ * zelfde profiel-embed-patroon als fetchConnections() hierboven.
+ */
+export async function fetchNotifications(userId: string, limit = 50): Promise<AppNotification[]> {
+  const { data: rows, error } = await supabase
+    .from("notifications")
+    .select("id, type, reference_id, is_read, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  const notifications = rows ?? [];
+
+  const matchIds = Array.from(
+    new Set(notifications.filter((n) => n.type === "match" || n.type === "message").map((n) => n.reference_id))
+  );
+
+  const otherUserByMatchId = new Map<string, Profile | null>();
+  if (matchIds.length > 0) {
+    const { data: matches, error: matchError } = await supabase
+      .from("matches")
+      .select(`id, user_a_id, user_b_id, user_a:profiles!matches_user_a_id_fkey(${PROFILE_COLUMNS}), user_b:profiles!matches_user_b_id_fkey(${PROFILE_COLUMNS})`)
+      .in("id", matchIds);
+    if (matchError) throw matchError;
+    for (const match of matches ?? []) {
+      const otherUser = (match.user_a_id === userId ? match.user_b : match.user_a) as unknown as Profile | null;
+      otherUserByMatchId.set(match.id, otherUser);
+    }
+  }
+
+  return notifications.map((n) => ({
+    ...n,
+    otherUser: n.type === "match" || n.type === "message" ? (otherUserByMatchId.get(n.reference_id) ?? null) : null,
+  }));
+}
+
+export async function fetchUnreadNotificationCount(userId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from("notifications")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .eq("is_read", false);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+export async function markNotificationRead(notificationId: string): Promise<void> {
+  const { error } = await supabase
+    .from("notifications")
+    .update({ is_read: true })
+    .eq("id", notificationId)
+    .select("id")
+    .single();
+  if (error) throw error;
+}
+
 const WEEKDAYS_NL = ["zo", "ma", "di", "wo", "do", "vr", "za"];
 
 /** Compact chat-list timestamp: "14:32" today, "Gisteren", weekday within a week, else "DD-MM-JJJJ". */
