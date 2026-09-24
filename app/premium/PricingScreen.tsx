@@ -8,6 +8,7 @@ import { DetailHeader } from "@/components/DetailHeader";
 import { BottomNav } from "@/components/BottomNav";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
+import { getDataErrorMessage } from "@/lib/api";
 import { fetchCustomerInfo, getPlanFromCustomerInfo, isPurchasesConfigured, PlanId, presentPaywallForPlan } from "@/lib/purchases";
 
 type Plan = {
@@ -117,6 +118,13 @@ export default function PricingScreen({ navigation }: Props) {
           // latter case, nothing more to show here.
           break;
       }
+    } catch (e) {
+      // Distinct from the ERROR case above (a *result* the paywall itself
+      // reports) - this is presentPaywallForPlan() throwing outright, e.g.
+      // the native module isn't actually linked in this binary yet (an
+      // OTA update shipped this code ahead of a matching native build -
+      // see README.md's "RevenueCat" section).
+      Alert.alert("Aankoop mislukt", getDataErrorMessage(e));
     } finally {
       setPurchasingPlan(null);
     }

@@ -95,8 +95,22 @@ export function configurePurchases() {
     return;
   }
 
-  Purchases.setLogLevel(__DEV__ ? LOG_LEVEL.DEBUG : LOG_LEVEL.WARN);
-  Purchases.configure({ apiKey: REVENUECAT_API_KEY });
+  // Wrapped in try/catch (not just the "key missing" check above): the
+  // native module itself might not be linked into the running binary even
+  // when the key IS set - Expo Go (never has it), or an OTA update that
+  // shipped this code to a build compiled before react-native-purchases
+  // was added (see README.md's "geen eas update" warning). Purchases.configure()
+  // calling into a missing native module throws synchronously, and this
+  // runs at module level in App.tsx before the app has rendered anything -
+  // uncaught, that's a blank-crash on every launch, not just a broken
+  // paywall. Fails open like every other optional-config handling in this
+  // app instead.
+  try {
+    Purchases.setLogLevel(__DEV__ ? LOG_LEVEL.DEBUG : LOG_LEVEL.WARN);
+    Purchases.configure({ apiKey: REVENUECAT_API_KEY });
+  } catch (e) {
+    console.warn("[RevenueCat] Purchases.configure() mislukt (native module niet gelinkt?):", e);
+  }
 }
 
 /**
@@ -173,7 +187,15 @@ export function getEntitlementExpiration(customerInfo: CustomerInfo | null, plan
  */
 export function addCustomerInfoListener(listener: (customerInfo: CustomerInfo) => void) {
   if (!isPurchasesConfigured) return;
-  Purchases.addCustomerInfoUpdateListener(listener);
+  // Same reasoning as configurePurchases()'s try/catch: this runs inside
+  // AuthContext's mount effect, i.e. still very early in the app's
+  // lifetime - a missing/unlinked native module here shouldn't crash
+  // every screen behind AuthProvider.
+  try {
+    Purchases.addCustomerInfoUpdateListener(listener);
+  } catch (e) {
+    console.warn("[RevenueCat] Purchases.addCustomerInfoUpdateListener() mislukt:", e);
+  }
 }
 
 /** Fetches the named Offering (REVENUECAT_OFFERING_IDS) for the given plan - null if the SDK isn't configured, the offering doesn't exist in the dashboard yet, or the fetch fails. */
