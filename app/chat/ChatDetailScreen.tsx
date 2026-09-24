@@ -335,8 +335,14 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
         <Pressable onPress={() => navigation.goBack()} hitSlop={8}>
           <Ionicons name="arrow-back" size={24} color={colors.black} />
         </Pressable>
-        <Image source={{ uri: photo }} style={styles.avatar} />
-        <Text style={styles.name}>{name}</Text>
+        <Pressable
+          style={({ pressed }) => [styles.profileLink, pressed && styles.profileLinkPressed]}
+          onPress={() => navigation.navigate("SporterProfile", { sporterId: otherUserId })}
+          hitSlop={4}
+        >
+          <Image source={{ uri: photo }} style={styles.avatar} />
+          <Text style={styles.name}>{name}</Text>
+        </Pressable>
         <View style={{ flex: 1 }} />
         <Pressable onPress={onOpenMenu} hitSlop={8}>
           <Ionicons name="ellipsis-vertical" size={22} color={colors.black} />
@@ -491,6 +497,14 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+  },
+  profileLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  profileLinkPressed: {
+    opacity: 0.6,
   },
   avatar: {
     width: 32,
