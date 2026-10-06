@@ -116,6 +116,8 @@ De melder zelf kan zijn eigen rapportages lezen. Sinds migratie `0029_moderation
 
 Sinds migratie `0026_reports_and_support_daily_limits.sql` mag een account maximaal 10 rapportages per dag aanmaken (`can_submit_report_today()`, afgedwongen op de INSERT-policy) - voorheen onbeperkt, een mogelijk intimidatiemiddel (iemand overspoelen met valse meldingen).
 
+Sinds de Edge Function `send-moderation-alert` triggert elke nieuwe rapportage ook een e-mail naar de moderator via Resend (§4) - zie README.md §"Moderatie-e-mail (nieuwe rapportage)". Alleen de reden, eventuele details, de naam van de gerapporteerde gebruiker en het tijdstip gaan in die mail - niet de identiteit van de melder en niet `match_id` (data-minimalisatie, en dat laatste staat sowieso al niet in `reports` elders gevoelig beschreven).
+
 ### `blocks`
 
 | Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
@@ -179,6 +181,7 @@ Beide buckets zijn publiek leesbaar (`public: true`) - elke URL is opvraagbaar d
 |---|---|---|---|
 | **Supabase** (database, auth, storage, edge functions, realtime) | Alle bovenstaande gegevens - dit ís de primaire opslag | Kernfunctionaliteit van de app | - |
 | **Resend** (`send-support-email`) | Naam, e-mailadres, gebruikers-ID, onderwerp en volledige tekst van een Klantenservice-bericht | E-mail naar `info.sportfrend@gmail.com` sturen bij een support-aanvraag | README.md §"Klantenservice-e-mail (Resend)" |
+| **Resend** (`send-moderation-alert`) | Naam van de gerapporteerde gebruiker, reden, eventuele details, tijdstip van een rapportage - **niet** de identiteit van de melder | E-mail naar `MODERATOR_ALERT_EMAIL` (standaard `info.sportfrend@gmail.com`) sturen bij elke nieuwe rapportage | README.md §"Moderatie-e-mail (nieuwe rapportage)" |
 | **Expo / EAS** (Push-API, `exp.host`) | Expo push-token, verzendernaam (`full_name`), **eerste 120 tekens van een berichttekst**, "Je hebt een match met {naam}", of sport/locatie van een geaccepteerde training (herinnering 2 uur van tevoren) | Pushmeldingen bij nieuwe berichten/matches/trainingsherinneringen | README.md §"Pushmeldingen (Expo Notifications)", §"Trainings & Buddy Planner (Elite-only)" |
 | **Expo / EAS** (Update-hosting, `u.expo.dev`) | Geen gebruikersgegevens - alleen de gecompileerde JS-bundle (code, geen userdata) wordt gehost | OTA-updates van de preview build | - |
 | **RevenueCat** (`react-native-purchases`, `supabase/functions/revenuecat-webhook`) | De Supabase gebruikers-ID (als RevenueCat `app_user_id` - `Purchases.logIn()`), aankoop-/abonnementsstatus (welk entitlement/product, verloopdatum), apparaat-/platforminformatie die de SDK zelf verzamelt voor attributie. **Geen** creditcard-/betaalgegevens - die lopen uitsluitend via Apple/Google's eigen betaalinfrastructuur, RevenueCat en deze app zien alleen het resultaat (actief/niet actief) | Premium/Elite-abonnementen: aankoop, entitlement-toekenning, en de server-side sync naar `subscriptions` | README.md §"RevenueCat (Premium/Elite-abonnementen)", `lib/purchases.ts`, `0031_subscriptions_webhook_only.sql` |

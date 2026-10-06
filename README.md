@@ -1558,6 +1558,119 @@ contentContainerStyle={styles.scrollContent}>` te wrappen (met
 patroon als `MyTrainingsScreen.tsx` en `ModerationScreen.tsx` al
 gebruikten) - puur een layout-fix, geen gedragswijziging.
 
+## Moderatie-e-mail (nieuwe rapportage)
+
+Naast de in-app meldingen (zie "Meldingencentrum" hieronder) en het
+moderatiescherm zelf (zie "Moderatie-overzicht") krijgt de moderator nu
+ook een **e-mail** zodra er een nieuwe rapportage binnenkomt - zodat die
+niet onopgemerkt blijft tot iemand toevallig het moderatiescherm opent.
+
+**Hoe het werkt**: een database webhook op `INSERT` in `public.reports`
+roept een nieuwe Edge Function aan, `send-moderation-alert`
+(`supabase/functions/send-moderation-alert/index.ts`), die via
+[Resend](https://resend.com) een e-mail stuurt. Dezelfde opzet als
+`send-message-push`/`send-match-push` (zie "Pushmeldingen" hierboven):
+geen gebruikers-JWT (de aanroeper is Postgres, geen ingelogde gebruiker),
+dus authenticatie loopt via een gedeeld geheim in de `x-webhook-secret`-
+header, gecontroleerd tegen de **al bestaande** `DB_WEBHOOK_SECRET`-secret
+(hergebruikt `verifyWebhookSecret()`/`createServiceRoleClient()`/
+`jsonResponse()` uit `_shared/push.ts` - geen nieuw geheim nodig voor dit
+deel).
+
+**Inhoud van de e-mail** (onderwerp "Nieuwe rapportage op Sportfrend"):
+de reden, eventuele details, de naam van de gerapporteerde gebruiker, en
+het tijdstip (in de `Europe/Amsterdam`-tijdzone) - plus de zin dat de
+rapportage binnen 24 uur beoordeeld moet worden via Instellingen →
+Moderatie-overzicht. **Bewust weggelaten** (data-minimalisatie): de
+identiteit van de melder, `match_id`, en alle berichtinhoud - niets
+hiervan staat sowieso in `reports` (zie "RLS-beveiligingsaudit"), dus er
+is ook niets van over te nemen.
+
+**Twee secrets, één al bestaand:**
+
+- `RESEND_API_KEY` en `RESEND_FROM_EMAIL` - al geconfigureerd (zie
+  "Klantenservice-e-mail (Resend)" hierboven), deze functie hergebruikt
+  ze ongewijzigd.
+- **Nieuw**: `MODERATOR_ALERT_EMAIL` - het ontvangende adres. Valt terug
+  op **`info.sportfrend@gmail.com`** als deze secret niet gezet is, dus
+  strikt genomen optioneel:
+  ```bash
+  supabase secrets set MODERATOR_ALERT_EMAIL=info.sportfrend@gmail.com
+  ```
+
+**Handmatige stappen die jij zelf moet zetten:**
+
+1. **Deploy de Edge Function** (`--no-verify-jwt`, zelfde reden als bij
+   de pushmeldingen-functies - er is geen gebruikers-JWT om te
+   verifiëren, `verifyWebhookSecret()` is de echte toegangscontrole):
+   ```bash
+   supabase functions deploy send-moderation-alert --no-verify-jwt
+   ```
+2. **Maak de database webhook handmatig aan in het Supabase-dashboard**
+   (**Database → Webhooks → Create a new webhook**) - dit project heeft
+   het `supabase_functions`-schema niet beschikbaar, dus de SQL-trigger-
+   aanpak uit `0011_push_notifications.sql`
+   (`supabase_functions.http_request(...)`) werkt hier niet; de
+   dashboard-UI zet onder water een equivalente trigger op zonder dat
+   schema nodig te hebben. Vul in:
+   - **Table**: `reports` (schema `public`)
+   - **Events**: alleen **Insert** (niet Update/Delete)
+   - **Type of webhook**: HTTP Request
+   - **HTTP Method**: `POST`
+   - **URL**: `https://duefdlibkeghdskongjd.supabase.co/functions/v1/send-moderation-alert`
+   - **HTTP Headers**: voeg toe
+     - `Content-type: application/json`
+     - `x-webhook-secret: <dezelfde waarde als je al bij DB_WEBHOOK_SECRET
+       hebt gezet voor de pushmeldingen, zie "Pushmeldingen" stap 2>`
+3. Als `DB_WEBHOOK_SECRET` nog nooit gezet is (bijv. als de
+   pushmeldingen-functies nog niet gedeployed zijn), genereer en zet die
+   eerst:
+   ```bash
+   openssl rand -hex 32
+   supabase secrets set DB_WEBHOOK_SECRET=<de gegenereerde waarde>
+   ```
+
+**Testen dat de mail aankomt** (nadat stap 1-3 hierboven zijn gedaan):
+maak vanuit de app een echte rapportage aan (Sporter-profiel of chat →
+"Rapporteren"), of voer rechtstreeks in de Supabase SQL Editor een test-
+insert uit:
+```sql
+insert into public.reports (reporter_id, reported_id, reason, details)
+values ('<jouw eigen user-id>', '<een andere bestaande user-id>', 'Test', 'Testrapportage voor de e-mailkoppeling.');
+```
+Controleer binnen enkele seconden de inbox van `MODERATOR_ALERT_EMAIL`
+(of `info.sportfrend@gmail.com` als die secret niet gezet is). Komt er
+niets aan, bekijk de **Logs** van de `send-moderation-alert`-functie in
+het Supabase-dashboard (Edge Functions → Logs) - een `401` betekent een
+verkeerde/ontbrekende `x-webhook-secret`-header op de webhook, een `502`
+een Resend-foutmelding (zie diezelfde logs voor de exacte Resend-respons).
+
+**Getest**: deze sandbox heeft geen netwerktoegang tot Supabase of
+Resend, dus een echte end-to-end deploy/verzending kon hier niet
+gebeuren - dat is aan jou via de stappen hierboven. Wel lokaal getest met
+een echte Deno-runtime (`deno run`, de daadwerkelijke
+`send-moderation-alert/index.ts`, niet een kopie): de globale `fetch`
+gemonkeypatcht om de Resend- en Supabase-REST-aanroepen te onderscheppen
+(alles daarbuiten gaat gewoon naar het echte `fetch`, inclusief de HTTP-
+requests die de test naar de lokale `Deno.serve`-server zelf stuurt) en
+een import-map die de `@supabase/supabase-js`-importeer vervangt door een
+minimale lokale stub (deze sandbox heeft ook geen toegang tot esm.sh).
+Bevestigd: een verkeerde/ontbrekende `x-webhook-secret` geeft `401` zonder
+dat Resend wordt aangeroepen; een geldige rapportage geeft `200` en
+precies één Resend-aanroep met het juiste onderwerp, de naam van de
+gerapporteerde gebruiker (via een losse profiles-lookup), de reden, de
+details, de 24-uur-zin en de verwijzing naar Moderatie-overzicht; de
+melder (`reporter_id`) komt nergens in de verstuurde e-mail voor (expliciet
+gecontroleerd, data-minimalisatie); `MODERATOR_ALERT_EMAIL` overschrijft
+de `info.sportfrend@gmail.com`-fallback zodra gezet; een rapportage zonder
+`details` laat de "Details"-paragraaf gewoon helemaal weg (geen letterlijke
+"null" in de mail); een onvolledige payload geeft `400`; een ontbrekende
+`RESEND_API_KEY` geeft `500`, beide zonder een Resend-aanroep te wagen; en
+een foutmelding van Resend zelf (getest met een gemockte `429`) geeft
+`502`. `deno check` (met dezelfde import-map-stub) geeft geen
+type-fouten. Geen app-/clientcode gewijzigd in deze taak, dus geen nieuwe
+preview build nodig.
+
 ## Meldingencentrum
 
 Het belletje-icoon in `TopBar.tsx` navigeerde voorheen naar `PostsFeedScreen`
