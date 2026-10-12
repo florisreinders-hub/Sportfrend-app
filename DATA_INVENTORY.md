@@ -1,10 +1,10 @@
 # Data-inventaris: persoonsgegevens in Sportfrend
 
-Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0032_notifications.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest, inclusief `lib/sentry.ts` (crash-reporting, geen migratie), `lib/contentFilter.ts` (client-side deel van de contentfilter) en `lib/purchases.ts` (RevenueCat, geen migratie).
+Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0033_terms_acceptance.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest, inclusief `lib/sentry.ts` (crash-reporting, geen migratie), `lib/contentFilter.ts` (client-side deel van de contentfilter) en `lib/purchases.ts` (RevenueCat, geen migratie).
 
 **Dit is een technische inventaris, geen juridisch document.** Voor een AVG/GDPR-verwerkersregister, verwerkersovereenkomsten met Supabase/Resend/Expo/RevenueCat/Sentry, en een officiële bewaartermijnenbeleid is juridisch advies nodig - dit document is bedoeld als de feitelijke basis daarvoor.
 
-Laatst bijgewerkt: bij migratie `0032_notifications.sql` (in-app meldingencentrum: nieuwe tabel `notifications`, automatisch gevuld via database-triggers bij een nieuwe match, nieuw bericht of afgehandelde rapportage) - zie §2 (`notifications`).
+Laatst bijgewerkt: bij migratie `0033_terms_acceptance.sql` (verplicht vinkje bij registratie voor de algemene voorwaarden/privacyverklaring, vastgelegd in de nieuwe kolom `profiles.terms_accepted_at`) - zie §2 (`profiles`).
 
 Gebruikers kunnen zelf een overzicht van (vrijwel) alle onderstaande gegevens opvragen via **Instellingen → "Mijn gegevens opvragen"** - zie README.md §"Mijn gegevens opvragen (recht op inzage/dataportabiliteit)" en `lib/dataExport.ts`.
 
@@ -44,9 +44,12 @@ Eén rij per gebruiker; bevat het overgrote deel van de persoonsgegevens in de a
 | `avatar_url`, `photo_url` | Ja (foto van de gebruiker) | Ja (biometrisch-achtig beeldmateriaal) | Zie §3 (Storage) - oude foto's blijven staan tot accountverwijdering |
 | `is_onboarded`, `profile_visible`, `push_notifications_enabled`, `availability_days` | Nee (app-instellingen) | - | - |
 | `expo_push_token` | Ja (apparaat-identifier) | Ja - zie §5 | Tot accountverwijdering of nieuwe registratie (wordt overschreven) |
+| `terms_accepted_at` | Nee (bewijs van toestemming, geen inhoudelijk persoonsgegeven) | - | Tot accountverwijdering - geen eigen verwijder-/wijzigfunctie, bewust (zie hieronder) |
 | `created_at`, `updated_at` | Metadata | - | Tot accountverwijdering |
 
 RLS + kolomrechten: elke rij is leesbaar door alle ingelogde gebruikers **behalve** `expo_push_token` en `latitude`/`longitude` (beide kolom-niveau geblokkeerd voor de `authenticated`-rol, alleen bereikbaar via de `SECURITY DEFINER`-functies hierboven) en behalve wanneer er een blokkade bestaat of `profile_visible = false` (dan alleen zichtbaar voor de eigenaar zelf of een bestaande match). Zie `supabase/migrations/0013_rls_security_audit_fixes.sql` en `0014_discover_profiles_location_privacy.sql`.
+
+Sinds migratie `0033_terms_acceptance.sql`: `terms_accepted_at` legt vast *wanneer* iemand akkoord ging met de algemene voorwaarden en de privacyverklaring (verplicht vinkje bij registratie, zie `RegisterDetailsScreen.tsx`) - `null` voor elk account dat vóór deze migratie al bestond. Gevuld door `handle_new_user()` op het moment dat `auth.users` ontstaat (leest `terms_accepted: true` uit de signup-metadata die de client meegeeft), niet door een latere client-schrijfactie - dat is precies waarom de kolom ook achteraf niet zelf gewijzigd kan worden: de `authenticated`-rol heeft hier wél leesrecht (kolom-niveau, net als de meeste andere profielkolommen) maar géén schrijfrecht meer op deze ene kolom (`revoke update on public.profiles from authenticated` gevolgd door een expliciete `grant update (...)` die `terms_accepted_at` bewust overslaat) - de bestaande rij-niveau RLS-policy ("Users can update their own profile") alleen kan dit niet afdwingen, RLS is niet kolom-bewust. Opgenomen in "Mijn gegevens opvragen" (`lib/dataExport.ts`).
 
 ### `swipes`
 

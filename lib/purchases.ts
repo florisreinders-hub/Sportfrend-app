@@ -229,6 +229,30 @@ export async function presentPaywallForPlan(plan: PlanId): Promise<PresentPaywal
   return { result, customerInfo };
 }
 
+export type RestorePurchasesResult = { foundActiveEntitlement: boolean; customerInfo: CustomerInfo | null };
+
+/**
+ * Explicit "Aankopen herstellen" button (PricingScreen) - re-links any
+ * purchase already made on the App/Play Store account signed in on this
+ * device to the current RevenueCat identity, for when a purchase didn't
+ * sync automatically (reinstall, new device, a purchase made while
+ * signed into a different Sportfrend account). Distinct from the restore
+ * option RevenueCat's own paywall UI already offers during a purchase
+ * attempt (presentPaywallForPlan above) - this one needs to work even
+ * when the user never opens the paywall at all.
+ *
+ * Purchases.restorePurchases() resolves normally (doesn't throw) whether
+ * or not anything was actually found - foundActiveEntitlement is what
+ * distinguishes "restored something" from "nothing to restore" for the
+ * caller's success message. Lets a real SDK/network error propagate
+ * uncaught, same convention as presentPaywallForPlan/presentCustomerCenter
+ * (the caller shows its own Alert).
+ */
+export async function restorePurchases(): Promise<RestorePurchasesResult> {
+  const customerInfo = await Purchases.restorePurchases();
+  return { foundActiveEntitlement: getPlanFromCustomerInfo(customerInfo) !== "basis", customerInfo };
+}
+
 /**
  * Presents RevenueCat's Customer Center - self-service subscription
  * management (cancel, change plan, view purchase history, request a

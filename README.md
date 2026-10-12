@@ -176,6 +176,93 @@ Function nodig, alleen deze migratie. Als de `alter table` faalt omdat er
 al een profiel met een te jonge geboortedatum bestaat, geeft het bestand
 zelf een query om die rij(en) eerst op te sporen.
 
+## Toestemming algemene voorwaarden & privacyverklaring bij registratie
+
+`RegisterDetailsScreen.tsx` heeft een verplicht vinkje "Ik ga akkoord met
+de algemene voorwaarden en de privacyverklaring", met **algemene
+voorwaarden** linkend naar `https://www.sportfrend.nl/#voorwaarden` en
+**privacyverklaring** naar `https://www.sportfrend.nl/#privacy` (beide
+constanten in `constants/legal.ts`, openen in de browser van het toestel
+via `Linking.openURL()` - niet een in-app WebView). Zonder vinkje blijft
+de "Volgende"-knop gedimd (lagere opacity, niet via React Native's eigen
+`disabled`-prop voor deze specifieke voorwaarde) en toont een tik erop de
+duidelijke melding "Je moet akkoord gaan met de algemene voorwaarden en de
+privacyverklaring om je te registreren." - vóór elke andere validatie
+(wachtwoord/geboortedatum) en vóór `signUpWithEmail()` ooit aangeroepen
+wordt. Een écht uitgeschakelde `Pressable` (RN's `disabled`-prop) zou de
+tik gewoon negeren, waardoor er nooit een melding te tonen zou zijn - dit
+is dus bewust een client-side guard in plaats van een disabled-knop voor
+precies deze voorwaarde.
+
+**Vastleggen wanneer**: nieuwe kolom `profiles.terms_accepted_at`
+(`timestamptz`, `null` voor elk account van vóór deze migratie). Gevuld
+door `handle_new_user()` (bestond al, vult ook de `subscriptions`-rij) op
+het moment dat `auth.users` zelf ontstaat - `signUpWithEmail()` geeft
+`options: { data: { terms_accepted: true } }` mee aan
+`supabase.auth.signUp()`, wat in `auth.users.raw_user_meta_data` landt
+nog vóórdat de functie terugkeert. Dit werkt ook wanneer e-mailbevestiging
+vereist is: er is dan nog geen sessie om zelf naar `profiles` te schrijven
+(zelfde beperking als `birthdate`/`gender` op dit scherm), maar
+`auth.users` ontstaat sowieso altijd al bij `signUp()`, bevestigd of niet
+- de trigger hoeft dus niet te wachten op een latere, mogelijk nooit
+komende client-schrijfactie.
+
+**Niet achteraf zelf te wijzigen**: de bestaande "Users can update their
+own profile"-RLS-policy is per rij, niet per kolom, en staat dus toe dat
+een gebruiker élke kolom van zijn eigen rij bijwerkt - RLS alléén kan dit
+niet voorkomen. `0033_terms_acceptance.sql` gebruikt daarom kolomrechten,
+exact hetzelfde patroon als `0014_discover_profiles_location_privacy.sql`
+al toepaste voor `latitude`/`longitude` (daar voor SELECT, hier voor
+UPDATE): de blanket table-level UPDATE-grant wordt ingetrokken
+(`revoke update on public.profiles from authenticated`) en vervangen door
+een expliciete kolomlijst die precies de kolommen bevat die de app vandaag
+al client-side bijwerkt - `terms_accepted_at` staat daar bewust niet bij.
+SELECT blijft wel toegestaan (additief op de bestaande kolom-SELECT-grant)
+- nodig voor "Mijn gegevens opvragen" (`lib/dataExport.ts`, een losse
+`select("terms_accepted_at")` naast de gewone `PROFILE_COLUMNS`-query, die
+bewust niet is uitgebreid omdat die ook voor *andermans* profiel gebruikt
+wordt).
+
+**Exacte controlequery** (plak los in de SQL editor):
+```sql
+select
+  (select data_type from information_schema.columns
+     where table_schema = 'public' and table_name = 'profiles' and column_name = 'terms_accepted_at') as column_type,
+  has_column_privilege('authenticated', 'public.profiles', 'terms_accepted_at', 'UPDATE') as authenticated_kan_wijzigen,
+  has_column_privilege('authenticated', 'public.profiles', 'terms_accepted_at', 'SELECT') as authenticated_kan_lezen,
+  (select count(*) from public.profiles where terms_accepted_at is not null) as accounts_met_toestemming,
+  (select count(*) from public.profiles where terms_accepted_at is null) as accounts_zonder_toestemming;
+-- verwacht: column_type = 'timestamp with time zone', authenticated_kan_wijzigen = false, authenticated_kan_lezen = true
+```
+
+Draai `0033_terms_acceptance.sql` op je bestaande database - `0001_init.sql`
+is ook bijgewerkt voor nieuwe installaties (inclusief dezelfde
+kolomrechten-lockdown). Geen Edge Function nodig.
+
+**Getest**: lokaal (los Postgres-schema, geen netwerktoegang tot Supabase
+vanuit deze omgeving) - de migratie draait idempotent en de zelfcontrole
+(`do $$ ... $$`, inclusief een check dat gewone kolommen als `full_name`
+bijwerkbaar blíjven) slaagt. Functioneel: een signup met
+`terms_accepted: true` in de metadata zet `terms_accepted_at` op `now()`;
+zonder die metadata-sleutel, of met `terms_accepted: false`, blijft de
+kolom `null`; de eigenaar kan zijn eigen `terms_accepted_at` lezen maar
+een `UPDATE` erop - alleen die kolom, of die kolom gecombineerd met een
+verder legitieme wijziging zoals `full_name` in dezelfde statement - wordt
+altijd volledig geweigerd (`permission denied for table profiles`, geen
+partiële toepassing); een gewone kolom (`full_name`) blijft intussen
+gewoon bijwerkbaar; `anon` ziet niets. `npx tsc --noEmit` is schoon en een
+Android-bundle-export bevat de nieuwe strings (foutmelding, beide
+URL's, eenmalig - bevestigt dat alleen `constants/legal.ts` ze bevat).
+Het registratiescherm zelf (tikken op de knop zonder vinkje, de link-taps
+die de browser openen) is **niet** interactief getest op een toestel/
+simulator - niet beschikbaar in deze sandbox, en dit project heeft nog
+geen geautomatiseerde UI-testsuite (geen Jest/`@testing-library/
+react-native` geconfigureerd). De garantie dat registreren zonder vinkje
+niet lukt steunt op codereview van de exacte guard-volgorde in
+`onSubmit()`: de `!termsAccepted`-check staat vóór élke andere validatie
+én vóór `signUpWithEmail()`, dus er wordt sowieso nooit een
+`auth.signUp()`-aanroep gedaan zonder dat de checkbox aanstond.
+
 ## Dagelijkse aanbevelingslimiet (Ontdekken)
 
 De Pricing-tabel belooft per abonnement een ander aantal dagelijkse
@@ -980,6 +1067,35 @@ hierboven).
   `CustomerInfoUpdateListener` die `customerInfo`/`plan` in de context
   actueel houdt (reactief, geen polling) - elk scherm leest dit via
   `useAuth()` in plaats van zelf RevenueCat aan te roepen.
+- Een expliciete **"Aankopen herstellen"**-knop onderaan `PricingScreen`
+  (`restorePurchases()` in `lib/purchases.ts`, roept
+  `Purchases.restorePurchases()` aan) - naast het herstel-mechanisme dat
+  RevenueCat's eigen paywall-UI al tijdens een aankooppoging aanbiedt.
+  Deze knop werkt ook zonder ooit de paywall te openen (reinstall, nieuw
+  toestel, een eerdere aankoop op een ander account) en toont altijd een
+  duidelijke melding: "Je eerdere aankoop is herkend en hersteld." als er
+  daadwerkelijk een actief entitlement wordt gevonden, anders "Er zijn
+  geen eerdere aankopen gevonden om te herstellen op dit account." -
+  `Purchases.restorePurchases()` zelf gooit geen fout als er niets te
+  herstellen is, dus dat onderscheid wordt hier gemaakt op basis van
+  `getPlanFromCustomerInfo()` op het resultaat.
+
+**Store-review-compliance op `PricingScreen` (3.1.2/Payments policy)**:
+onder de pakketten staan nu een duidelijke verlengings-tekst
+("Abonnementen worden automatisch verlengd tot je opzegt. Opzeggen kan op
+elk moment via de instellingen van de App Store of Google Play, minstens
+24 uur voor het einde van de lopende periode.") en links naar de
+privacyverklaring en algemene voorwaarden (dezelfde
+`constants/legal.ts`-constanten als het registratiescherm en
+Instellingen → "Juridisch"). De prijs per pakket toont nu een expliciet
+€-teken (`"€4,99 / mnd"`, was `"4,99"` + een losse "Vanaf €/mnd"-tekst).
+`NOT_PRESENTED` (de paywall kon niet geopend worden, bv. offering nog niet
+geconfigureerd in het dashboard) toont nu "Het betaalscherm kon niet
+geopend worden, probeer het later opnieuw." in plaats van stilzwijgend
+niets te doen - voorheen gegroepeerd met `CANCELLED` (een bewuste
+gebruikersannulering, die terecht geen melding toont). Instellingen heeft
+een nieuwe "Juridisch"-sectie met dezelfde twee links, en de FAQ heeft een
+nieuwe regel over opzeggen via de App Store/Google Play.
 
 **Waarom de database niet zomaar de client vertrouwt** (de belangrijkste
 architectuurkeuze hier): de RevenueCat-SDK op een toestel is geen
@@ -1077,6 +1193,18 @@ webhook-aflevering) zijn handmatig nagelopen tegen RevenueCat's
 gedocumenteerde API, maar kunnen alleen écht getest worden tegen een
 opgezet RevenueCat-project + een native build op een toestel/simulator -
 geen van beide is beschikbaar in deze sandbox.
+
+**Aanvulling (Aankopen herstellen, renewal-tekst/links, €-teken,
+`NOT_PRESENTED`)**: `npx tsc --noEmit` blijft schoon en een nieuwe
+`expo export`-bundel bevat (elk precies éénmaal, bevestigt dat alleen
+`constants/legal.ts` de URL's bevat) beide juridische links, de
+verlengings-tekst, de "Aankopen herstellen"-tekst, de nieuwe
+`NOT_PRESENTED`-melding en het nieuwe `"€4,99 / mnd"`/`"€9,99 / mnd"`-
+formaat. `restorePurchases()`/de `NOT_PRESENTED`-tak zelf zijn, net als de
+rest van de aankoopflow hierboven, alleen tegen RevenueCat's API-
+documentatie nagelopen - ook hier is een opgezet RevenueCat-project + een
+native build niet beschikbaar in deze sandbox om de knop daadwerkelijk
+een herstel te laten uitvoeren.
 
 ## Sentry crash-reporting
 

@@ -6,11 +6,19 @@ export async function signInWithEmail(email: string, password: string) {
   return supabase.auth.signInWithPassword({ email, password });
 }
 
-export async function signUpWithEmail(email: string, password: string) {
+/**
+ * termsAccepted lands in auth.users.raw_user_meta_data, which
+ * handle_new_user() (see 0033_terms_acceptance.sql) reads to fill
+ * profiles.terms_accepted_at at the moment the auth.users row itself is
+ * created - this works even when email confirmation is required and no
+ * session exists yet for the client to write anything to profiles
+ * directly with.
+ */
+export async function signUpWithEmail(email: string, password: string, termsAccepted: boolean) {
   return supabase.auth.signUp({
     email,
     password,
-    options: { emailRedirectTo: getAuthRedirectUrl() },
+    options: { emailRedirectTo: getAuthRedirectUrl(), data: { terms_accepted: termsAccepted } },
   });
 }
 

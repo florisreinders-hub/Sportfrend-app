@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { Input } from "@/components/Input";
@@ -9,6 +10,7 @@ import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { getAuthErrorMessage, resendConfirmationEmail, signUpWithEmail } from "@/lib/auth";
 import { calculateAge, getDataErrorMessage } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
+import { openLegalUrl, PRIVACY_URL, TERMS_URL } from "@/constants/legal";
 
 const MINIMUM_AGE = 18;
 
@@ -36,6 +38,7 @@ export default function RegisterDetailsScreen({ navigation }: Props) {
   const [repeatPassword, setRepeatPassword] = useState("");
   const [birthdate, setBirthdate] = useState("");
   const [gender, setGender] = useState<"man" | "vrouw">("man");
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -82,6 +85,18 @@ export default function RegisterDetailsScreen({ navigation }: Props) {
     setError(null);
     setInfo(null);
 
+    // Required, checked before anything else: the button is dimmed
+    // (opacity, see the Button's style prop below) while the checkbox is
+    // unticked, but that's not wired through Button's actual `disabled`
+    // prop for this condition - a genuinely disabled Pressable swallows
+    // the tap entirely, which would make it impossible to ever show the
+    // user *why* nothing happens. This guard is what turns that tap into
+    // a clear, actionable message instead of silence.
+    if (!termsAccepted) {
+      setError("Je moet akkoord gaan met de algemene voorwaarden en de privacyverklaring om je te registreren.");
+      return;
+    }
+
     if (password !== repeatPassword) {
       setError("Wachtwoorden komen niet overeen.");
       return;
@@ -105,7 +120,7 @@ export default function RegisterDetailsScreen({ navigation }: Props) {
 
     setLoading(true);
     try {
-      const { data, error: signUpError } = await signUpWithEmail(email.trim(), password);
+      const { data, error: signUpError } = await signUpWithEmail(email.trim(), password, termsAccepted);
 
       if (signUpError) {
         setError(getAuthErrorMessage(signUpError));
@@ -263,9 +278,40 @@ export default function RegisterDetailsScreen({ navigation }: Props) {
           </Pressable>
         </View>
 
+        <Pressable
+          style={styles.termsRow}
+          onPress={() => {
+            setTermsAccepted((v) => !v);
+            if (error) setError(null);
+          }}
+          hitSlop={8}
+        >
+          <Ionicons
+            name={termsAccepted ? "checkbox" : "square-outline"}
+            size={22}
+            color={termsAccepted ? colors.primary : colors.textSecondary}
+          />
+          <Text style={styles.termsText}>
+            Ik ga akkoord met de{" "}
+            <Text style={styles.termsLink} onPress={() => openLegalUrl(TERMS_URL)}>
+              algemene voorwaarden
+            </Text>{" "}
+            en de{" "}
+            <Text style={styles.termsLink} onPress={() => openLegalUrl(PRIVACY_URL)}>
+              privacyverklaring
+            </Text>
+          </Text>
+        </Pressable>
+
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        <Button label="Volgende" onPress={onSubmit} loading={loading} disabled={!canSubmit} style={styles.cta} />
+        <Button
+          label="Volgende"
+          onPress={onSubmit}
+          loading={loading}
+          disabled={!canSubmit}
+          style={termsAccepted ? styles.cta : { ...styles.cta, opacity: 0.5 }}
+        />
       </View>
     </ScreenContainer>
   );
@@ -275,6 +321,24 @@ const styles = StyleSheet.create({
   form: {
     paddingHorizontal: spacing.lg,
     marginTop: spacing.xl,
+  },
+  termsRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  termsText: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.black,
+  },
+  termsLink: {
+    fontFamily: fonts.bodySemiBold,
+    color: colors.primaryDark,
+    textDecorationLine: "underline",
   },
   label: {
     fontFamily: fonts.body,

@@ -13,6 +13,7 @@ import { deleteAccount, signOut } from "@/lib/auth";
 import { fetchProfileSettings, getDataErrorMessage, updateProfileSettings } from "@/lib/api";
 import { MODERATOR_EMAIL } from "@/constants/moderator";
 import { presentCustomerCenter } from "@/lib/purchases";
+import { openLegalUrl, PRIVACY_URL, TERMS_URL } from "@/constants/legal";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Settings">;
 
@@ -243,6 +244,20 @@ export default function SettingsScreen({ navigation }: Props) {
               <Ionicons name="headset-outline" size={20} color={colors.black} />
               <Text style={styles.rowLabel}>Klantenservice</Text>
               <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+            </Pressable>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Juridisch</Text>
+            <Pressable style={styles.row} onPress={() => openLegalUrl(TERMS_URL)}>
+              <Ionicons name="document-text-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>Algemene voorwaarden</Text>
+              <Ionicons name="open-outline" size={18} color={colors.textSecondary} />
+            </Pressable>
+            <Pressable style={styles.row} onPress={() => openLegalUrl(PRIVACY_URL)}>
+              <Ionicons name="shield-checkmark-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>Privacyverklaring</Text>
+              <Ionicons name="open-outline" size={18} color={colors.textSecondary} />
             </Pressable>
           </View>
 

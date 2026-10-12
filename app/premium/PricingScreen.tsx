@@ -9,7 +9,15 @@ import { BottomNav } from "@/components/BottomNav";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { getDataErrorMessage } from "@/lib/api";
-import { fetchCustomerInfo, getPlanFromCustomerInfo, isPurchasesConfigured, PlanId, presentPaywallForPlan } from "@/lib/purchases";
+import {
+  fetchCustomerInfo,
+  getPlanFromCustomerInfo,
+  isPurchasesConfigured,
+  PlanId,
+  presentPaywallForPlan,
+  restorePurchases,
+} from "@/lib/purchases";
+import { openLegalUrl, PRIVACY_URL, TERMS_URL } from "@/constants/legal";
 
 type Plan = {
   id: "basis" | PlanId;
@@ -20,10 +28,12 @@ type Plan = {
 };
 
 // Content and per-plan feature lists verified against Figma node 2003:3819.
-// Prices shown here are "vanaf" (starting from, monthly) - RevenueCatUI's
-// paywall (onChoose below) shows the real, localized price for both the
-// monthly and yearly package once presented; this card is a comparison/
-// marketing screen, not the actual checkout.
+// Prices shown here are the monthly price, store-review guideline
+// requirement 3.1.2 wording ("€4,99 / mnd") - RevenueCatUI's paywall
+// (onChoose below) shows the real, localized price (and the yearly
+// package) once presented; this card is a comparison/marketing screen,
+// not the actual checkout, which is why the renewal-terms text and legal
+// links below the plan cards matter here too, not just in the paywall.
 const BASIS: Plan = {
   id: "basis",
   name: "Basis",
@@ -35,8 +45,8 @@ const BASIS: Plan = {
 const PREMIUM: Plan = {
   id: "premium",
   name: "Premium",
-  price: "4,99",
-  period: "Vanaf €/mnd",
+  price: "€4,99",
+  period: "/ mnd",
   features: [
     "15 dagelijkse sportmaatje suggesties",
     "Meer kans op een geschikt sportmaatje",
@@ -50,8 +60,8 @@ const PREMIUM: Plan = {
 const ELITE: Plan = {
   id: "elite",
   name: "Elite",
-  price: "9,99",
-  period: "Vanaf €/mnd",
+  price: "€9,99",
+  period: "/ mnd",
   features: [
     "Onbeperkt dagelijkse sportmaatje suggesties",
     "Prioriteit in aanbevelingen",
@@ -106,16 +116,19 @@ export default function PricingScreen({ navigation }: Props) {
             { text: "OK", onPress: () => navigation.navigate("Settings") },
           ]);
           break;
+        case "NOT_PRESENTED":
+          // The paywall itself couldn't be shown at all (e.g. the offering
+          // isn't configured yet in the RevenueCat dashboard) - distinct
+          // from CANCELLED (the user saw it and backed out themselves),
+          // so this needs its own message rather than failing silently.
+          Alert.alert("Niet beschikbaar", "Het betaalscherm kon niet geopend worden, probeer het later opnieuw.");
+          break;
         case "ERROR":
           Alert.alert("Aankoop mislukt", "Er is iets misgegaan bij het verwerken van je aankoop. Probeer het opnieuw.");
           break;
         case "CANCELLED":
-        case "NOT_PRESENTED":
         default:
-          // User backed out of the paywall, or it couldn't be shown (e.g.
-          // offering not configured yet in the RevenueCat dashboard) -
-          // RevenueCatUI already surfaces its own error state for the
-          // latter case, nothing more to show here.
+          // User backed out of the paywall themselves - no error to show.
           break;
       }
     } catch (e) {
@@ -127,6 +140,34 @@ export default function PricingScreen({ navigation }: Props) {
       Alert.alert("Aankoop mislukt", getDataErrorMessage(e));
     } finally {
       setPurchasingPlan(null);
+    }
+  };
+
+  const [restoring, setRestoring] = useState(false);
+
+  const onRestore = async () => {
+    if (restoring) return;
+    if (!isPurchasesConfigured) {
+      Alert.alert(
+        "Nog niet beschikbaar",
+        "In-app aankopen zijn nog niet geconfigureerd voor deze build. Zie README.md's \"RevenueCat\"-sectie."
+      );
+      return;
+    }
+    setRestoring(true);
+    try {
+      const { foundActiveEntitlement, customerInfo } = await restorePurchases();
+      setCurrentPlan(getPlanFromCustomerInfo(customerInfo));
+      Alert.alert(
+        foundActiveEntitlement ? "Aankopen herstellen" : "Niets te herstellen",
+        foundActiveEntitlement
+          ? "Je eerdere aankoop is herkend en hersteld."
+          : "Er zijn geen eerdere aankopen gevonden om te herstellen op dit account."
+      );
+    } catch (e) {
+      Alert.alert("Herstellen mislukt", getDataErrorMessage(e));
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -146,6 +187,29 @@ export default function PricingScreen({ navigation }: Props) {
         <View style={styles.row}>
           <PlanCard plan={ELITE} onChoose={onChoose} purchasing={purchasingPlan === "elite"} isCurrent={currentPlan === "elite"} />
         </View>
+
+        <Text style={styles.renewalNotice}>
+          Abonnementen worden automatisch verlengd tot je opzegt. Opzeggen kan op elk moment via de instellingen van
+          de App Store of Google Play, minstens 24 uur voor het einde van de lopende periode.
+        </Text>
+
+        <View style={styles.legalLinksRow}>
+          <Text style={styles.legalLink} onPress={() => openLegalUrl(PRIVACY_URL)}>
+            Privacyverklaring
+          </Text>
+          <Text style={styles.legalSeparator}>·</Text>
+          <Text style={styles.legalLink} onPress={() => openLegalUrl(TERMS_URL)}>
+            Algemene voorwaarden
+          </Text>
+        </View>
+
+        <Pressable style={styles.restoreButton} onPress={onRestore} disabled={restoring}>
+          {restoring ? (
+            <ActivityIndicator size="small" color={colors.primaryDark} />
+          ) : (
+            <Text style={styles.restoreLabel}>Aankopen herstellen</Text>
+          )}
+        </Pressable>
       </ScrollView>
       <BottomNav active="menu" />
     </ScreenContainer>
@@ -252,5 +316,42 @@ const styles = StyleSheet.create({
     fontFamily: fonts.display,
     fontSize: fontSizes.sm,
     color: colors.black,
+  },
+  renewalNotice: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.xs,
+    color: colors.textSecondary,
+    textAlign: "center",
+    marginTop: spacing.sm,
+  },
+  legalLinksRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  legalLink: {
+    fontFamily: fonts.bodySemiBold,
+    fontSize: fontSizes.xs,
+    color: colors.primaryDark,
+    textDecorationLine: "underline",
+  },
+  legalSeparator: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.xs,
+    color: colors.textSecondary,
+  },
+  restoreButton: {
+    alignSelf: "center",
+    marginTop: spacing.md,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+  },
+  restoreLabel: {
+    fontFamily: fonts.bodySemiBold,
+    fontSize: fontSizes.sm,
+    color: colors.primaryDark,
+    textDecorationLine: "underline",
   },
 });

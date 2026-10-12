@@ -25,6 +25,7 @@ create table if not exists public.profiles (
   profile_visible boolean not null default true,
   availability_days text[] not null default '{}',
   expo_push_token text,
+  terms_accepted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -225,10 +226,20 @@ create trigger set_subscriptions_updated_at
   for each row execute function public.set_updated_at();
 
 -- Auto-create a profile row whenever a new auth user signs up.
+-- terms_accepted_at: see 0033_terms_acceptance.sql for the full
+-- explanation - RegisterDetailsScreen.tsx passes `terms_accepted: true`
+-- as signup metadata only once its required checkbox is ticked, which
+-- lands in auth.users.raw_user_meta_data before this trigger fires.
 create or replace function public.handle_new_user()
 returns trigger as $$
 begin
-  insert into public.profiles (id) values (new.id)
+  insert into public.profiles (id, terms_accepted_at) values (
+    new.id,
+    case
+      when (new.raw_user_meta_data ->> 'terms_accepted')::boolean is true then now()
+      else null
+    end
+  )
   on conflict (id) do nothing;
   insert into public.subscriptions (user_id, plan) values (new.id, 'basis')
   on conflict (user_id) do nothing;
@@ -277,7 +288,7 @@ revoke select on public.profiles from authenticated;
 grant select (
   id, full_name, birthdate, gender, bio, sport, level, city,
   search_radius_km, avatar_url, photo_url, is_onboarded, push_notifications_enabled,
-  profile_visible, availability_days, created_at, updated_at
+  profile_visible, availability_days, terms_accepted_at, created_at, updated_at
 ) on public.profiles to authenticated;
 
 -- Blocked users are hidden from each other everywhere profiles are read
@@ -319,6 +330,21 @@ create policy "Users can insert their own profile"
   on public.profiles for insert
   to authenticated
   with check (auth.uid() = id);
+
+-- terms_accepted_at: readable (see the SELECT grant above, which already
+-- includes it) but never client-writable, even on your own row - RLS's
+-- "Users can update their own profile" policy above is per-row, not
+-- per-column, so this needs the same kolomrechten mechanism as
+-- latitude/longitude's SELECT restriction further down this file. See
+-- 0033_terms_acceptance.sql for the full explanation; this mirrors that
+-- migration's revoke/grant exactly for a fresh install.
+revoke update on public.profiles from authenticated;
+grant update (
+  id, full_name, birthdate, gender, bio, sport, level, city,
+  latitude, longitude, search_radius_km, avatar_url, photo_url,
+  is_onboarded, push_notifications_enabled, profile_visible,
+  availability_days, expo_push_token, created_at, updated_at
+) on public.profiles to authenticated;
 
 create policy "Users manage their own swipes"
   on public.swipes for all

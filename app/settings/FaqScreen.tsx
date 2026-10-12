@@ -25,6 +25,10 @@ const faqs = [
     q: "Hoe verwijder ik mijn account?",
     a: "Ga naar Instellingen > E-mail wijzigen om je gegevens te beheren, of neem contact op met klantenservice om je account te laten verwijderen.",
   },
+  {
+    q: "Hoe zeg ik mijn Premium of Elite abonnement op?",
+    a: "Abonnementen worden automatisch verlengd tot je opzegt. Opzeggen kan op elk moment via de instellingen van de App Store (iPhone/iPad) of Google Play (Android) - niet via de app zelf - en moet minstens 24 uur voor het einde van de lopende periode gebeuren om de volgende verlenging te voorkomen.",
+  },
 ];
 
 type Props = NativeStackScreenProps<RootStackParamList, "Faq">;
