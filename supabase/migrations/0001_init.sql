@@ -337,7 +337,12 @@ create policy "Users can insert their own profile"
 -- per-column, so this needs the same kolomrechten mechanism as
 -- latitude/longitude's SELECT restriction further down this file. See
 -- 0033_terms_acceptance.sql for the full explanation; this mirrors that
--- migration's revoke/grant exactly for a fresh install.
+-- migration's revoke/grant for a fresh install - including
+-- expo_push_token, which the create table statement above already
+-- defines, unlike on the pre-existing production database
+-- 0033_terms_acceptance.sql itself targets (that column was never
+-- actually added there - see that file's own comments), so the two
+-- grant lists intentionally differ by exactly that one column.
 revoke update on public.profiles from authenticated;
 grant update (
   id, full_name, birthdate, gender, bio, sport, level, city,

@@ -223,6 +223,31 @@ SELECT blijft wel toegestaan (additief op de bestaande kolom-SELECT-grant)
 bewust niet is uitgebreid omdat die ook voor *andermans* profiel gebruikt
 wordt).
 
+**Productie-incident, opgelost**: een eerdere versie van deze migratie
+noemde `expo_push_token` in die kolomlijst, in de veronderstelling dat
+`0011_push_notifications.sql` die kolom al had toegevoegd. Op de echte
+productiedatabase is dat niet zo (zie "Pushmeldingen" hieronder voor
+waarom - die migratie gebruikt `supabase_functions.http_request`, wat op
+dit project niet bestaat) - `grant update (..., expo_push_token, ...)` op
+een kolom die niet bestaat gaf een harde `column ... does not exist`-
+fout. `expo_push_token` staat nu bewust niet meer in de kolomlijst van
+`0033_terms_acceptance.sql` (wél nog in de mirror in `0001_init.sql`, waar
+de kolom via de `create table` wél bestaat - zie het commentaar daar).
+De zelfcontrole controleert sindsdien in **beide richtingen** dat de
+kolomlijst en het daadwerkelijke schema overeenkomen (elke genoemde kolom
+bestaat echt, én elke bestaande kolom - behalve `terms_accepted_at` zelf -
+staat in de lijst), zodat dit soort mismatch nooit meer stil, pas bij het
+draaien, als een onduidelijke fout naar boven komt. De hele migratie
+draait bovendien nu in één expliciete `begin; ... commit;` - lokaal
+getest (zie "Getest" hieronder) bleek dat zonder die expliciete grenzen
+een latere fout (zoals deze) de eerdere, al uitgevoerde statements binnen
+hetzelfde bestand niet per definitie meeneemt in de rollback, afhankelijk
+van hoe de aanroepende tool de statements verstuurt - in het ergste geval
+bleef daardoor de `revoke update on public.profiles from authenticated`
+staan terwijl de bijbehorende `grant` nooit werd bereikt, wat élke
+profielkolom voor íedere gebruiker alsnog write-locked had gelaten, erger
+dan de oorspronkelijke foutmelding deed vermoeden.
+
 **Exacte controlequery** (plak los in de SQL editor):
 ```sql
 select
@@ -262,6 +287,34 @@ niet lukt steunt op codereview van de exacte guard-volgorde in
 `onSubmit()`: de `!termsAccepted`-check staat vóór élke andere validatie
 én vóór `signUpWithEmail()`, dus er wordt sowieso nooit een
 `auth.signUp()`-aanroep gedaan zonder dat de checkbox aanstond.
+
+**Aanvulling na het productie-incident hierboven**: opnieuw lokaal getest,
+dit keer tegen een los Postgres-schema dat **exact** de kolommen van de
+echte productie-`profiles`-tabel nabouwt (zonder `expo_push_token`, zonder
+`terms_accepted_at`, in een andere kolomvolgorde dan `0001_init.sql`'s
+eigen `create table` - om uit te sluiten dat de zelfcontrole toevallig
+alleen werkt dankzij een toevallig overeenkomende volgorde). De
+oorspronkelijke (kapotte) versie van dit bestand gereproduceerd: faalt
+met exact dezelfde `column "expo_push_token" of relation "profiles" does
+not exist`-foutmelding als in productie. Zonder een omliggende
+transactie bleven de eraan voorafgaande statements (de kolom-toevoeging
+én de `revoke update on public.profiles from authenticated`) staan nadat
+de latere `grant` faalde - precies het "erger dan het leek"-scenario
+hierboven, empirisch bevestigd (`has_column_privilege` op `full_name`/
+`birthdate`/`city` gaf na die mislukte poging overal `false`). De
+gecorrigeerde versie (zonder `expo_push_token`, met `begin;`/`commit;`)
+draait tegen dat productie-schema zonder fouten, idempotent, en de
+zelfcontrole bevestigt beide richtingen (19 kolommen plus
+`terms_accepted_at`). De bidirectionele check zelf is apart getest: een
+tijdelijk heringevoegde `expo_push_token` in de grantlijst (richting a)
+én een tijdelijk toegevoegde, niet-genoemde testkolom `nickname`
+(richting b) worden elk correct opgepikt, met een duidelijke, kolomnaam-
+noemende foutmelding, en - dankzij de transactie - zonder dat er iets van
+blijft hangen (`terms_accepted_at` bestaat dan niet, `full_name` blijft
+gewoon bijwerkbaar). De oorspronkelijke functionele/RLS-tests (signup-
+metadata, eigen-kolom-lezen-niet-wijzigen, `anon` ziet niets) zijn
+opnieuw bevestigd tegen dit productie-schema. `npx tsc --noEmit` blijft
+schoon (geen app-code gewijzigd deze keer).
 
 ## Dagelijkse aanbevelingslimiet (Ontdekken)
 
@@ -782,6 +835,35 @@ rij een Edge Function aan (`send-message-push` / `send-match-push`) die de
 Expo Push API aanroept. Beide functies respecteren de
 "Pushmeldingen"-schakelaar in Instellingen (`profiles.push_notifications_enabled`)
 - staat die uit, dan wordt er voor die gebruiker niets verstuurd.
+
+**Status in productie (ontbrekende kolom)**: `profiles.expo_push_token`
+staat op dit moment **niet** op de live database - bevestigd tijdens het
+onderzoek naar de `0033_terms_acceptance.sql`-storing hierboven (zie
+"Toestemming algemene voorwaarden & privacyverklaring bij registratie").
+`lib/notifications.ts`'s `upsert({ expo_push_token: token })` faalt
+daardoor stil vanuit de client (de catch daar logt een warning, crasht
+niet - zie die functie), en de drie Edge Functions die de kolom lezen
+(`send-message-push`, `send-match-push`, `send-training-reminder-push`)
+vinden altijd `expo_push_token: null`, dus pushmeldingen komen nergens
+aan, ook niet als de rest van stap 1 t/m 5 hieronder al gezet is. Dit
+project heeft daarnaast geen `supabase_functions`-schema (bevestigd bij
+`send-moderation-alert`, zie "Moderatie-e-mail"), dus stap 3's
+`supabase_functions.http_request`-trigger-SQL werkt hier gegarandeerd
+niet - gebruik voor dít project altijd de dashboard-fallback die daar al
+genoemd wordt (**Database → Webhooks**), niet de SQL-trigger-aanpak.
+**Om pushmeldingen echt te laten werken is dus nodig**: (1) voer eerst
+`alter table public.profiles add column if not exists expo_push_token
+text;` uit (de kolom-toevoeging uit `0011_push_notifications.sql` zelf,
+los van de trigger-SQL erna - die laatste hoort hier dus niet bij); (2)
+voer daarna `grant update (expo_push_token) on public.profiles to
+authenticated;` uit - noodzakelijk sinds
+`0033_terms_acceptance.sql` de blanket table-level UPDATE-grant heeft
+ingetrokken, dus een kolom die ná die migratie wordt toegevoegd krijgt
+geen enkel UPDATE-recht totdat die apart verleend wordt; (3) de
+stappen 1-5 hieronder (Edge Functions deployen, `DB_WEBHOOK_SECRET`
+zetten, de twee webhooks aanmaken via het dashboard in plaats van de
+trigger-SQL). Geen app-codewijziging nodig - `lib/notifications.ts` en de
+drie Edge Functions verwachten al precies deze kolom/tabel.
 
 **Belangrijke beperking: Expo Go ondersteunt sinds SDK 53 geen remote
 pushmeldingen meer**, op geen van beide platforms - Expo Go is één

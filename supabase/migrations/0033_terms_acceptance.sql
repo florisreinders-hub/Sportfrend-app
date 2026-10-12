@@ -22,13 +22,39 @@
 -- al toepaste voor latitude/longitude (alleen daar voor SELECT, hier voor
 -- UPDATE): de blanket table-level UPDATE-grant wordt ingetrokken en
 -- vervangen door een expliciete kolomlijst die precies de kolommen bevat
--- die de app vandaag al via de client bijwerkt (EditProfileScreen,
--- LocationSetupScreen, RegisterDetailsScreen, Instellingen,
--- lib/notifications.ts) - terms_accepted_at staat daar bewust niet bij.
+-- die op dít moment daadwerkelijk in public.profiles bestaan, minus
+-- terms_accepted_at zelf.
+--
+-- BELANGRIJK - eerdere versie van dit bestand faalde in productie: die
+-- kolomlijst bevatte ook `expo_push_token`, in de veronderstelling dat
+-- 0011_push_notifications.sql die kolom al had toegevoegd. Op de live
+-- database is dat niet het geval (zie README.md §"Pushmeldingen" voor
+-- waarom: 0011 gebruikt `supabase_functions.http_request`, een functie
+-- die op dit project niet bestaat, en de kolom-toevoeging zat in
+-- hetzelfde script - zonder expliciete transactiegrenzen rolde een
+-- client die het geheel als één losse batch verstuurt dat mogelijk samen
+-- terug, of het bestand is om die reden nooit (volledig) uitgevoerd).
+-- `grant update (..., expo_push_token, ...)` op een kolom die niet
+-- bestaat geeft een harde fout ("column ... does not exist"), dus deze
+-- kolomlijst mag nooit méér noemen dan wat er daadwerkelijk staat. De
+-- zelfcontrole onderaan dit bestand controleert dat nu in beide
+-- richtingen (zie daar), zodat dit soort mismatch nooit meer stil tot
+-- een foutmelding pas bij het uitvoeren leidt, maar al bij de
+-- zelfcontrole een duidelijke naam-en-richting krijgt.
 --
 -- Run dit via `supabase db push` of plak het in de Supabase SQL editor.
 -- Veilig om vaker te draaien (`add column if not exists`, `create or
--- replace function`, revoke/grant zijn idempotent).
+-- replace function`, revoke/grant zijn idempotent). De hele inhoud
+-- (kolom toevoegen, functie vervangen, kolomrechten, zelfcontrole) draait
+-- in één expliciete transactie (BEGIN/COMMIT hieronder) - een fout waar
+-- dan ook in dit bestand (inclusief de zelfcontrole die met opzet
+-- `raise exception` gebruikt, niet alleen `raise notice`) rolt het
+-- geheel terug. Dit is bewust expliciet, niet een aanname over hoe de
+-- aanroepende tool (`supabase db push`, de SQL editor, een losse `psql
+-- -f`) transacties afhandelt - sommige daarvan committen elke top-level
+-- statement apart zodra er geen omliggende BEGIN/COMMIT is, wat precies
+-- het mechanisme kan zijn waardoor de vorige poging een deel van zijn
+-- effect behield terwijl een later statement alsnog faalde.
 --
 -- ─────────────────────────────────────────────────────────────────────────
 -- Controlequery (plak dit los in de SQL editor om te verifiëren):
@@ -46,6 +72,8 @@
 -- -- vóór deze migratie (en iedereen die ooit zonder sessie bleef steken
 -- -- vóór e-mailbevestiging en nooit terugkwam) - geen foutstaat op zich.
 -- ─────────────────────────────────────────────────────────────────────────
+
+begin;
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- 1. Nieuwe kolom
@@ -74,15 +102,24 @@ $$ language plpgsql security definer;
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- 3. Kolomrechten: terms_accepted_at is leesbaar maar niet door de client
---    zelf te wijzigen. Alle andere kolommen blijven precies zo bijwerkbaar
---    als vóór deze migratie (zie de uitleg hierboven voor de exacte lijst).
+--    zelf te wijzigen. Alle andere kolommen die daadwerkelijk bestaan
+--    blijven precies zo bijwerkbaar als vóór deze migratie.
+--
+--    expo_push_token staat hier BEWUST niet bij - die kolom bestaat niet
+--    op elke database (zie de uitleg hierboven). Zodra
+--    0011_push_notifications.sql (of een vervangende migratie) die kolom
+--    daadwerkelijk toevoegt, moet die migratie zelf ook een
+--    `grant update (expo_push_token) on public.profiles to authenticated;`
+--    bevatten - een kolom die na deze `revoke update on public.profiles`
+--    ontstaat, krijgt anders geen enkel UPDATE-recht, voor niemand
+--    behalve `service_role`/`postgres`.
 -- ─────────────────────────────────────────────────────────────────────────
 revoke update on public.profiles from authenticated;
 grant update (
   id, full_name, birthdate, gender, bio, sport, level, city,
   latitude, longitude, search_radius_km, avatar_url, photo_url,
   is_onboarded, push_notifications_enabled, profile_visible,
-  availability_days, expo_push_token, created_at, updated_at
+  availability_days, created_at, updated_at
 ) on public.profiles to authenticated;
 
 -- Additief op de bestaande kolom-SELECT-grant uit
@@ -94,9 +131,32 @@ grant update (
 grant select (terms_accepted_at) on public.profiles to authenticated;
 
 -- ─────────────────────────────────────────────────────────────────────────
--- Zelfcontrole
+-- Zelfcontrole - in twee richtingen, zodat een mismatch tussen de
+-- kolomlijst hierboven en de daadwerkelijke tabel hier wordt opgevangen
+-- in plaats van pas als een harde `grant`-fout (de oorzaak van de vorige
+-- productiestoring) of, nog stiller, als een kolom die na deze migratie
+-- stilletjes write-locked blijft voor altijd niemand opmerkt:
+--   a) elke kolom in de grantlijst hierboven bestaat ook echt in de tabel
+--      (vangt precies de fout met expo_push_token op, vóórdat die ooit
+--      weer terugkomt - bv. als iemand een kolom hernoemt/verwijdert
+--      zonder deze lijst bij te werken);
+--   b) elke kolom die in de tabel staat (behalve terms_accepted_at, die
+--      met opzet alleen leesbaar is) staat ook in de grantlijst (vangt
+--      het omgekeerde: een kolom die ooit aan de tabel wordt toegevoegd
+--      zonder de grantlijst bij te werken, en daardoor onopgemerkt
+--      write-locked blijft voor de client).
 -- ─────────────────────────────────────────────────────────────────────────
 do $$
+declare
+  v_grant_columns text[] := array[
+    'id', 'full_name', 'birthdate', 'gender', 'bio', 'sport', 'level', 'city',
+    'latitude', 'longitude', 'search_radius_km', 'avatar_url', 'photo_url',
+    'is_onboarded', 'push_notifications_enabled', 'profile_visible',
+    'availability_days', 'created_at', 'updated_at'
+  ];
+  v_table_columns text[];
+  v_missing_from_table text[];
+  v_missing_from_grant text[];
 begin
   if not exists (
     select 1 from information_schema.columns
@@ -114,23 +174,32 @@ begin
     raise exception 'authenticated kan terms_accepted_at niet lezen - nodig voor "Mijn gegevens opvragen".';
   end if;
 
-  -- Geen collateral damage: andere, al langer bestaande kolommen die de
-  -- app daadwerkelijk client-side bijwerkt moeten bijwerkbaar blijven.
-  if not has_column_privilege('authenticated', 'public.profiles', 'full_name', 'UPDATE') then
-    raise exception 'authenticated kan full_name niet meer bijwerken - te veel ingetrokken bij stap 3.';
-  end if;
-  if not has_column_privilege('authenticated', 'public.profiles', 'birthdate', 'UPDATE') then
-    raise exception 'authenticated kan birthdate niet meer bijwerken - te veel ingetrokken bij stap 3.';
-  end if;
-  if not has_column_privilege('authenticated', 'public.profiles', 'latitude', 'UPDATE') then
-    raise exception 'authenticated kan latitude niet meer bijwerken - te veel ingetrokken bij stap 3.';
-  end if;
-  if not has_column_privilege('authenticated', 'public.profiles', 'push_notifications_enabled', 'UPDATE') then
-    raise exception 'authenticated kan push_notifications_enabled niet meer bijwerken - te veel ingetrokken bij stap 3.';
-  end if;
-  if not has_column_privilege('authenticated', 'public.profiles', 'expo_push_token', 'UPDATE') then
-    raise exception 'authenticated kan expo_push_token niet meer bijwerken - te veel ingetrokken bij stap 3.';
+  select array_agg(column_name::text) into v_table_columns
+  from information_schema.columns
+  where table_schema = 'public' and table_name = 'profiles';
+
+  -- Richting a: de grantlijst mag geen kolom noemen die niet bestaat.
+  select array_agg(col) into v_missing_from_table
+  from unnest(v_grant_columns) as col
+  where col <> all (v_table_columns);
+
+  if v_missing_from_table is not null then
+    raise exception 'De UPDATE-grantlijst in dit bestand noemt kolommen die niet bestaan in public.profiles: % - pas de grantlijst aan op het daadwerkelijke schema.', v_missing_from_table;
   end if;
 
-  raise notice 'profiles.terms_accepted_at: kolom aanwezig (timestamptz), leesbaar maar niet zelf te wijzigen door authenticated; overige profielkolommen blijven ongewijzigd bijwerkbaar.';
+  -- Richting b: elke bestaande kolom (behalve terms_accepted_at) moet in
+  -- de grantlijst staan, anders is hij na de revoke hierboven stilletjes
+  -- write-locked voor authenticated.
+  select array_agg(col) into v_missing_from_grant
+  from unnest(v_table_columns) as col
+  where col <> 'terms_accepted_at'
+    and col <> all (v_grant_columns);
+
+  if v_missing_from_grant is not null then
+    raise exception 'Deze kolommen van public.profiles ontbreken in de UPDATE-grantlijst en zijn dus write-locked voor authenticated: % - voeg ze toe aan de grantlijst (of, als dat met opzet is, aan de uitzonderingslijst hier).', v_missing_from_grant;
+  end if;
+
+  raise notice 'profiles.terms_accepted_at: kolom aanwezig (timestamptz), leesbaar maar niet zelf te wijzigen door authenticated; de UPDATE-grantlijst komt in beide richtingen overeen met het daadwerkelijke schema (% kolommen, exact terms_accepted_at uitgezonderd).', array_length(v_table_columns, 1);
 end $$;
+
+commit;
