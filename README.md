@@ -962,6 +962,66 @@ en een melding te ontvangen, is een **custom development build** nodig
 5. **Test pas echt via een development build**, niet via Expo Go (zie de
    beperking hierboven).
 
+**Opvolgbug, gevonden en gefixt in `lib/notifications.ts` (client-code,
+geen migratie):** `registerForPushNotificationsAsync()` sloeg het token
+op via `.upsert({ id, expo_push_token: token }, { onConflict: "id" })` -
+exact dezelfde `EXCLUDED.<kolom>`/SELECT-privilege-aanvaring als
+`LocationSetupScreen.tsx`'s `latitude`/`longitude`-bug hierboven
+("Locatieprivacy"): `authenticated` heeft met opzet géén SELECT-recht op
+`expo_push_token` (`0013_rls_security_audit_fixes.sql` - anders zou
+Expo's push API, die een bloot token zonder verdere authenticatie
+accepteert, iedereen in staat stellen een ander een pushmelding te
+sturen), en een upsert genereert `EXCLUDED.expo_push_token` in zijn
+`ON CONFLICT DO UPDATE`, wat Postgres altijd SELECT-recht laat vereisen,
+niet alleen UPDATE-recht. Deze upsert faalde daardoor altijd met
+`permission denied for table profiles` - op elk apparaat, bij elke
+registratiepoging, zodra de kolom ook daadwerkelijk bestaat (op dit
+moment ontbreekt `expo_push_token` nog los op productie, zie het
+`0033`-onderzoek hierboven - maar die aparte bug lost deze niet op).
+
+Fix: `registerForPushNotificationsAsync()` gebruikt nu een gewone
+`.update({ expo_push_token: token })` (`saveExpoPushToken()`, nieuw in
+`lib/notifications.ts`), met dezelfde insert-dan-update-fallback als
+`LocationSetupScreen.tsx`'s `saveLocation()` als de profielrij nog niet
+bestaat - nooit een upsert, dus nooit een `EXCLUDED`-referentie op een
+kolom zonder SELECT-recht. Dat SELECT-recht blijft bewust ontbreken; er
+is geen migratie voor nodig.
+
+**Tegelijk gefixt: een apparaat kon meldingen van het vorige account
+blijven krijgen.** Niets wiste het token bij uitloggen - een nieuw
+account dat zich op hetzelfde apparaat aanmeldde overschreef alleen zijn
+*eigen* rij, niet die van het account dat net uitlogde, dus die bleef
+naar hetzelfde apparaat-token verwijzen. Nieuwe functie
+`clearPushToken(userId)` (ook een gewone UPDATE, zet de kolom op `null`)
+wordt aangeroepen vanuit `lib/AuthContext.tsx`'s `onAuthStateChange`: bij
+een sessie die naar uitgelogd overgaat (het account dat net uitlogde),
+en defensief ook bij een rechtstreekse overgang naar een ándere
+gebruiker zonder tussenliggende uitgelogde staat (dat pad bestaat niet in
+de eigen UI van deze app - uitloggen vuurt altijd eerst zijn eigen
+sessie-loos event - maar de check staat er toch, voor de zekerheid).
+
+Beide functies zijn volledig fire-and-forget (zoals ze dat al waren):
+een mislukte opslag of wis-poging blokkeert nooit de app en toont nooit
+iets aan de gebruiker - alleen een `console.warn` met de via
+`lib/api.ts`'s `getDataErrorMessage()` vertaalde melding.
+
+**Getest**: lokaal (los Postgres-schema, geen netwerktoegang tot Supabase
+vanuit deze omgeving), tegen twee schema's: (1) de huidige, letterlijke
+productiestand (kolom ontbreekt nog) - bevestigt dat de nieuwe UPDATE
+daar netjes faalt met `column "expo_push_token" does not exist`, zonder
+dat dit ooit buiten de functie terechtkomt; (2) de beoogde eindstand
+(kolom aanwezig, met de kolomrechten uit `0001_init.sql`'s
+fresh-install-lijst: UPDATE wel, SELECT niet). Op schema (2): de
+oorspronkelijke upsert gereproduceerd en bevestigd dat die nog steeds
+faalt met `permission denied for table profiles`; de nieuwe aanpak
+(UPDATE, en de insert-dan-retry-fallback voor een ontbrekende rij) slaagt
+in alle scenario's; en een volledig account-wissel-scenario op "hetzelfde
+apparaat" (A's token wissen, dan B's rij bijwerken) laat achteraf
+`expo_push_token = null` bij A en het token bij B zien - geen lek naar
+het vorige account. `npx tsc --noEmit` is schoon en een
+Android-bundle-export bevat alle nieuwe logregels. Niet interactief
+getest op een toestel/simulator (niet beschikbaar in deze sandbox).
+
 ## Trainings & Buddy Planner (Elite-only)
 
 Pricing-tabel: Elite heeft als enige "Slimme trainingsplanner". Een Elite-

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useRef, useState } from "r
 import type { Session } from "@supabase/supabase-js";
 import type { CustomerInfo } from "react-native-purchases";
 import { isSupabaseConfigured, supabase } from "./supabase";
-import { registerForPushNotificationsAsync } from "./notifications";
+import { clearPushToken, registerForPushNotificationsAsync } from "./notifications";
 import { addCustomerInfoListener, fetchCustomerInfo, getPlanFromCustomerInfo, identifyPurchaser, resetPurchaserIdentity } from "./purchases";
 
 type AuthContextValue = {
@@ -112,16 +112,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const userId = newSession?.user?.id ?? null;
 
       if (!userId) {
+        // Capture who just signed out before clearing the ref: this
+        // device's push token must be removed from *their* profile, not
+        // left pointing here - otherwise a push meant for them (a new
+        // match/message) would still arrive on whatever device/account
+        // signs in here next. See clearPushToken()'s own comment.
+        const signedOutUserId = checkedUserIdRef.current;
         checkedUserIdRef.current = null;
         setHasLocation(false);
         setCustomerInfo(null);
         resetPurchaserIdentity();
+        if (signedOutUserId) {
+          clearPushToken(signedOutUserId);
+        }
         return;
       }
 
       if (userId === checkedUserIdRef.current) {
         // Same user we already checked (e.g. TOKEN_REFRESHED) - nothing to do.
         return;
+      }
+
+      // A *different* user's session replacing the previous one directly
+      // (no intervening signed-out state) isn't a path this app's own UI
+      // takes - signing out always fires its own null-session event
+      // first - but guard it anyway: the previous user's token must not
+      // be left behind here either.
+      const previousUserId = checkedUserIdRef.current;
+      if (previousUserId) {
+        clearPushToken(previousUserId);
       }
 
       checkedUserIdRef.current = userId;
