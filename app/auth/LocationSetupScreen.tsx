@@ -9,6 +9,7 @@ import { Button } from "@/components/Button";
 import { Input } from "@/components/Input";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
+import { getDataErrorMessage } from "@/lib/api";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationSetup">;
 
@@ -19,6 +20,12 @@ type Step = "idle" | "manual" | "saved";
 
 export default function LocationSetupScreen({ navigation }: Props) {
   const [step, setStep] = useState<Step>("idle");
+  // Only true when a real GPS permission denial put us on the "manual"
+  // step - NOT when the user chose "Liever handmatig invullen" themselves,
+  // and NOT just because a save attempt failed while already on this step
+  // (see the "manual" branch below, which used to show the "permission
+  // denied" banner unconditionally in both of those other cases too).
+  const [deniedPermission, setDeniedPermission] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,33 +37,52 @@ export default function LocationSetupScreen({ navigation }: Props) {
     if (userError || !userData.user) {
       throw new Error("Je bent niet ingelogd.");
     }
+    const userId = userData.user.id;
 
-    // upsert (not update): if this profile row doesn't exist yet for any
-    // reason - the handle_new_user() trigger didn't fire, this account
-    // predates the trigger/migration, etc. - a plain .update() matches zero
-    // rows and succeeds with no error, silently writing nothing. That
-    // exact failure mode is indistinguishable from a real save without
-    // checking the returned row, which a bare .update() doesn't give you.
+    // Plain UPDATE, not upsert: Postgres requires SELECT privilege on any
+    // column referenced via an upsert's implicit `EXCLUDED.<column>` (not
+    // just UPDATE privilege on it) - and `authenticated` has no SELECT on
+    // latitude/longitude at all, by design
+    // (supabase/migrations/0014_discover_profiles_location_privacy.sql).
+    // `.upsert({ id, city, latitude, longitude }, ...)` therefore always
+    // failed with "permission denied for table profiles", for both the
+    // GPS and the manual route, regardless of what the actual values
+    // were (even latitude: null, longitude: null still reference those
+    // columns in the generated SQL). A plain UPDATE never references
+    // EXCLUDED, so it isn't subject to that check - confirmed locally
+    // against a schema matching production.
     //
-    // Only selects id/city back, not latitude/longitude: the
-    // `authenticated` role's column-level SELECT on those two is revoked
-    // (supabase/migrations/0014_discover_profiles_location_privacy.sql) -
-    // even reading back your own just-written coordinates needs the
-    // get_my_location() function instead of a plain column read (see
-    // PROFILE_COLUMNS's comment in lib/api.ts). Not needed here anyway -
-    // an upsert with onConflict always affects exactly one row, so getting
-    // any row back at all already confirms the write succeeded.
-    const { data: saved, error: saveError } = await supabase
+    // Only selects id/city back, not latitude/longitude - same reasoning
+    // as above: even reading back your own just-written coordinates
+    // needs get_my_location() instead of a plain column read (see
+    // PROFILE_COLUMNS's comment in lib/api.ts).
+    const { data: updated, error: updateError } = await supabase
       .from("profiles")
-      .upsert({ id: userData.user.id, ...fields }, { onConflict: "id" })
+      .update(fields)
+      .eq("id", userId)
       .select("id, city")
-      .single();
+      .maybeSingle();
+    if (updateError) throw updateError;
 
-    if (saveError) throw saveError;
+    if (updated?.id) return;
 
-    const actuallySaved = Boolean(saved?.id);
-    console.log("[LocationSetup] Locatie opslaan voor profiel", userData.user.id, "->", saved, "ok:", actuallySaved);
-    if (!actuallySaved) {
+    // UPDATE matched zero rows - the profile row doesn't exist yet for
+    // some reason (handle_new_user()'s trigger didn't fire, an account
+    // that predates it, etc.). Create a bare row, then retry the update -
+    // still never an upsert, so still no EXCLUDED-on-latitude/longitude
+    // privilege problem.
+    const { error: insertError } = await supabase.from("profiles").insert({ id: userId }).select("id").single();
+    if (insertError) throw insertError;
+
+    const { data: retried, error: retryError } = await supabase
+      .from("profiles")
+      .update(fields)
+      .eq("id", userId)
+      .select("id, city")
+      .maybeSingle();
+    if (retryError) throw retryError;
+
+    if (!retried?.id) {
       throw new Error("Locatie opslaan is niet gelukt: de database bevestigt geen opgeslagen locatie.");
     }
   };
@@ -67,6 +93,7 @@ export default function LocationSetupScreen({ navigation }: Props) {
     try {
       const { status: permission } = await Location.requestForegroundPermissionsAsync();
       if (permission !== "granted") {
+        setDeniedPermission(true);
         setStep("manual");
         return;
       }
@@ -88,8 +115,12 @@ export default function LocationSetupScreen({ navigation }: Props) {
       await saveLocation({ city, latitude, longitude });
       setResolvedCity(city);
       setStep("saved");
-    } catch (e: any) {
-      setError(e?.message ?? "Locatie ophalen is mislukt. Probeer het opnieuw of vul je plaats handmatig in.");
+    } catch (e) {
+      // Reached when permission WAS granted but something else failed
+      // (GPS/location services, or saveLocation() itself) - not a
+      // permission denial, so don't show that banner for this.
+      setDeniedPermission(false);
+      setError(getDataErrorMessage(e));
       setStep("manual");
     } finally {
       setRequesting(false);
@@ -121,8 +152,8 @@ export default function LocationSetupScreen({ navigation }: Props) {
       await saveLocation({ city, latitude, longitude });
       setResolvedCity(city);
       setStep("saved");
-    } catch (e: any) {
-      setError(e?.message ?? "Opslaan is mislukt. Probeer het opnieuw.");
+    } catch (e) {
+      setError(getDataErrorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -152,9 +183,13 @@ export default function LocationSetupScreen({ navigation }: Props) {
           </>
         ) : step === "manual" ? (
           <>
-            <Text style={styles.statusError}>
-              Locatietoegang geweigerd. Geen probleem — vul je plaats hieronder handmatig in.
-            </Text>
+            {deniedPermission ? (
+              <Text style={styles.statusError}>
+                Locatietoegang geweigerd. Geen probleem — vul je plaats hieronder handmatig in.
+              </Text>
+            ) : !error ? (
+              <Text style={styles.status}>Vul je plaats hieronder handmatig in.</Text>
+            ) : null}
             {error ? <Text style={styles.error}>{error}</Text> : null}
             <Input
               placeholder="Bijv. Amsterdam"

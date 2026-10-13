@@ -823,6 +823,60 @@ testprofielen. `p_sport`/`p_distance_km` worden nu exact toegepast zoals
 het Filter-scherm ze laat zien, zonder impliciete substitutie. Draai ook
 deze migratie op je bestaande database.
 
+**Tweede opvolgbug, gevonden en gefixt in `LocationSetupScreen.tsx`
+(client-code, geen migratie):** `saveLocation()` sloeg de locatie op via
+`.upsert({ id, city, latitude, longitude }, { onConflict: "id" })`. Een
+upsert genereert bij PostgREST een `INSERT ... ON CONFLICT (id) DO UPDATE
+SET col = EXCLUDED.col, ...` - en Postgres vereist voor élke
+`EXCLUDED.<kolom>`-referentie **SELECT**-recht op die kolom, niet alleen
+UPDATE-recht. Omdat `latitude`/`longitude` sinds deze migratie geen
+SELECT-recht meer hebben voor `authenticated` (zie hierboven), faalde
+deze upsert daardoor altijd met `permission denied for table profiles` -
+voor zowel de GPS-route als de handmatige invoer (beide roepen dezelfde
+`saveLocation()` aan), en onafhankelijk van of er daadwerkelijk een
+coördinaat werd meegegeven (zelfs `latitude: null, longitude: null` na
+een mislukte geocode staat nog als expliciete sleutel in de payload, en
+dus als `EXCLUDED`-referentie in de gegenereerde SQL). Omdat het
+foutblok `step` niet terugzette, bleef bij elke mislukte poging de vaste
+"Locatietoegang geweigerd"-banner (die hoe dan ook onvoorwaardelijk werd
+getoond zodra `step === "manual"`, ook als de gebruiker zelf voor
+handmatig invoeren koos) gewoon staan, wat het leek alsof "dezelfde
+melding" steeds terugkwam.
+
+Fix, **zonder** 0014's beveiliging terug te draaien (geen nieuwe SELECT-
+rechten op latitude/longitude): `saveLocation()` gebruikt nu een gewone
+`.update(fields).eq("id", userId)` - die genereert geen `EXCLUDED`-
+referenties, dus geen SELECT-probleem (lokaal bevestigd: een kale UPDATE
+op `city`/`latitude`/`longitude` werkt gewoon, zowel vóór als ná
+`0033_terms_acceptance.sql` - die migratie had hier dus nooit iets mee te
+doen). Matcht de UPDATE 0 rijen (het profiel bestaat nog niet, bv. omdat
+`handle_new_user()`'s trigger nooit vuurde), dan wordt eerst een kale rij
+aangemaakt (`.insert({ id })`) en de UPDATE daarna herhaald - nooit een
+upsert, dus nooit een `EXCLUDED`-referentie op die twee kolommen.
+Daarnaast: de "Locatietoegang geweigerd"-banner staat nu achter een
+eigen `deniedPermission`-vlag (alleen `true` bij een echte
+weigering via `Location.requestForegroundPermissionsAsync()`, niet bij
+een zelfgekozen "Liever handmatig invullen" en niet bij een mislukte
+opslagpoging), en beide catch-blokken gebruiken voortaan `lib/api.ts`'s
+gedeelde `getDataErrorMessage()` in plaats van de rauwe `e.message` -
+die vertaalt een privilege-fout (SQLSTATE `42501`, exact de foutcode van
+deze bug) al naar "Je hebt geen toegang tot deze gegevens. Log opnieuw in
+en probeer het nogmaals." in plaats van het onvertaalde Postgres-bericht.
+
+**Getest**: lokaal (los Postgres-schema, geen netwerktoegang tot Supabase
+vanuit deze omgeving), tegen een schema dat de huidige kolommen en
+kolomrechten nabouwt. De oorspronkelijke `.upsert()`-aanpak gereproduceerd
+en bevestigd dat die faalt met exact `permission denied for table
+profiles`, zowel met als zonder coördinaten. De nieuwe aanpak (plain
+UPDATE, en de insert-dan-update-fallback voor een ontbrekende rij)
+slaagt in alle scenario's zonder fouten, en de uiteindelijk opgeslagen
+`city`/`latitude`/`longitude` kloppen. `npx tsc --noEmit` is schoon en
+een Android-bundle-export bevat de aangepaste schermteksten. Niet
+interactief getest op een toestel/simulator (niet beschikbaar in deze
+sandbox) - met name het GPS-toestemmingsdialoog zelf (de
+`Location.requestForegroundPermissionsAsync()`-aanroep) kan alleen op een
+echt toestel/simulator getest worden.
+
 ## Pushmeldingen (Expo Notifications)
 
 Na inloggen/registreren vraagt de app om toestemming voor pushmeldingen
