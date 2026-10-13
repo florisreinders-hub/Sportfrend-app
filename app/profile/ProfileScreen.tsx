@@ -74,6 +74,7 @@ export default function ProfileScreen({ navigation }: Props) {
           <Text style={styles.detailLine}>Sport: {profile?.sport ?? "Nog niet ingesteld"}</Text>
           <Text style={styles.detailLine}>Niveau: {profile?.level ?? "-"}</Text>
           <Text style={styles.detailLine}>Locatie: {profile?.city ?? "-"}</Text>
+          {profile?.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
 
           <Text style={styles.sectionTitle}>BERICHTEN</Text>
           <View style={styles.postCard}>
@@ -155,6 +156,20 @@ const styles = StyleSheet.create({
     fontFamily: fonts.accent,
     fontSize: fontSizes.md,
     color: colors.black,
+  },
+  // Same tokens as SporterProfileScreen.tsx's styles.bio - no shared style
+  // constant exists yet to import instead (and extracting one would mean
+  // touching that screen's own StyleSheet, which this fix doesn't need
+  // to do), so this is the same visual result assembled from the same
+  // theme tokens rather than a copy-pasted literal. Text wraps onto
+  // multiple lines by default in React Native (no numberOfLines/fixed
+  // width here to truncate or clip it), so a long bio breaks normally
+  // within the screen instead of running off it.
+  bio: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.textSecondary,
+    marginTop: spacing.sm,
   },
   postCard: {
     borderWidth: 1,
