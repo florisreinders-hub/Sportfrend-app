@@ -82,9 +82,20 @@ alter table public.profiles add column if not exists terms_accepted_at timestamp
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- 2. handle_new_user(): vult terms_accepted_at vanuit signup-metadata
+--
+-- search_path = public toegevoegd (was oorspronkelijk niet ingesteld,
+-- vanaf 0001_init.sql al zo - de enige SECURITY DEFINER-functie in de
+-- hele repo waar dat voor gold, zie 0035_security_definer_search_path.sql).
+-- Staat hier ook, niet alleen in 0035's eigen ALTER FUNCTION, zodat een
+-- latere her-uitvoering van dit bestand (migraties zijn bewust veilig
+-- om vaker te draaien) de fix uit 0035 niet weer ongedaan maakt.
 -- ─────────────────────────────────────────────────────────────────────────
 create or replace function public.handle_new_user()
-returns trigger as $$
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
 begin
   insert into public.profiles (id, terms_accepted_at) values (
     new.id,
@@ -98,7 +109,7 @@ begin
   on conflict (user_id) do nothing;
   return new;
 end;
-$$ language plpgsql security definer;
+$$;
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- 3. Kolomrechten: terms_accepted_at is leesbaar maar niet door de client

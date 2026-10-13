@@ -231,7 +231,11 @@ create trigger set_subscriptions_updated_at
 -- as signup metadata only once its required checkbox is ticked, which
 -- lands in auth.users.raw_user_meta_data before this trigger fires.
 create or replace function public.handle_new_user()
-returns trigger as $$
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
 begin
   insert into public.profiles (id, terms_accepted_at) values (
     new.id,
@@ -245,7 +249,7 @@ begin
   on conflict (user_id) do nothing;
   return new;
 end;
-$$ language plpgsql security definer;
+$$;
 
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created

@@ -712,6 +712,54 @@ bestand zelf voor de exacte SQL en toelichting per punt):
 Draai deze migratie op je bestaande database - `0001_init.sql` is ook
 bijgewerkt zodat een nieuwe installatie deze fixes direct meekrijgt.
 
+**Zesde punt, apart gefixt in `0035_security_definer_search_path.sql`**:
+geen van de `SECURITY DEFINER`-functies in `public` had een vaste
+`search_path` ingesteld - zonder die kan de search_path van de
+*aanroepende* sessie bepalen welk object een ongekwalificeerde naam in de
+functie uiteindelijk raakt (een bekend Postgres/Supabase-aandachtspunt bij
+`SECURITY DEFINER`). **Niet vanuit de repo aangenomen**: eerst is een
+inventarisatiequery (`pg_get_functiondef`/`proconfig`, zie dat bestand)
+tegen de échte live database gedraaid - precies om de fout uit
+`0033_terms_acceptance.sql` (daar bleek `expo_push_token` wél in de repo
+maar niet live te bestaan) niet te herhalen. Resultaat: 17 van de 18
+`SECURITY DEFINER`-functies hadden al `search_path = public`
+(`is_moderator()` zelfs al `public, auth`, nodig voor zijn `auth.users`-
+lookup) - al die statements stonden namelijk al in de
+`create or replace function`-definities in de repo zelf, vanaf
+`0001_init.sql`. **Op `handle_new_user()` na** - dat was, al sinds
+`0001_init.sql`, de enige `SECURITY DEFINER`-functie in de hele repo
+zonder `search_path`, en is dat gebleven bij elke latere wijziging
+(inclusief de `0033`-aanpassing eerder in dit project). `0035` gebruikt
+`ALTER FUNCTION ... SET search_path` (geen functie-inhoud verandert) om
+dat voor alle 18 in één keer recht te zetten op de bestaande database;
+`0001_init.sql` en `0033_terms_acceptance.sql` zijn beide ook aangepast
+zodat een nieuwe installatie, én een latere her-uitvoering van `0033`
+(migraties zijn bewust veilig om vaker te draaien), dit hiaat niet
+opnieuw introduceren.
+
+**Getest**: lokaal (los Postgres-schema, geen netwerktoegang tot Supabase
+vanuit deze omgeving), met alle 18 functies exact zoals de live
+inventarisatiequery ze teruggaf (inclusief hun bestaande `proconfig`) -
+niet herschreven vanuit de repo. `0035` draait idempotent; de
+zelfcontrole bevestigt alle 18 nu een `search_path` hebben,
+`is_moderator()` met `auth` erbij. Functioneel getest: `handle_new_user()`
+(profiel + abonnement aanmaken, `terms_accepted_at` vullen vanuit
+signup-metadata), `is_moderator()` (`true` voor het moderator-e-mailadres,
+`false` voor een gewoon account - zijn `auth.users`-lookup werkt dus nog),
+`get_my_location()` (geeft alleen de eigen coördinaten terug, en de
+bestaande blokkade op een rechtstreekse kolom-select op
+`latitude`/`longitude` blijft gewoon intact), `discover_profiles()` (volle
+matching-logica inclusief de Basis-50km-grens, geverifieerd met een
+premium-account om die grens zelf niet per ongeluk met de search_path-fix
+te verwarren), en de drie trigger-functies
+(`notify_on_new_match`/`notify_on_new_message`/`notify_on_report_resolved`)
+plus `flag_content_if_needed()`/`find_flagged_words()` (geneste
+`SECURITY DEFINER`-aanroep) - stuk voor stuk nog exact zo werkend als
+vóór deze migratie. Ook getest dat de zelfcontrole een ontbrekende
+functie daadwerkelijk opmerkt (een expres onvolledig testschema gaf een
+duidelijke, met-naam-genoemde fout en rolde volledig terug, dankzij de
+expliciete `begin`/`commit`).
+
 ## Account verwijderen
 
 "Account verwijderen" (onderaan Instellingen, onder "Uitloggen") vraagt
