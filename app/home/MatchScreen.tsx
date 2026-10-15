@@ -70,7 +70,6 @@ export default function MatchScreen({ route, navigation }: Props) {
           style={[styles.banner, { opacity: bannerOpacity, transform: [{ scale: bannerScale }] }]}
         >
           <Text style={styles.bannerText}>CONNECTIE!</Text>
-          <Text style={styles.emoji}>🔥</Text>
         </Animated.View>
       </View>
 
@@ -100,7 +99,7 @@ export default function MatchScreen({ route, navigation }: Props) {
       </View>
 
       <Button
-        label="Verder swipen"
+        label="Verder zoeken"
         onPress={() => navigation.replace("Home", { tab: "ontdekken" })}
         style={styles.cta}
       />
@@ -134,10 +133,6 @@ const styles = StyleSheet.create({
     fontSize: 34,
     color: colors.white,
     letterSpacing: -1,
-  },
-  emoji: {
-    fontSize: 40,
-    marginTop: spacing.xs,
   },
   error: {
     fontFamily: fonts.body,

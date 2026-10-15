@@ -34,20 +34,25 @@ Deno.serve(async (req) => {
     const userA = byId.get(match.user_a_id);
     const userB = byId.get(match.user_b_id);
 
+    // Sportgericht, niet datingachtig - zelfde titel voor beide kanten van
+    // de match, dus één keer gedefinieerd in plaats van twee losse
+    // string-literals die uit elkaar kunnen lopen.
+    const NOTIFICATION_TITLE = "Nieuwe connectie!";
+
     const pushMessages: ExpoPushMessage[] = [];
     if (userA?.expo_push_token && userA.push_notifications_enabled !== false) {
       pushMessages.push({
         to: userA.expo_push_token,
-        title: "Nieuwe match!",
-        body: `Je hebt een match met ${userB?.full_name ?? "een sportmaatje"}.`,
+        title: NOTIFICATION_TITLE,
+        body: `Jij en ${userB?.full_name ?? "een sportmaatje"} willen samen sporten. Plan een training via de chat.`,
         data: { type: "match", matchId: match.id },
       });
     }
     if (userB?.expo_push_token && userB.push_notifications_enabled !== false) {
       pushMessages.push({
         to: userB.expo_push_token,
-        title: "Nieuwe match!",
-        body: `Je hebt een match met ${userA?.full_name ?? "een sportmaatje"}.`,
+        title: NOTIFICATION_TITLE,
+        body: `Jij en ${userA?.full_name ?? "een sportmaatje"} willen samen sporten. Plan een training via de chat.`,
         data: { type: "match", matchId: match.id },
       });
     }

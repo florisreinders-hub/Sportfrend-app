@@ -18,7 +18,7 @@ function describeNotification(notification: AppNotification): string {
   const name = notification.otherUser?.full_name ?? "Sportmaatje";
   switch (notification.type) {
     case "match":
-      return `Nieuwe match met ${name}`;
+      return `Nieuw sportmaatje: ${name}`;
     case "message":
       return `Nieuw bericht van ${name}`;
     case "moderation_update":
@@ -29,7 +29,7 @@ function describeNotification(notification: AppNotification): string {
 function iconForNotification(type: AppNotification["type"]): keyof typeof Ionicons.glyphMap {
   switch (type) {
     case "match":
-      return "heart";
+      return "people";
     case "message":
       return "chatbubble";
     case "moderation_update":

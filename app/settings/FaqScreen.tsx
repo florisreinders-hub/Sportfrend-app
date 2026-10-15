@@ -11,7 +11,7 @@ import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 const faqs = [
   {
     q: "Hoe werkt matchen op Sportfrend?",
-    a: "Swipe naar rechts (Connect) als je iemand leuk vindt, of naar links (Skip) om verder te zoeken. Vinden jullie elkaar allebei leuk? Dan ontstaat er een connectie en kun je chatten.",
+    a: "Swipe naar rechts (Connect) als je met iemand wilt sporten, of naar links (Skip) om verder te zoeken. Wil de ander ook samen sporten? Dan ontstaat er een connectie en kun je een training afspreken via de chat.",
   },
   {
     q: "Wat kost een Premium of Elite abonnement?",
