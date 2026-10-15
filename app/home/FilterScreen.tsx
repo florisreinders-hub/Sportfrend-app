@@ -10,12 +10,11 @@ import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { Button } from "@/components/Button";
 import { SelectModal } from "@/components/SelectModal";
-import { AvailabilityGrid } from "@/components/AvailabilityGrid";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { DEFAULT_FILTERS, DiscoverFilters, useDiscoverFilters } from "@/lib/FilterContext";
 import { SPORT_OPTIONS } from "@/constants/sports";
 import { LEVEL_OPTIONS } from "@/constants/levels";
-import { fetchDiscoverDailyStatus } from "@/lib/api";
+import { availabilityKey, DAYPART_OPTIONS, fetchDiscoverDailyStatus, WEEKDAY_OPTIONS } from "@/lib/api";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Filter">;
 
@@ -28,13 +27,71 @@ type Props = NativeStackScreenProps<RootStackParamList, "Filter">;
 // beveiliging.
 const BASIS_MAX_DISTANCE_KM = 50;
 
+const ALL_DAY_KEYS = WEEKDAY_OPTIONS.map((d) => d.key);
+const ALL_DAYPART_KEYS = DAYPART_OPTIONS.map((p) => p.key);
+
+/**
+ * Combineert de twee losse rijen (dagen, dagdelen) tot de
+ * availability_days-vocabulaire ("ma-ochtend", zie lib/api.ts) -
+ * discover_profiles() zelf is value-agnostic en verwacht gewoon een
+ * platte lijst van die combinatiewaarden (0036_availability_dayparts.sql),
+ * ongeacht hoe die in de UI is samengesteld.
+ *
+ * - Alleen dagen gekozen, geen dagdeel: alle 3 dagdelen voor elke
+ *   gekozen dag (bv. "ma" -> ma-ochtend, ma-middag, ma-avond).
+ * - Alleen dagdelen gekozen, geen dag: dat dagdeel voor alle 7 dagen.
+ * - Allebei gekozen: het kruisproduct van exact die twee selecties
+ *   (bv. ma+za en ochtend+avond -> ma-ochtend, ma-avond, za-ochtend,
+ *   za-avond - zie de taakomschrijving van deze functie-uitbreiding).
+ * - Niets gekozen: null (geen filter).
+ */
+function buildAvailabilityFilter(days: string[], dayparts: string[]): string[] | null {
+  if (days.length === 0 && dayparts.length === 0) return null;
+  const effectiveDays = days.length > 0 ? days : ALL_DAY_KEYS;
+  const effectiveDayparts = dayparts.length > 0 ? dayparts : ALL_DAYPART_KEYS;
+  const combos: string[] = [];
+  for (const day of effectiveDays) {
+    for (const part of effectiveDayparts) {
+      combos.push(availabilityKey(day, part));
+    }
+  }
+  return combos;
+}
+
+/**
+ * Omgekeerde van buildAvailabilityFilter() - zet een opgeslagen
+ * combinatiewaarde-array terug om naar welke dag-/dagdeel-chips aan
+ * stonden, zodat een eerder gekozen filter bij het heropenen van dit
+ * scherm weer als zodanig getoond wordt. Rondtript exact voor alles wat
+ * buildAvailabilityFilter() zelf heeft geproduceerd; een waarde die niet
+ * in het dag-dagdeel-formaat staat (zou hier nooit moeten voorkomen,
+ * aangezien dit scherm de enige schrijver van dit filter is) wordt
+ * genegeerd in plaats van een crash te geven.
+ */
+function decomposeAvailabilityFilter(combined: string[] | null): { days: string[]; dayparts: string[] } {
+  const dayKeys = new Set(ALL_DAY_KEYS);
+  const partKeys = new Set(ALL_DAYPART_KEYS);
+  const days = new Set<string>();
+  const dayparts = new Set<string>();
+  for (const key of combined ?? []) {
+    const [day, part] = key.split("-");
+    if (dayKeys.has(day) && partKeys.has(part)) {
+      days.add(day);
+      dayparts.add(part);
+    }
+  }
+  return { days: Array.from(days), dayparts: Array.from(dayparts) };
+}
+
 export default function FilterScreen({ navigation }: Props) {
   const { filters, setFilters } = useDiscoverFilters();
   const [maxAge, setMaxAge] = useState(filters.maxAge);
   const [distanceKm, setDistanceKm] = useState(filters.distanceKm);
   const [sport, setSport] = useState<string | null>(filters.sport);
   const [level, setLevel] = useState<string | null>(filters.level);
-  const [availabilityDays, setAvailabilityDays] = useState<string[]>(filters.availabilityDays ?? []);
+  const [{ days: selectedDays, dayparts: selectedDayparts }, setAvailabilitySelection] = useState(() =>
+    decomposeAvailabilityFilter(filters.availabilityDays)
+  );
   const [sportPickerVisible, setSportPickerVisible] = useState(false);
   const [levelPickerVisible, setLevelPickerVisible] = useState(false);
   const [plan, setPlan] = useState<"basis" | "premium" | "elite" | null>(null);
@@ -83,8 +140,8 @@ export default function FilterScreen({ navigation }: Props) {
   // once locked, so this just keeps their "locked" appearance from looking
   // like it's still showing a real selection underneath.
   useEffect(() => {
-    if (plan != null && plan !== "elite" && availabilityDays.length > 0) {
-      setAvailabilityDays([]);
+    if (plan != null && plan !== "elite" && (selectedDays.length > 0 || selectedDayparts.length > 0)) {
+      setAvailabilitySelection({ days: [], dayparts: [] });
     }
   }, [plan]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -100,7 +157,17 @@ export default function FilterScreen({ navigation }: Props) {
   const levelLabel = LEVEL_OPTIONS.find((o) => o.value === level)?.label ?? "Alle niveaus";
 
   const toggleDay = (key: string) => {
-    setAvailabilityDays((prev) => (prev.includes(key) ? prev.filter((d) => d !== key) : [...prev, key]));
+    setAvailabilitySelection((prev) => ({
+      ...prev,
+      days: prev.days.includes(key) ? prev.days.filter((d) => d !== key) : [...prev.days, key],
+    }));
+  };
+
+  const toggleDaypart = (key: string) => {
+    setAvailabilitySelection((prev) => ({
+      ...prev,
+      dayparts: prev.dayparts.includes(key) ? prev.dayparts.filter((d) => d !== key) : [...prev.dayparts, key],
+    }));
   };
 
   const apply = () => {
@@ -114,7 +181,7 @@ export default function FilterScreen({ navigation }: Props) {
       distanceKm: isBasis ? Math.min(distanceKm, BASIS_MAX_DISTANCE_KM) : distanceKm,
       sport,
       level: isBasis ? null : level,
-      availabilityDays: isElite && availabilityDays.length > 0 ? availabilityDays : null,
+      availabilityDays: isElite ? buildAvailabilityFilter(selectedDays, selectedDayparts) : null,
     };
     setFilters(next);
     navigation.navigate("Home", { tab: "ontdekken" });
@@ -127,7 +194,7 @@ export default function FilterScreen({ navigation }: Props) {
     setDistanceKm(next.distanceKm);
     setSport(next.sport);
     setLevel(next.level);
-    setAvailabilityDays(next.availabilityDays ?? []);
+    setAvailabilitySelection(decomposeAvailabilityFilter(next.availabilityDays));
   };
 
   const goToPricing = () => navigation.navigate("Pricing");
@@ -193,13 +260,25 @@ export default function FilterScreen({ navigation }: Props) {
             {availabilityLocked ? <LockBadge label="ELITE" /> : null}
           </View>
         </View>
-        <AvailabilityGrid
-          value={availabilityDays}
+        <FilterChipRow
+          options={WEEKDAY_OPTIONS}
+          value={selectedDays}
           onToggle={toggleDay}
           locked={availabilityLocked}
           onLockedPress={goToPricing}
-          style={styles.availabilityGrid}
+          style={styles.availabilityRow}
         />
+        <FilterChipRow
+          options={DAYPART_OPTIONS}
+          value={selectedDayparts}
+          onToggle={toggleDaypart}
+          locked={availabilityLocked}
+          onLockedPress={goToPricing}
+          style={styles.availabilityRow}
+        />
+        <Text style={[styles.availabilityHint, availabilityLocked && styles.labelLocked]}>
+          Zoekt mensen die op minstens één van deze momenten kunnen.
+        </Text>
 
         <Button label="Toepassen" onPress={apply} style={styles.apply} />
         <Button label="Reset filter" onPress={reset} variant="outline" style={styles.reset} />
@@ -232,6 +311,58 @@ function LockBadge({ label = "PREMIUM" }: { label?: string }) {
     <View style={styles.premiumBadge}>
       <Ionicons name="lock-closed" size={11} color={colors.textSecondary} />
       <Text style={styles.premiumBadgeText}>{label}</Text>
+    </View>
+  );
+}
+
+/**
+ * One flat, wrapping row of toggleable chips - used for the Beschikbaarheid
+ * filter's dag-rij and dagdeel-rij (FilterScreen only; AvailabilityGrid,
+ * used by AvailabilityScreen's "Mijn beschikbaarheid" self-declare screen,
+ * stays a separate per-day grid and is unaffected by this). flexWrap +
+ * flexGrow (not a fixed per-chip width) so chips reflow onto a second line
+ * on a narrow screen or at a larger system font size instead of clipping -
+ * same minHeight reasoning as Button.tsx.
+ */
+function FilterChipRow({
+  options,
+  value,
+  onToggle,
+  locked,
+  onLockedPress,
+  style,
+}: {
+  options: { key: string; label: string }[];
+  value: string[];
+  onToggle: (key: string) => void;
+  locked?: boolean;
+  onLockedPress?: () => void;
+  style?: object;
+}) {
+  return (
+    <View style={[styles.chipRow, style]}>
+      {options.map((opt) => {
+        const selected = value.includes(opt.key);
+        return (
+          <Pressable
+            key={opt.key}
+            onPress={() => (locked ? onLockedPress?.() : onToggle(opt.key))}
+            style={styles.chipFlex}
+          >
+            <View
+              pointerEvents={locked ? "none" : "auto"}
+              style={[styles.chip, selected && styles.chipSelected, locked && styles.chipLocked]}
+            >
+              <Text
+                style={[styles.chipText, selected && styles.chipTextSelected, locked && styles.chipTextLocked]}
+                numberOfLines={2}
+              >
+                {opt.label}
+              </Text>
+            </View>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -346,7 +477,49 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: colors.textSecondary,
   },
-  availabilityGrid: {
+  availabilityRow: {
+    marginTop: spacing.sm,
+  },
+  chipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+  },
+  chipFlex: {
+    flexGrow: 1,
+    minWidth: 44,
+  },
+  chip: {
+    minHeight: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surface,
+    borderRadius: radii.sm,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  chipSelected: {
+    backgroundColor: colors.primary,
+  },
+  chipLocked: {
+    opacity: 0.6,
+  },
+  chipText: {
+    fontFamily: fonts.display,
+    fontSize: fontSizes.sm,
+    color: colors.black,
+    textAlign: "center",
+  },
+  chipTextSelected: {
+    color: colors.black,
+  },
+  chipTextLocked: {
+    color: colors.textSecondary,
+  },
+  availabilityHint: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.xs,
+    color: colors.textSecondary,
     marginTop: spacing.sm,
   },
   apply: {
