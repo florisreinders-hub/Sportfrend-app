@@ -836,6 +836,84 @@ export const WEEKDAY_OPTIONS: { key: string; label: string }[] = [
   { key: "zo", label: "Zo" },
 ];
 
+/**
+ * "Slimme beschikbaarheids match" picks dag + dagdeel, not just a day
+ * (0036_availability_dayparts.sql) - a selection is stored as combined
+ * keys like "ma-avond" (see availabilityKey() below), never a bare
+ * WEEKDAY_OPTIONS key on its own.
+ */
+export const DAYPART_OPTIONS: { key: string; label: string }[] = [
+  { key: "ochtend", label: "Ochtend" },
+  { key: "middag", label: "Middag" },
+  { key: "avond", label: "Avond" },
+];
+
+const WEEKDAY_FULL_NAMES: Record<string, string> = {
+  ma: "maandag",
+  di: "dinsdag",
+  wo: "woensdag",
+  do: "donderdag",
+  vr: "vrijdag",
+  za: "zaterdag",
+  zo: "zondag",
+};
+
+export function availabilityKey(day: string, daypart: string): string {
+  return `${day}-${daypart}`;
+}
+
+const LEGACY_DAY_CODES = WEEKDAY_OPTIONS.map((d) => d.key);
+
+/**
+ * Belt-and-braces fallback for 0036_availability_dayparts.sql: expands any
+ * bare day code ("ma") still found in availability_days into all 3
+ * dagdelen for that day, so a straggler row the migration somehow missed
+ * shows as "whole day selected" on read instead of silently vanishing
+ * (dropped by formatAvailabilityDays/the picker UI, neither of which
+ * recognize a bare day code) or crashing. Every write (updateProfileSettings)
+ * always produces clean day+dagdeel values only - this only ever runs on
+ * read, it never writes anything back itself.
+ */
+export function expandLegacyAvailabilityDays(days: string[]): string[] {
+  const expanded = new Set<string>();
+  for (const d of days) {
+    if (LEGACY_DAY_CODES.includes(d)) {
+      for (const part of DAYPART_OPTIONS) expanded.add(availabilityKey(d, part.key));
+    } else {
+      expanded.add(d);
+    }
+  }
+  return Array.from(expanded);
+}
+
+/**
+ * Human-readable Dutch rendering of combined day+dagdeel availability keys
+ * for display ("Mijn gegevens opvragen" - lib/dataExport.ts), e.g.
+ * ["za-ochtend", "ma-avond"] -> "maandagavond, zaterdagochtend". Sorted by
+ * weekday then dagdeel so the output order is stable regardless of the
+ * stored array's order. Runs expandLegacyAvailabilityDays() first so a
+ * straggler bare day code is shown as its 3 dagdelen rather than silently
+ * dropped (a key that still doesn't parse after that - never expected -
+ * is dropped rather than shown as garbage).
+ */
+export function formatAvailabilityDays(days: string[]): string {
+  const dayOrder = WEEKDAY_OPTIONS.map((d) => d.key);
+  const partOrder = DAYPART_OPTIONS.map((p) => p.key);
+  const parsed = expandLegacyAvailabilityDays(days)
+    .map((key) => {
+      const [day, part] = key.split("-");
+      if (!dayOrder.includes(day) || !partOrder.includes(part)) return null;
+      return { day, part };
+    })
+    .filter((x): x is { day: string; part: string } => x !== null)
+    .sort((a, b) => {
+      const dayDiff = dayOrder.indexOf(a.day) - dayOrder.indexOf(b.day);
+      return dayDiff !== 0 ? dayDiff : partOrder.indexOf(a.part) - partOrder.indexOf(b.part);
+    });
+  if (parsed.length === 0) return "Niet opgegeven";
+  return parsed.map(({ day, part }) => `${WEEKDAY_FULL_NAMES[day]}${part}`).join(", ");
+}
+
 export type ProfileSettings = {
   push_notifications_enabled: boolean;
   profile_visible: boolean;
@@ -852,7 +930,7 @@ export async function fetchProfileSettings(userId: string): Promise<ProfileSetti
   return {
     push_notifications_enabled: data?.push_notifications_enabled ?? true,
     profile_visible: data?.profile_visible ?? true,
-    availability_days: data?.availability_days ?? [],
+    availability_days: expandLegacyAvailabilityDays(data?.availability_days ?? []),
   };
 }
 

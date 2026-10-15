@@ -1,10 +1,10 @@
 # Data-inventaris: persoonsgegevens in Sportfrend
 
-Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0033_terms_acceptance.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest, inclusief `lib/sentry.ts` (crash-reporting, geen migratie), `lib/contentFilter.ts` (client-side deel van de contentfilter) en `lib/purchases.ts` (RevenueCat, geen migratie).
+Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0036_availability_dayparts.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest, inclusief `lib/sentry.ts` (crash-reporting, geen migratie), `lib/contentFilter.ts` (client-side deel van de contentfilter) en `lib/purchases.ts` (RevenueCat, geen migratie).
 
 **Dit is een technische inventaris, geen juridisch document.** Voor een AVG/GDPR-verwerkersregister, verwerkersovereenkomsten met Supabase/Resend/Expo/RevenueCat/Sentry, en een officiële bewaartermijnenbeleid is juridisch advies nodig - dit document is bedoeld als de feitelijke basis daarvoor.
 
-Laatst bijgewerkt: bij migratie `0033_terms_acceptance.sql` (verplicht vinkje bij registratie voor de algemene voorwaarden/privacyverklaring, vastgelegd in de nieuwe kolom `profiles.terms_accepted_at`) - zie §2 (`profiles`).
+Laatst bijgewerkt: bij migratie `0036_availability_dayparts.sql` (`profiles.availability_days` opnieuw geclassificeerd als persoonsgegeven, zie §2 `profiles` - was voorheen ten onrechte als "app-instelling" ingedeeld samen met `is_onboarded`/`profile_visible`/`push_notifications_enabled`) - zie §2 (`profiles`).
 
 Gebruikers kunnen zelf een overzicht van (vrijwel) alle onderstaande gegevens opvragen via **Instellingen → "Mijn gegevens opvragen"** - zie README.md §"Mijn gegevens opvragen (recht op inzage/dataportabiliteit)" en `lib/dataExport.ts`.
 
@@ -42,7 +42,8 @@ Eén rij per gebruiker; bevat het overgrote deel van de persoonsgegevens in de a
 | `latitude`, `longitude` | Ja, **exacte GPS-coördinaten** | **Ja, hoog gevoelig** | Tot accountverwijdering of handmatige wijziging - zie §5. Sinds `0014_discover_profiles_location_privacy.sql` **niet meer rechtstreeks uitleesbaar door wie dan ook**, ook niet de eigenaar zelf via een gewone kolom-select - alleen via `get_my_location()` (eigen rij) of als berekende `distance_km` via `discover_profiles()` voor anderen. |
 | `search_radius_km` | Nee (instelling, geen persoonsgegeven op zich) | - | - |
 | `avatar_url`, `photo_url` | Ja (foto van de gebruiker) | Ja (biometrisch-achtig beeldmateriaal) | Zie §3 (Storage) - oude foto's blijven staan tot accountverwijdering |
-| `is_onboarded`, `profile_visible`, `push_notifications_enabled`, `availability_days` | Nee (app-instellingen) | - | - |
+| `is_onboarded`, `profile_visible`, `push_notifications_enabled` | Nee (app-instellingen) | - | - |
+| `availability_days` | Ja (door de gebruiker zelf ingevuld: op welke dag + dagdeel - ochtend/middag/avond, zie `0036_availability_dayparts.sql` - diegene wil sporten) | - | Tot accountverwijdering of handmatige wijziging. Wordt aan niemand anders rechtstreeks getoond - uitsluitend gebruikt als matchingscriterium binnen `discover_profiles()` ("Slimme beschikbaarheids match", Elite-only als zoekfilter, zie `0023_discover_profiles_availability_filter.sql`): een andere gebruiker ziet alleen of jouw profiel wel/niet in hun zoekresultaat verschijnt, nooit welke dagen/dagdelen jij hebt ingevuld. In te zien en te wijzigen via **Instellingen → "Mijn beschikbaarheid"** (alle abonnementen) en opgenomen in "Mijn gegevens opvragen" (`lib/dataExport.ts`). |
 | `expo_push_token` | Ja (apparaat-identifier) | Ja - zie §5 | Tot accountverwijdering of nieuwe registratie (wordt overschreven) |
 | `terms_accepted_at` | Nee (bewijs van toestemming, geen inhoudelijk persoonsgegeven) | - | Tot accountverwijdering - geen eigen verwijder-/wijzigfunctie, bewust (zie hieronder) |
 | `created_at`, `updated_at` | Metadata | - | Tot accountverwijdering |

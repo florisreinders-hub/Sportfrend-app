@@ -196,6 +196,11 @@ export default function SettingsScreen({ navigation }: Props) {
               <Text style={styles.rowLabel}>Mijn gegevens opvragen</Text>
               <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
             </Pressable>
+            <Pressable style={styles.row} onPress={() => navigation.navigate("Availability")}>
+              <Ionicons name="calendar-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>Mijn beschikbaarheid</Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+            </Pressable>
             {SHOW_MY_TRAININGS_ROW ? (
               <Pressable style={styles.row} onPress={() => navigation.navigate("MyTrainings")}>
                 <Ionicons name="barbell-outline" size={20} color={colors.black} />

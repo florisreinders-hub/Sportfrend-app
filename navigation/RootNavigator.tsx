@@ -35,6 +35,7 @@ import ChangeEmailScreen from "@/app/settings/ChangeEmailScreen";
 import DataExportScreen from "@/app/settings/DataExportScreen";
 import MyTrainingsScreen from "@/app/settings/MyTrainingsScreen";
 import ModerationScreen from "@/app/settings/ModerationScreen";
+import AvailabilityScreen from "@/app/settings/AvailabilityScreen";
 
 import PricingScreen from "@/app/premium/PricingScreen";
 
@@ -94,6 +95,7 @@ export function RootNavigator() {
           <Stack.Screen name="DataExport" component={DataExportScreen} />
           <Stack.Screen name="MyTrainings" component={MyTrainingsScreen} />
           <Stack.Screen name="Moderation" component={ModerationScreen} />
+          <Stack.Screen name="Availability" component={AvailabilityScreen} />
           <Stack.Screen name="Pricing" component={PricingScreen} />
         </>
       )}

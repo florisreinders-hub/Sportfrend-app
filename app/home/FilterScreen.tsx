@@ -10,11 +10,12 @@ import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { Button } from "@/components/Button";
 import { SelectModal } from "@/components/SelectModal";
+import { AvailabilityGrid } from "@/components/AvailabilityGrid";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { DEFAULT_FILTERS, DiscoverFilters, useDiscoverFilters } from "@/lib/FilterContext";
 import { SPORT_OPTIONS } from "@/constants/sports";
 import { LEVEL_OPTIONS } from "@/constants/levels";
-import { fetchDiscoverDailyStatus, WEEKDAY_OPTIONS } from "@/lib/api";
+import { fetchDiscoverDailyStatus } from "@/lib/api";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Filter">;
 
@@ -192,32 +193,13 @@ export default function FilterScreen({ navigation }: Props) {
             {availabilityLocked ? <LockBadge label="ELITE" /> : null}
           </View>
         </View>
-        {availabilityLocked ? (
-          <Pressable onPress={goToPricing} hitSlop={4}>
-            <View pointerEvents="none" style={styles.dayRow}>
-              {WEEKDAY_OPTIONS.map((day) => (
-                <View key={day.key} style={[styles.dayChip, styles.dayChipLocked]}>
-                  <Text style={[styles.dayChipText, styles.dayChipTextLocked]}>{day.label}</Text>
-                </View>
-              ))}
-            </View>
-          </Pressable>
-        ) : (
-          <View style={styles.dayRow}>
-            {WEEKDAY_OPTIONS.map((day) => {
-              const selected = availabilityDays.includes(day.key);
-              return (
-                <Pressable
-                  key={day.key}
-                  onPress={() => toggleDay(day.key)}
-                  style={[styles.dayChip, selected && styles.dayChipSelected]}
-                >
-                  <Text style={[styles.dayChipText, selected && styles.dayChipTextSelected]}>{day.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        )}
+        <AvailabilityGrid
+          value={availabilityDays}
+          onToggle={toggleDay}
+          locked={availabilityLocked}
+          onLockedPress={goToPricing}
+          style={styles.availabilityGrid}
+        />
 
         <Button label="Toepassen" onPress={apply} style={styles.apply} />
         <Button label="Reset filter" onPress={reset} variant="outline" style={styles.reset} />
@@ -364,36 +346,8 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: colors.textSecondary,
   },
-  dayRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
+  availabilityGrid: {
     marginTop: spacing.sm,
-  },
-  dayChip: {
-    minWidth: 44,
-    alignItems: "center",
-    backgroundColor: colors.surface,
-    borderRadius: radii.pill,
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm,
-  },
-  dayChipSelected: {
-    backgroundColor: colors.primary,
-  },
-  dayChipLocked: {
-    opacity: 0.6,
-  },
-  dayChipText: {
-    fontFamily: fonts.display,
-    fontSize: fontSizes.sm,
-    color: colors.black,
-  },
-  dayChipTextSelected: {
-    color: colors.black,
-  },
-  dayChipTextLocked: {
-    color: colors.textSecondary,
   },
   apply: {
     marginTop: spacing.xl,

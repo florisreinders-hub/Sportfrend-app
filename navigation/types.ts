@@ -26,4 +26,5 @@ export type RootStackParamList = {
   DataExport: undefined;
   MyTrainings: undefined;
   Moderation: undefined;
+  Availability: undefined;
 };

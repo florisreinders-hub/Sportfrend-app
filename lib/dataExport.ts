@@ -9,6 +9,7 @@ import {
   fetchOwnSwipes,
   fetchPostsByAuthor,
   fetchSubscription,
+  formatAvailabilityDays,
   Message,
   OwnBlock,
   OwnReport,
@@ -122,6 +123,7 @@ export function formatDataExportText(data: DataExportResult, userId: string, use
     lines.push(`Profielfoto-URL: ${p.photo_url ?? "-"}`);
     lines.push(`Profiel zichtbaar in Ontdekken: ${(p as any).profile_visible === false ? "Nee" : "Ja"}`);
     lines.push(`Pushmeldingen aan: ${(p as any).push_notifications_enabled === false ? "Nee" : "Ja"}`);
+    lines.push(`Beschikbaarheid (gebruikt voor "Slimme beschikbaarheids match"): ${formatAvailabilityDays((p as any).availability_days ?? [])}`);
   } else {
     lines.push("Geen profielgegevens gevonden.");
   }
