@@ -4,13 +4,22 @@ import type { CustomerInfo } from "react-native-purchases";
 import { isSupabaseConfigured, supabase } from "./supabase";
 import { clearPushToken, registerForPushNotificationsAsync } from "./notifications";
 import { addCustomerInfoListener, fetchCustomerInfo, getPlanFromCustomerInfo, identifyPurchaser, resetPurchaserIdentity } from "./purchases";
+import { hasSeenOnboarding } from "./onboarding";
 
 type AuthContextValue = {
   session: Session | null;
   initializing: boolean;
   /** Whether the signed-in user's profile already has a location saved. */
   hasLocation: boolean;
-  /** True while the location check for the current session is in flight. */
+  /**
+   * Whether this user has already seen the onboarding carousel on this
+   * device (lib/onboarding.ts, AsyncStorage - no database column). Fetched
+   * alongside hasLocation below, under the same checkingLocation flag, so
+   * RootNavigator's initial route can pick "Onboarding" vs "Home" without
+   * a separate loading gate.
+   */
+  onboardingSeen: boolean;
+  /** True while the location/onboarding-seen check for the current session is in flight. */
   checkingLocation: boolean;
   /**
    * RevenueCat's CustomerInfo for the signed-in user (null while
@@ -28,6 +37,7 @@ const AuthContext = createContext<AuthContextValue>({
   session: null,
   initializing: true,
   hasLocation: false,
+  onboardingSeen: true,
   checkingLocation: false,
   customerInfo: null,
   plan: "basis",
@@ -57,6 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [initializing, setInitializing] = useState(true);
   const [hasLocation, setHasLocation] = useState(false);
+  const [onboardingSeen, setOnboardingSeen] = useState(true);
   const [checkingLocation, setCheckingLocation] = useState(false);
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo | null>(null);
 
@@ -90,7 +101,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (data.session?.user) {
           checkedUserIdRef.current = data.session.user.id;
           setCheckingLocation(true);
-          setHasLocation(await fetchHasLocation(data.session.user.id));
+          const [hasLoc, seenOnboarding] = await Promise.all([
+            fetchHasLocation(data.session.user.id),
+            hasSeenOnboarding(data.session.user.id),
+          ]);
+          setHasLocation(hasLoc);
+          setOnboardingSeen(seenOnboarding);
           setCheckingLocation(false);
           // Fire-and-forget: a permission prompt shouldn't hold up the
           // app's own loading state, and a denial/failure here isn't
@@ -120,6 +136,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const signedOutUserId = checkedUserIdRef.current;
         checkedUserIdRef.current = null;
         setHasLocation(false);
+        setOnboardingSeen(true);
         setCustomerInfo(null);
         resetPurchaserIdentity();
         if (signedOutUserId) {
@@ -145,8 +162,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       checkedUserIdRef.current = userId;
       setCheckingLocation(true);
-      fetchHasLocation(userId).then((result) => {
-        setHasLocation(result);
+      Promise.all([fetchHasLocation(userId), hasSeenOnboarding(userId)]).then(([hasLoc, seenOnboarding]) => {
+        setHasLocation(hasLoc);
+        setOnboardingSeen(seenOnboarding);
         setCheckingLocation(false);
       });
       registerForPushNotificationsAsync(userId);
@@ -164,6 +182,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         session,
         initializing,
         hasLocation,
+        onboardingSeen,
         checkingLocation,
         customerInfo,
         plan: getPlanFromCustomerInfo(customerInfo),

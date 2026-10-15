@@ -10,6 +10,7 @@ import { Input } from "@/components/Input";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
 import { getDataErrorMessage } from "@/lib/api";
+import { useAuth } from "@/lib/AuthContext";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationSetup">;
 
@@ -19,6 +20,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "LocationSetup">;
 type Step = "idle" | "manual" | "saved";
 
 export default function LocationSetupScreen({ navigation }: Props) {
+  const { onboardingSeen } = useAuth();
   const [step, setStep] = useState<Step>("idle");
   // Only true when a real GPS permission denial put us on the "manual"
   // step - NOT when the user chose "Liever handmatig invullen" themselves,
@@ -160,7 +162,13 @@ export default function LocationSetupScreen({ navigation }: Props) {
   };
 
   const continueToApp = () => {
-    navigation.reset({ index: 0, routes: [{ name: "Home" }] });
+    // Nieuwe gebruikers hebben nooit de onboarding-uitleg gezien -
+    // onboardingSeen is dan ook al door AuthContext opgehaald tegen de
+    // tijd dat dit scherm zichtbaar is (dezelfde check die de
+    // checkingLocation-gate afwacht). Zie RootNavigator's eigen
+    // initialRouteName voor het equivalent bij een koude app-start voor
+    // bestaande gebruikers.
+    navigation.reset({ index: 0, routes: [{ name: onboardingSeen ? "Home" : "Onboarding" }] });
   };
 
   return (

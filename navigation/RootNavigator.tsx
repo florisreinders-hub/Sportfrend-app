@@ -39,10 +39,12 @@ import AvailabilityScreen from "@/app/settings/AvailabilityScreen";
 
 import PricingScreen from "@/app/premium/PricingScreen";
 
+import OnboardingScreen from "@/app/onboarding/OnboardingScreen";
+
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export function RootNavigator() {
-  const { session, initializing, hasLocation, checkingLocation } = useAuth();
+  const { session, initializing, hasLocation, onboardingSeen, checkingLocation } = useAuth();
 
   // While signed in, hold the spinner a beat longer to know whether the
   // profile already has a location before the navigator picks its first
@@ -58,7 +60,14 @@ export function RootNavigator() {
     );
   }
 
-  const initialRouteName = session ? (hasLocation ? "Home" : "LocationSetup") : "Login";
+  // A user with a location already set but who hasn't seen the onboarding
+  // carousel yet (existing accounts, the first time this app version
+  // reaches their device) lands on Onboarding instead of Home - same
+  // one-time treatment as a brand new user, who instead reaches it via
+  // LocationSetupScreen's own continueToApp() once they finish that
+  // screen (not via this initialRouteName, which only applies on a cold
+  // app start).
+  const initialRouteName = session ? (hasLocation ? (onboardingSeen ? "Home" : "Onboarding") : "LocationSetup") : "Login";
 
   return (
     <Stack.Navigator initialRouteName={initialRouteName} screenOptions={{ headerShown: false }}>
@@ -96,6 +105,7 @@ export function RootNavigator() {
           <Stack.Screen name="MyTrainings" component={MyTrainingsScreen} />
           <Stack.Screen name="Moderation" component={ModerationScreen} />
           <Stack.Screen name="Availability" component={AvailabilityScreen} />
+          <Stack.Screen name="Onboarding" component={OnboardingScreen} />
           <Stack.Screen name="Pricing" component={PricingScreen} />
         </>
       )}

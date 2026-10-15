@@ -14,6 +14,7 @@ import { fetchProfileSettings, getDataErrorMessage, updateProfileSettings } from
 import { MODERATOR_EMAIL } from "@/constants/moderator";
 import { presentCustomerCenter } from "@/lib/purchases";
 import { openLegalUrl, PRIVACY_URL, TERMS_URL } from "@/constants/legal";
+import { ONBOARDING_SETTINGS_ROW_LABEL } from "@/constants/onboarding";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Settings">;
 
@@ -235,6 +236,11 @@ export default function SettingsScreen({ navigation }: Props) {
 
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Ondersteuning</Text>
+            <Pressable style={styles.row} onPress={() => navigation.navigate("Onboarding")}>
+              <Ionicons name="sparkles-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>{ONBOARDING_SETTINGS_ROW_LABEL}</Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+            </Pressable>
             <Pressable style={styles.row} onPress={() => navigation.navigate("Helpdesk")}>
               <Ionicons name="help-circle-outline" size={20} color={colors.black} />
               <Text style={styles.rowLabel}>Helpdesk</Text>
