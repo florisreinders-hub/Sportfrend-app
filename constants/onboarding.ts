@@ -13,13 +13,13 @@ export type OnboardingSlide = {
 export const ONBOARDING_SLIDES: OnboardingSlide[] = [
   {
     icon: "compass-outline",
-    title: "Vind sportmaatjes bij jou in de buurt",
-    body: "Swipe door profielen van sporters in jouw omgeving. Vind je iemand leuk? Like die persoon - zo simpel is het.",
+    title: "Vind iemand om mee te sporten",
+    body: "Bekijk sporters bij jou in de buurt die dezelfde sport en een vergelijkbaar niveau hebben. Zie je iemand met wie je wilt trainen? Tik op het hartje.",
   },
   {
     icon: "heart-outline",
-    title: "Een match, dan chatten",
-    body: "Liken jullie elkaar allebei? Dan is het een match. Vanaf dat moment kun je direct met elkaar chatten.",
+    title: "Een match, dan samen sporten",
+    body: "Heeft de ander ook zin om samen te sporten? Dan is het een match en kun je een training afspreken via de chat.",
   },
   {
     icon: "person-circle-outline",
