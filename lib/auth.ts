@@ -1,6 +1,7 @@
 import { AuthError, isAuthWeakPasswordError } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 import { getAuthRedirectUrl } from "./deepLinking";
+import { CHECK_SPAM_FOLDER_HINT } from "@/constants/messages";
 
 export async function signInWithEmail(email: string, password: string) {
   return supabase.auth.signInWithPassword({ email, password });
@@ -111,7 +112,7 @@ export function getAuthErrorMessage(error: unknown): string {
       case "invalid_credentials":
         return "E-mailadres of wachtwoord is onjuist.";
       case "email_not_confirmed":
-        return "Bevestig eerst je e-mailadres via de link die we je gestuurd hebben.";
+        return `Bevestig eerst je e-mailadres via de link die we je gestuurd hebben. ${CHECK_SPAM_FOLDER_HINT}`;
       case "over_email_send_rate_limit":
       case "over_request_rate_limit":
         return "Te veel pogingen. Probeer het over een paar minuten opnieuw.";

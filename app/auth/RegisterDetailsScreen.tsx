@@ -11,6 +11,7 @@ import { getAuthErrorMessage, resendConfirmationEmail, signUpWithEmail } from "@
 import { calculateAge, getDataErrorMessage } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import { openLegalUrl, PRIVACY_URL, TERMS_URL } from "@/constants/legal";
+import { CHECK_SPAM_FOLDER_HINT } from "@/constants/messages";
 
 const MINIMUM_AGE = 18;
 
@@ -182,12 +183,13 @@ export default function RegisterDetailsScreen({ navigation }: Props) {
       <ScreenContainer>
         <View style={styles.form}>
           <Text style={styles.info}>{info}</Text>
+          <Text style={styles.hint}>{CHECK_SPAM_FOLDER_HINT}</Text>
 
           {resendMessage ? <Text style={styles.resendSuccess}>{resendMessage}</Text> : null}
           {resendError ? <Text style={styles.error}>{resendError}</Text> : null}
 
           <Button
-            label={resendCooldown > 0 ? `Opnieuw versturen (${resendCooldown}s)` : "Bevestigingsmail opnieuw versturen"}
+            label={resendCooldown > 0 ? `Opnieuw versturen (${resendCooldown}s)` : "Mail opnieuw versturen"}
             onPress={onResend}
             loading={resending}
             disabled={resendCooldown > 0}
@@ -384,6 +386,13 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.md,
     color: colors.black,
     textAlign: "center",
+  },
+  hint: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.textSecondary,
+    textAlign: "center",
+    marginTop: spacing.xs,
     marginBottom: spacing.lg,
   },
   resendSuccess: {

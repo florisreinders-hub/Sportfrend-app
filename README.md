@@ -316,6 +316,56 @@ metadata, eigen-kolom-lezen-niet-wijzigen, `anon` ziet niets) zijn
 opnieuw bevestigd tegen dit productie-schema. `npx tsc --noEmit` blijft
 schoon (geen app-code gewijzigd deze keer).
 
+## Spam-maphint en knoptekst bij e-mailbevestiging
+
+Overal waar de app meldt dat er net een bevestigingslink per e-mail is
+verstuurd, staat nu ook: "Zie je de mail niet? Controleer ook je spam- of
+ongewenste-mailmap." - één bron, `constants/messages.ts`'s
+`CHECK_SPAM_FOLDER_HINT`, geïmporteerd op elke plek waar dat relevant is:
+
+- `RegisterDetailsScreen.tsx` - het scherm direct na registratie ("We
+  hebben een bevestigingslink gestuurd naar ...").
+- `lib/auth.ts`'s `getAuthErrorMessage()` - de `email_not_confirmed`-fout
+  die `LoginScreen.tsx` toont bij een inlogpoging met een nog niet
+  bevestigd account.
+- `ChangeEmailScreen.tsx` - de bevestiging na het wijzigen van je
+  e-mailadres (een andere melding dan de twee hierboven - gaat over een
+  nieuw e-mailadres bevestigen, niet over accountregistratie - maar
+  dezelfde soort "we hebben je een link gestuurd"-tekst, dus met dezelfde
+  hint).
+
+Niet aangepast: `ForgotPasswordScreen.tsx`'s "als dit e-mailadres bij ons
+bekend is..."-melding (wachtwoord-reset, geen bevestigingslink) - buiten
+scope van deze taak, maar dezelfde hint zou daar in principe ook passen
+als dat gewenst is.
+
+**Afgekapte "Bevestigingsmail opnieuw versturen"-knop**: de eigenlijke
+oorzaak zat in `components/Button.tsx` zelf, niet alleen in deze ene
+knoptekst - `styles.base` had een vaste `height: 48`, dus een label dat
+over twee regels moest lopen (lange tekst, smal scherm, of een grotere
+systeemlettergrootte - RN's `Text` schaalt standaard mee met de
+accessibility-lettergrootte) werd niet hoger, met afkapping tot gevolg.
+Dat raakt in principe elke knop in de app, niet alleen deze - `Button.tsx`
+gebruikt nu `minHeight: 48` (plus `paddingVertical` en gecentreerde tekst)
+in plaats van een vaste hoogte: een knop met een kort label op de
+standaard tekstgrootte rendert nog exact even hoog als voorheen (48px is
+de ondergrens, niet een vast getal), maar een knop die méér ruimte nodig
+heeft groeit nu mee in plaats van af te kappen. Zelf is deze ene knop ook
+ingekort van "Bevestigingsmail opnieuw versturen" naar "Mail opnieuw
+versturen", als extra marge.
+
+**Getest**: `npx tsc --noEmit` schoon, en een Android-bundle-export
+bevat de hint-tekst precies éénmaal in de hele bundel (bevestigt dat alle
+drie de plekken daadwerkelijk naar dezelfde `CHECK_SPAM_FOLDER_HINT`-
+import verwijzen in plaats van de tekst elk apart te herhalen) en het
+verkorte knoplabel, zonder nog een voorkomen van de oude, lange tekst.
+Niet interactief getest op een toestel/simulator met een vergrote
+systeemlettergrootte of een smal scherm (niet beschikbaar in deze
+sandbox) - de `minHeight`-wijziging in `Button.tsx` is daarom
+beoordeeld op de Yoga-layoutregels zelf (een `minHeight` is altijd de
+ondergrens, nooit een bovengrens, dus groeien bij meer inhoud is
+gegarandeerd gedrag, geen aanname) in plaats van visueel bevestigd.
+
 ## Dagelijkse aanbevelingslimiet (Ontdekken)
 
 De Pricing-tabel belooft per abonnement een ander aantal dagelijkse
