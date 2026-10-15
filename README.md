@@ -86,7 +86,7 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
 
 4. **Zet de auth-redirect URL op de allowlist**
 
-   De app gebruikt het `sportfrend://` custom scheme (`app.json` → `"scheme": "sportfrend"`)
+   De app gebruikt het `sportfrend://` custom scheme (`app.config.js` → `"scheme": "sportfrend"`)
    zodat de bevestigingslink in registratie-/wachtwoord-reset-e-mails rechtstreeks
    terug de app in gaat in plaats van naar een browser/localhost (zie
    `lib/deepLinking.ts`). Een bevestigde registratie toont daarna het
@@ -175,6 +175,196 @@ Draai `0015_profiles_min_age_check.sql` op je bestaande database -
 Function nodig, alleen deze migratie. Als de `alter table` faalt omdat er
 al een profiel met een te jonge geboortedatum bestaat, geeft het bestand
 zelf een query om die rij(en) eerst op te sporen.
+
+## Toestemming algemene voorwaarden & privacyverklaring bij registratie
+
+`RegisterDetailsScreen.tsx` heeft een verplicht vinkje "Ik ga akkoord met
+de algemene voorwaarden en de privacyverklaring", met **algemene
+voorwaarden** linkend naar `https://www.sportfrend.nl/#voorwaarden` en
+**privacyverklaring** naar `https://www.sportfrend.nl/#privacy` (beide
+constanten in `constants/legal.ts`, openen in de browser van het toestel
+via `Linking.openURL()` - niet een in-app WebView). Zonder vinkje blijft
+de "Volgende"-knop gedimd (lagere opacity, niet via React Native's eigen
+`disabled`-prop voor deze specifieke voorwaarde) en toont een tik erop de
+duidelijke melding "Je moet akkoord gaan met de algemene voorwaarden en de
+privacyverklaring om je te registreren." - vóór elke andere validatie
+(wachtwoord/geboortedatum) en vóór `signUpWithEmail()` ooit aangeroepen
+wordt. Een écht uitgeschakelde `Pressable` (RN's `disabled`-prop) zou de
+tik gewoon negeren, waardoor er nooit een melding te tonen zou zijn - dit
+is dus bewust een client-side guard in plaats van een disabled-knop voor
+precies deze voorwaarde.
+
+**Vastleggen wanneer**: nieuwe kolom `profiles.terms_accepted_at`
+(`timestamptz`, `null` voor elk account van vóór deze migratie). Gevuld
+door `handle_new_user()` (bestond al, vult ook de `subscriptions`-rij) op
+het moment dat `auth.users` zelf ontstaat - `signUpWithEmail()` geeft
+`options: { data: { terms_accepted: true } }` mee aan
+`supabase.auth.signUp()`, wat in `auth.users.raw_user_meta_data` landt
+nog vóórdat de functie terugkeert. Dit werkt ook wanneer e-mailbevestiging
+vereist is: er is dan nog geen sessie om zelf naar `profiles` te schrijven
+(zelfde beperking als `birthdate`/`gender` op dit scherm), maar
+`auth.users` ontstaat sowieso altijd al bij `signUp()`, bevestigd of niet
+- de trigger hoeft dus niet te wachten op een latere, mogelijk nooit
+komende client-schrijfactie.
+
+**Niet achteraf zelf te wijzigen**: de bestaande "Users can update their
+own profile"-RLS-policy is per rij, niet per kolom, en staat dus toe dat
+een gebruiker élke kolom van zijn eigen rij bijwerkt - RLS alléén kan dit
+niet voorkomen. `0033_terms_acceptance.sql` gebruikt daarom kolomrechten,
+exact hetzelfde patroon als `0014_discover_profiles_location_privacy.sql`
+al toepaste voor `latitude`/`longitude` (daar voor SELECT, hier voor
+UPDATE): de blanket table-level UPDATE-grant wordt ingetrokken
+(`revoke update on public.profiles from authenticated`) en vervangen door
+een expliciete kolomlijst die precies de kolommen bevat die de app vandaag
+al client-side bijwerkt - `terms_accepted_at` staat daar bewust niet bij.
+SELECT blijft wel toegestaan (additief op de bestaande kolom-SELECT-grant)
+- nodig voor "Mijn gegevens opvragen" (`lib/dataExport.ts`, een losse
+`select("terms_accepted_at")` naast de gewone `PROFILE_COLUMNS`-query, die
+bewust niet is uitgebreid omdat die ook voor *andermans* profiel gebruikt
+wordt).
+
+**Productie-incident, opgelost**: een eerdere versie van deze migratie
+noemde `expo_push_token` in die kolomlijst, in de veronderstelling dat
+`0011_push_notifications.sql` die kolom al had toegevoegd. Op de echte
+productiedatabase is dat niet zo (zie "Pushmeldingen" hieronder voor
+waarom - die migratie gebruikt `supabase_functions.http_request`, wat op
+dit project niet bestaat) - `grant update (..., expo_push_token, ...)` op
+een kolom die niet bestaat gaf een harde `column ... does not exist`-
+fout. `expo_push_token` staat nu bewust niet meer in de kolomlijst van
+`0033_terms_acceptance.sql` (wél nog in de mirror in `0001_init.sql`, waar
+de kolom via de `create table` wél bestaat - zie het commentaar daar).
+De zelfcontrole controleert sindsdien in **beide richtingen** dat de
+kolomlijst en het daadwerkelijke schema overeenkomen (elke genoemde kolom
+bestaat echt, én elke bestaande kolom - behalve `terms_accepted_at` zelf -
+staat in de lijst), zodat dit soort mismatch nooit meer stil, pas bij het
+draaien, als een onduidelijke fout naar boven komt. De hele migratie
+draait bovendien nu in één expliciete `begin; ... commit;` - lokaal
+getest (zie "Getest" hieronder) bleek dat zonder die expliciete grenzen
+een latere fout (zoals deze) de eerdere, al uitgevoerde statements binnen
+hetzelfde bestand niet per definitie meeneemt in de rollback, afhankelijk
+van hoe de aanroepende tool de statements verstuurt - in het ergste geval
+bleef daardoor de `revoke update on public.profiles from authenticated`
+staan terwijl de bijbehorende `grant` nooit werd bereikt, wat élke
+profielkolom voor íedere gebruiker alsnog write-locked had gelaten, erger
+dan de oorspronkelijke foutmelding deed vermoeden.
+
+**Exacte controlequery** (plak los in de SQL editor):
+```sql
+select
+  (select data_type from information_schema.columns
+     where table_schema = 'public' and table_name = 'profiles' and column_name = 'terms_accepted_at') as column_type,
+  has_column_privilege('authenticated', 'public.profiles', 'terms_accepted_at', 'UPDATE') as authenticated_kan_wijzigen,
+  has_column_privilege('authenticated', 'public.profiles', 'terms_accepted_at', 'SELECT') as authenticated_kan_lezen,
+  (select count(*) from public.profiles where terms_accepted_at is not null) as accounts_met_toestemming,
+  (select count(*) from public.profiles where terms_accepted_at is null) as accounts_zonder_toestemming;
+-- verwacht: column_type = 'timestamp with time zone', authenticated_kan_wijzigen = false, authenticated_kan_lezen = true
+```
+
+Draai `0033_terms_acceptance.sql` op je bestaande database - `0001_init.sql`
+is ook bijgewerkt voor nieuwe installaties (inclusief dezelfde
+kolomrechten-lockdown). Geen Edge Function nodig.
+
+**Getest**: lokaal (los Postgres-schema, geen netwerktoegang tot Supabase
+vanuit deze omgeving) - de migratie draait idempotent en de zelfcontrole
+(`do $$ ... $$`, inclusief een check dat gewone kolommen als `full_name`
+bijwerkbaar blíjven) slaagt. Functioneel: een signup met
+`terms_accepted: true` in de metadata zet `terms_accepted_at` op `now()`;
+zonder die metadata-sleutel, of met `terms_accepted: false`, blijft de
+kolom `null`; de eigenaar kan zijn eigen `terms_accepted_at` lezen maar
+een `UPDATE` erop - alleen die kolom, of die kolom gecombineerd met een
+verder legitieme wijziging zoals `full_name` in dezelfde statement - wordt
+altijd volledig geweigerd (`permission denied for table profiles`, geen
+partiële toepassing); een gewone kolom (`full_name`) blijft intussen
+gewoon bijwerkbaar; `anon` ziet niets. `npx tsc --noEmit` is schoon en een
+Android-bundle-export bevat de nieuwe strings (foutmelding, beide
+URL's, eenmalig - bevestigt dat alleen `constants/legal.ts` ze bevat).
+Het registratiescherm zelf (tikken op de knop zonder vinkje, de link-taps
+die de browser openen) is **niet** interactief getest op een toestel/
+simulator - niet beschikbaar in deze sandbox, en dit project heeft nog
+geen geautomatiseerde UI-testsuite (geen Jest/`@testing-library/
+react-native` geconfigureerd). De garantie dat registreren zonder vinkje
+niet lukt steunt op codereview van de exacte guard-volgorde in
+`onSubmit()`: de `!termsAccepted`-check staat vóór élke andere validatie
+én vóór `signUpWithEmail()`, dus er wordt sowieso nooit een
+`auth.signUp()`-aanroep gedaan zonder dat de checkbox aanstond.
+
+**Aanvulling na het productie-incident hierboven**: opnieuw lokaal getest,
+dit keer tegen een los Postgres-schema dat **exact** de kolommen van de
+echte productie-`profiles`-tabel nabouwt (zonder `expo_push_token`, zonder
+`terms_accepted_at`, in een andere kolomvolgorde dan `0001_init.sql`'s
+eigen `create table` - om uit te sluiten dat de zelfcontrole toevallig
+alleen werkt dankzij een toevallig overeenkomende volgorde). De
+oorspronkelijke (kapotte) versie van dit bestand gereproduceerd: faalt
+met exact dezelfde `column "expo_push_token" of relation "profiles" does
+not exist`-foutmelding als in productie. Zonder een omliggende
+transactie bleven de eraan voorafgaande statements (de kolom-toevoeging
+én de `revoke update on public.profiles from authenticated`) staan nadat
+de latere `grant` faalde - precies het "erger dan het leek"-scenario
+hierboven, empirisch bevestigd (`has_column_privilege` op `full_name`/
+`birthdate`/`city` gaf na die mislukte poging overal `false`). De
+gecorrigeerde versie (zonder `expo_push_token`, met `begin;`/`commit;`)
+draait tegen dat productie-schema zonder fouten, idempotent, en de
+zelfcontrole bevestigt beide richtingen (19 kolommen plus
+`terms_accepted_at`). De bidirectionele check zelf is apart getest: een
+tijdelijk heringevoegde `expo_push_token` in de grantlijst (richting a)
+én een tijdelijk toegevoegde, niet-genoemde testkolom `nickname`
+(richting b) worden elk correct opgepikt, met een duidelijke, kolomnaam-
+noemende foutmelding, en - dankzij de transactie - zonder dat er iets van
+blijft hangen (`terms_accepted_at` bestaat dan niet, `full_name` blijft
+gewoon bijwerkbaar). De oorspronkelijke functionele/RLS-tests (signup-
+metadata, eigen-kolom-lezen-niet-wijzigen, `anon` ziet niets) zijn
+opnieuw bevestigd tegen dit productie-schema. `npx tsc --noEmit` blijft
+schoon (geen app-code gewijzigd deze keer).
+
+## Spam-maphint en knoptekst bij e-mailbevestiging
+
+Overal waar de app meldt dat er net een bevestigingslink per e-mail is
+verstuurd, staat nu ook: "Zie je de mail niet? Controleer ook je spam- of
+ongewenste-mailmap." - één bron, `constants/messages.ts`'s
+`CHECK_SPAM_FOLDER_HINT`, geïmporteerd op elke plek waar dat relevant is:
+
+- `RegisterDetailsScreen.tsx` - het scherm direct na registratie ("We
+  hebben een bevestigingslink gestuurd naar ...").
+- `lib/auth.ts`'s `getAuthErrorMessage()` - de `email_not_confirmed`-fout
+  die `LoginScreen.tsx` toont bij een inlogpoging met een nog niet
+  bevestigd account.
+- `ChangeEmailScreen.tsx` - de bevestiging na het wijzigen van je
+  e-mailadres (een andere melding dan de twee hierboven - gaat over een
+  nieuw e-mailadres bevestigen, niet over accountregistratie - maar
+  dezelfde soort "we hebben je een link gestuurd"-tekst, dus met dezelfde
+  hint).
+
+Niet aangepast: `ForgotPasswordScreen.tsx`'s "als dit e-mailadres bij ons
+bekend is..."-melding (wachtwoord-reset, geen bevestigingslink) - buiten
+scope van deze taak, maar dezelfde hint zou daar in principe ook passen
+als dat gewenst is.
+
+**Afgekapte "Bevestigingsmail opnieuw versturen"-knop**: de eigenlijke
+oorzaak zat in `components/Button.tsx` zelf, niet alleen in deze ene
+knoptekst - `styles.base` had een vaste `height: 48`, dus een label dat
+over twee regels moest lopen (lange tekst, smal scherm, of een grotere
+systeemlettergrootte - RN's `Text` schaalt standaard mee met de
+accessibility-lettergrootte) werd niet hoger, met afkapping tot gevolg.
+Dat raakt in principe elke knop in de app, niet alleen deze - `Button.tsx`
+gebruikt nu `minHeight: 48` (plus `paddingVertical` en gecentreerde tekst)
+in plaats van een vaste hoogte: een knop met een kort label op de
+standaard tekstgrootte rendert nog exact even hoog als voorheen (48px is
+de ondergrens, niet een vast getal), maar een knop die méér ruimte nodig
+heeft groeit nu mee in plaats van af te kappen. Zelf is deze ene knop ook
+ingekort van "Bevestigingsmail opnieuw versturen" naar "Mail opnieuw
+versturen", als extra marge.
+
+**Getest**: `npx tsc --noEmit` schoon, en een Android-bundle-export
+bevat de hint-tekst precies éénmaal in de hele bundel (bevestigt dat alle
+drie de plekken daadwerkelijk naar dezelfde `CHECK_SPAM_FOLDER_HINT`-
+import verwijzen in plaats van de tekst elk apart te herhalen) en het
+verkorte knoplabel, zonder nog een voorkomen van de oude, lange tekst.
+Niet interactief getest op een toestel/simulator met een vergrote
+systeemlettergrootte of een smal scherm (niet beschikbaar in deze
+sandbox) - de `minHeight`-wijziging in `Button.tsx` is daarom
+beoordeeld op de Yoga-layoutregels zelf (een `minHeight` is altijd de
+ondergrens, nooit een bovengrens, dus groeien bij meer inhoud is
+gegarandeerd gedrag, geen aanname) in plaats van visueel bevestigd.
 
 ## Dagelijkse aanbevelingslimiet (Ontdekken)
 
@@ -468,6 +658,82 @@ voor beiden verborgen, en nieuwe berichten tussen hen worden geweigerd. Zie
 SQL - draai deze migratie op je bestaande database (0001_init.sql is ook
 bijgewerkt voor nieuwe installaties).
 
+## Dagelijkse limiet op rapportages en klantenservice-aanvragen
+
+Beide waren tot migratie `0026_reports_and_support_daily_limits.sql`
+onbeperkt: een account kon oneindig vaak dezelfde of andere gebruikers
+rapporteren (een mogelijk intimidatiemiddel - iemand overspoelen met
+valse meldingen), en oneindig vaak het Klantenservice-formulier
+versturen - wat bij elke keer een echte e-mail via Resend triggert
+(`send-support-email`), dus onbeperkt misbruik kost daar ook echt
+geld/quota, niet alleen ergernis.
+
+Zelfde patroon als `messages_plan_daily_limit()`/`can_send_message_today()`/
+`messages_daily_status()` (`0020_messages_daily_limit.sql`), met één
+verschil: deze twee limieten zijn **plat, niet per abonnement** - valse
+rapportages en support-spam zijn puur misbruikpreventie, geen
+betaald-plan-voordeel om aan Basis te onthouden, dus krijgt elk plan
+dezelfde limiet:
+
+- **Rapportages: max 10 per dag** (`reports_daily_limit()`,
+  `can_submit_report_today()`, gate op de "Users can create their own
+  reports"-INSERT-policy op `reports`).
+- **Klantenservice-aanvragen: max 5 per dag** (`support_requests_daily_limit()`,
+  `can_submit_support_request_today()`, gate op de "Users can insert
+  their own support requests"-INSERT-policy op `support_requests`).
+- `reports_daily_status()` / `support_requests_daily_status()` (RPC's,
+  `{ daily_limit, used_today, remaining }` - geen `plan`-kolom, want niet
+  per-abonnement) laten `ReportModal.tsx` en `SupportScreen.tsx` een
+  duidelijke "dagelijkse limiet bereikt"-melding tonen in plaats van het
+  formulier, zodra `remaining` op 0 staat - een kale RLS-weigering is
+  anders client-side niet te onderscheiden van elke andere "niet
+  toegestaan"-fout. Een mislukte statusaanroep blijft niet stil - zie de
+  `console.warn` in beide bestanden - en laat het formulier gewoon
+  bruikbaar (`reports`/`support_requests`'s RLS-policies handhaven de
+  echte grens sowieso, ongeacht of deze aanroep lukt).
+- `ReportModal.tsx` haalt de status opnieuw op telkens als het sheet
+  opent (niet bij mount - het component blijft mounted-maar-verborgen
+  tussen keren open), zodat een limiet die sinds de vorige keer is
+  bereikt meteen zichtbaar is. `SupportScreen.tsx` gebruikt een
+  `useFocusEffect`, zelfde reden als de andere Instellingen-schermen.
+
+Draai `0026_reports_and_support_daily_limits.sql` op je bestaande
+database - `0001_init.sql` is ook bijgewerkt voor nieuwe installaties.
+Controleer na het draaien met:
+
+```sql
+select
+  (select count(*) from pg_proc where proname = 'can_submit_report_today'
+     and pronamespace = 'public'::regnamespace) as has_report_check_fn,
+  (select count(*) from pg_proc where proname = 'reports_daily_status'
+     and pronamespace = 'public'::regnamespace) as has_report_status_fn,
+  (select count(*) from pg_proc where proname = 'can_submit_support_request_today'
+     and pronamespace = 'public'::regnamespace) as has_support_check_fn,
+  (select count(*) from pg_proc where proname = 'support_requests_daily_status'
+     and pronamespace = 'public'::regnamespace) as has_support_status_fn,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'reports'
+     and policyname = 'Users can create their own reports'
+     and with_check ilike '%can_submit_report_today%') as reports_insert_policy_gated,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'support_requests'
+     and policyname = 'Users can insert their own support requests'
+     and with_check ilike '%can_submit_support_request_today%') as support_insert_policy_gated,
+  public.reports_daily_limit() as reports_daily_limit,
+  public.support_requests_daily_limit() as support_requests_daily_limit;
+-- verwacht: 1, 1, 1, 1, 1, 1, 10, 5
+```
+
+De migratie zelf bevat ook een zelfcontrolerend `do $$ ... $$`-blok
+onderaan (zelfde aanpak als `0022`/`0023`/`0024`) dat bij het draaien
+zelf al een specifieke `EXCEPTION` opwerpt zodra iets hiervan niet klopt.
+
+**Getest**: lokaal (los Postgres-schema, geen netwerktoegang tot Supabase
+vanuit deze omgeving) - 10 rapportages op een dag lukken, de 11e wordt
+door RLS geweigerd; 5 klantenservice-aanvragen lukken, de 6e wordt
+geweigerd; een andere gebruiker heeft zijn eigen, onafhankelijke teller
+(niet beïnvloed door iemand anders' limiet); en de status-RPC's geven
+zonder inloggen een nette fout in plaats van resultaten van een ander
+account.
+
 ## RLS-beveiligingsaudit
 
 `supabase/migrations/0013_rls_security_audit_fixes.sql` fixt vijf gaten die
@@ -495,6 +761,54 @@ bestand zelf voor de exacte SQL en toelichting per punt):
 
 Draai deze migratie op je bestaande database - `0001_init.sql` is ook
 bijgewerkt zodat een nieuwe installatie deze fixes direct meekrijgt.
+
+**Zesde punt, apart gefixt in `0035_security_definer_search_path.sql`**:
+geen van de `SECURITY DEFINER`-functies in `public` had een vaste
+`search_path` ingesteld - zonder die kan de search_path van de
+*aanroepende* sessie bepalen welk object een ongekwalificeerde naam in de
+functie uiteindelijk raakt (een bekend Postgres/Supabase-aandachtspunt bij
+`SECURITY DEFINER`). **Niet vanuit de repo aangenomen**: eerst is een
+inventarisatiequery (`pg_get_functiondef`/`proconfig`, zie dat bestand)
+tegen de échte live database gedraaid - precies om de fout uit
+`0033_terms_acceptance.sql` (daar bleek `expo_push_token` wél in de repo
+maar niet live te bestaan) niet te herhalen. Resultaat: 17 van de 18
+`SECURITY DEFINER`-functies hadden al `search_path = public`
+(`is_moderator()` zelfs al `public, auth`, nodig voor zijn `auth.users`-
+lookup) - al die statements stonden namelijk al in de
+`create or replace function`-definities in de repo zelf, vanaf
+`0001_init.sql`. **Op `handle_new_user()` na** - dat was, al sinds
+`0001_init.sql`, de enige `SECURITY DEFINER`-functie in de hele repo
+zonder `search_path`, en is dat gebleven bij elke latere wijziging
+(inclusief de `0033`-aanpassing eerder in dit project). `0035` gebruikt
+`ALTER FUNCTION ... SET search_path` (geen functie-inhoud verandert) om
+dat voor alle 18 in één keer recht te zetten op de bestaande database;
+`0001_init.sql` en `0033_terms_acceptance.sql` zijn beide ook aangepast
+zodat een nieuwe installatie, én een latere her-uitvoering van `0033`
+(migraties zijn bewust veilig om vaker te draaien), dit hiaat niet
+opnieuw introduceren.
+
+**Getest**: lokaal (los Postgres-schema, geen netwerktoegang tot Supabase
+vanuit deze omgeving), met alle 18 functies exact zoals de live
+inventarisatiequery ze teruggaf (inclusief hun bestaande `proconfig`) -
+niet herschreven vanuit de repo. `0035` draait idempotent; de
+zelfcontrole bevestigt alle 18 nu een `search_path` hebben,
+`is_moderator()` met `auth` erbij. Functioneel getest: `handle_new_user()`
+(profiel + abonnement aanmaken, `terms_accepted_at` vullen vanuit
+signup-metadata), `is_moderator()` (`true` voor het moderator-e-mailadres,
+`false` voor een gewoon account - zijn `auth.users`-lookup werkt dus nog),
+`get_my_location()` (geeft alleen de eigen coördinaten terug, en de
+bestaande blokkade op een rechtstreekse kolom-select op
+`latitude`/`longitude` blijft gewoon intact), `discover_profiles()` (volle
+matching-logica inclusief de Basis-50km-grens, geverifieerd met een
+premium-account om die grens zelf niet per ongeluk met de search_path-fix
+te verwarren), en de drie trigger-functies
+(`notify_on_new_match`/`notify_on_new_message`/`notify_on_report_resolved`)
+plus `flag_content_if_needed()`/`find_flagged_words()` (geneste
+`SECURITY DEFINER`-aanroep) - stuk voor stuk nog exact zo werkend als
+vóór deze migratie. Ook getest dat de zelfcontrole een ontbrekende
+functie daadwerkelijk opmerkt (een expres onvolledig testschema gaf een
+duidelijke, met-naam-genoemde fout en rolde volledig terug, dankzij de
+expliciete `begin`/`commit`).
 
 ## Account verwijderen
 
@@ -607,6 +921,60 @@ testprofielen. `p_sport`/`p_distance_km` worden nu exact toegepast zoals
 het Filter-scherm ze laat zien, zonder impliciete substitutie. Draai ook
 deze migratie op je bestaande database.
 
+**Tweede opvolgbug, gevonden en gefixt in `LocationSetupScreen.tsx`
+(client-code, geen migratie):** `saveLocation()` sloeg de locatie op via
+`.upsert({ id, city, latitude, longitude }, { onConflict: "id" })`. Een
+upsert genereert bij PostgREST een `INSERT ... ON CONFLICT (id) DO UPDATE
+SET col = EXCLUDED.col, ...` - en Postgres vereist voor élke
+`EXCLUDED.<kolom>`-referentie **SELECT**-recht op die kolom, niet alleen
+UPDATE-recht. Omdat `latitude`/`longitude` sinds deze migratie geen
+SELECT-recht meer hebben voor `authenticated` (zie hierboven), faalde
+deze upsert daardoor altijd met `permission denied for table profiles` -
+voor zowel de GPS-route als de handmatige invoer (beide roepen dezelfde
+`saveLocation()` aan), en onafhankelijk van of er daadwerkelijk een
+coördinaat werd meegegeven (zelfs `latitude: null, longitude: null` na
+een mislukte geocode staat nog als expliciete sleutel in de payload, en
+dus als `EXCLUDED`-referentie in de gegenereerde SQL). Omdat het
+foutblok `step` niet terugzette, bleef bij elke mislukte poging de vaste
+"Locatietoegang geweigerd"-banner (die hoe dan ook onvoorwaardelijk werd
+getoond zodra `step === "manual"`, ook als de gebruiker zelf voor
+handmatig invoeren koos) gewoon staan, wat het leek alsof "dezelfde
+melding" steeds terugkwam.
+
+Fix, **zonder** 0014's beveiliging terug te draaien (geen nieuwe SELECT-
+rechten op latitude/longitude): `saveLocation()` gebruikt nu een gewone
+`.update(fields).eq("id", userId)` - die genereert geen `EXCLUDED`-
+referenties, dus geen SELECT-probleem (lokaal bevestigd: een kale UPDATE
+op `city`/`latitude`/`longitude` werkt gewoon, zowel vóór als ná
+`0033_terms_acceptance.sql` - die migratie had hier dus nooit iets mee te
+doen). Matcht de UPDATE 0 rijen (het profiel bestaat nog niet, bv. omdat
+`handle_new_user()`'s trigger nooit vuurde), dan wordt eerst een kale rij
+aangemaakt (`.insert({ id })`) en de UPDATE daarna herhaald - nooit een
+upsert, dus nooit een `EXCLUDED`-referentie op die twee kolommen.
+Daarnaast: de "Locatietoegang geweigerd"-banner staat nu achter een
+eigen `deniedPermission`-vlag (alleen `true` bij een echte
+weigering via `Location.requestForegroundPermissionsAsync()`, niet bij
+een zelfgekozen "Liever handmatig invullen" en niet bij een mislukte
+opslagpoging), en beide catch-blokken gebruiken voortaan `lib/api.ts`'s
+gedeelde `getDataErrorMessage()` in plaats van de rauwe `e.message` -
+die vertaalt een privilege-fout (SQLSTATE `42501`, exact de foutcode van
+deze bug) al naar "Je hebt geen toegang tot deze gegevens. Log opnieuw in
+en probeer het nogmaals." in plaats van het onvertaalde Postgres-bericht.
+
+**Getest**: lokaal (los Postgres-schema, geen netwerktoegang tot Supabase
+vanuit deze omgeving), tegen een schema dat de huidige kolommen en
+kolomrechten nabouwt. De oorspronkelijke `.upsert()`-aanpak gereproduceerd
+en bevestigd dat die faalt met exact `permission denied for table
+profiles`, zowel met als zonder coördinaten. De nieuwe aanpak (plain
+UPDATE, en de insert-dan-update-fallback voor een ontbrekende rij)
+slaagt in alle scenario's zonder fouten, en de uiteindelijk opgeslagen
+`city`/`latitude`/`longitude` kloppen. `npx tsc --noEmit` is schoon en
+een Android-bundle-export bevat de aangepaste schermteksten. Niet
+interactief getest op een toestel/simulator (niet beschikbaar in deze
+sandbox) - met name het GPS-toestemmingsdialoog zelf (de
+`Location.requestForegroundPermissionsAsync()`-aanroep) kan alleen op een
+echt toestel/simulator getest worden.
+
 ## Pushmeldingen (Expo Notifications)
 
 Na inloggen/registreren vraagt de app om toestemming voor pushmeldingen
@@ -619,6 +987,35 @@ rij een Edge Function aan (`send-message-push` / `send-match-push`) die de
 Expo Push API aanroept. Beide functies respecteren de
 "Pushmeldingen"-schakelaar in Instellingen (`profiles.push_notifications_enabled`)
 - staat die uit, dan wordt er voor die gebruiker niets verstuurd.
+
+**Status in productie (ontbrekende kolom)**: `profiles.expo_push_token`
+staat op dit moment **niet** op de live database - bevestigd tijdens het
+onderzoek naar de `0033_terms_acceptance.sql`-storing hierboven (zie
+"Toestemming algemene voorwaarden & privacyverklaring bij registratie").
+`lib/notifications.ts`'s `upsert({ expo_push_token: token })` faalt
+daardoor stil vanuit de client (de catch daar logt een warning, crasht
+niet - zie die functie), en de drie Edge Functions die de kolom lezen
+(`send-message-push`, `send-match-push`, `send-training-reminder-push`)
+vinden altijd `expo_push_token: null`, dus pushmeldingen komen nergens
+aan, ook niet als de rest van stap 1 t/m 5 hieronder al gezet is. Dit
+project heeft daarnaast geen `supabase_functions`-schema (bevestigd bij
+`send-moderation-alert`, zie "Moderatie-e-mail"), dus stap 3's
+`supabase_functions.http_request`-trigger-SQL werkt hier gegarandeerd
+niet - gebruik voor dít project altijd de dashboard-fallback die daar al
+genoemd wordt (**Database → Webhooks**), niet de SQL-trigger-aanpak.
+**Om pushmeldingen echt te laten werken is dus nodig**: (1) voer eerst
+`alter table public.profiles add column if not exists expo_push_token
+text;` uit (de kolom-toevoeging uit `0011_push_notifications.sql` zelf,
+los van de trigger-SQL erna - die laatste hoort hier dus niet bij); (2)
+voer daarna `grant update (expo_push_token) on public.profiles to
+authenticated;` uit - noodzakelijk sinds
+`0033_terms_acceptance.sql` de blanket table-level UPDATE-grant heeft
+ingetrokken, dus een kolom die ná die migratie wordt toegevoegd krijgt
+geen enkel UPDATE-recht totdat die apart verleend wordt; (3) de
+stappen 1-5 hieronder (Edge Functions deployen, `DB_WEBHOOK_SECRET`
+zetten, de twee webhooks aanmaken via het dashboard in plaats van de
+trigger-SQL). Geen app-codewijziging nodig - `lib/notifications.ts` en de
+drie Edge Functions verwachten al precies deze kolom/tabel.
 
 **Belangrijke beperking: Expo Go ondersteunt sinds SDK 53 geen remote
 pushmeldingen meer**, op geen van beide platforms - Expo Go is één
@@ -663,6 +1060,66 @@ en een melding te ontvangen, is een **custom development build** nodig
 5. **Test pas echt via een development build**, niet via Expo Go (zie de
    beperking hierboven).
 
+**Opvolgbug, gevonden en gefixt in `lib/notifications.ts` (client-code,
+geen migratie):** `registerForPushNotificationsAsync()` sloeg het token
+op via `.upsert({ id, expo_push_token: token }, { onConflict: "id" })` -
+exact dezelfde `EXCLUDED.<kolom>`/SELECT-privilege-aanvaring als
+`LocationSetupScreen.tsx`'s `latitude`/`longitude`-bug hierboven
+("Locatieprivacy"): `authenticated` heeft met opzet géén SELECT-recht op
+`expo_push_token` (`0013_rls_security_audit_fixes.sql` - anders zou
+Expo's push API, die een bloot token zonder verdere authenticatie
+accepteert, iedereen in staat stellen een ander een pushmelding te
+sturen), en een upsert genereert `EXCLUDED.expo_push_token` in zijn
+`ON CONFLICT DO UPDATE`, wat Postgres altijd SELECT-recht laat vereisen,
+niet alleen UPDATE-recht. Deze upsert faalde daardoor altijd met
+`permission denied for table profiles` - op elk apparaat, bij elke
+registratiepoging, zodra de kolom ook daadwerkelijk bestaat (op dit
+moment ontbreekt `expo_push_token` nog los op productie, zie het
+`0033`-onderzoek hierboven - maar die aparte bug lost deze niet op).
+
+Fix: `registerForPushNotificationsAsync()` gebruikt nu een gewone
+`.update({ expo_push_token: token })` (`saveExpoPushToken()`, nieuw in
+`lib/notifications.ts`), met dezelfde insert-dan-update-fallback als
+`LocationSetupScreen.tsx`'s `saveLocation()` als de profielrij nog niet
+bestaat - nooit een upsert, dus nooit een `EXCLUDED`-referentie op een
+kolom zonder SELECT-recht. Dat SELECT-recht blijft bewust ontbreken; er
+is geen migratie voor nodig.
+
+**Tegelijk gefixt: een apparaat kon meldingen van het vorige account
+blijven krijgen.** Niets wiste het token bij uitloggen - een nieuw
+account dat zich op hetzelfde apparaat aanmeldde overschreef alleen zijn
+*eigen* rij, niet die van het account dat net uitlogde, dus die bleef
+naar hetzelfde apparaat-token verwijzen. Nieuwe functie
+`clearPushToken(userId)` (ook een gewone UPDATE, zet de kolom op `null`)
+wordt aangeroepen vanuit `lib/AuthContext.tsx`'s `onAuthStateChange`: bij
+een sessie die naar uitgelogd overgaat (het account dat net uitlogde),
+en defensief ook bij een rechtstreekse overgang naar een ándere
+gebruiker zonder tussenliggende uitgelogde staat (dat pad bestaat niet in
+de eigen UI van deze app - uitloggen vuurt altijd eerst zijn eigen
+sessie-loos event - maar de check staat er toch, voor de zekerheid).
+
+Beide functies zijn volledig fire-and-forget (zoals ze dat al waren):
+een mislukte opslag of wis-poging blokkeert nooit de app en toont nooit
+iets aan de gebruiker - alleen een `console.warn` met de via
+`lib/api.ts`'s `getDataErrorMessage()` vertaalde melding.
+
+**Getest**: lokaal (los Postgres-schema, geen netwerktoegang tot Supabase
+vanuit deze omgeving), tegen twee schema's: (1) de huidige, letterlijke
+productiestand (kolom ontbreekt nog) - bevestigt dat de nieuwe UPDATE
+daar netjes faalt met `column "expo_push_token" does not exist`, zonder
+dat dit ooit buiten de functie terechtkomt; (2) de beoogde eindstand
+(kolom aanwezig, met de kolomrechten uit `0001_init.sql`'s
+fresh-install-lijst: UPDATE wel, SELECT niet). Op schema (2): de
+oorspronkelijke upsert gereproduceerd en bevestigd dat die nog steeds
+faalt met `permission denied for table profiles`; de nieuwe aanpak
+(UPDATE, en de insert-dan-retry-fallback voor een ontbrekende rij) slaagt
+in alle scenario's; en een volledig account-wissel-scenario op "hetzelfde
+apparaat" (A's token wissen, dan B's rij bijwerken) laat achteraf
+`expo_push_token = null` bij A en het token bij B zien - geen lek naar
+het vorige account. `npx tsc --noEmit` is schoon en een
+Android-bundle-export bevat alle nieuwe logregels. Niet interactief
+getest op een toestel/simulator (niet beschikbaar in deze sandbox).
+
 ## Trainings & Buddy Planner (Elite-only)
 
 Pricing-tabel: Elite heeft als enige "Slimme trainingsplanner". Een Elite-
@@ -677,6 +1134,14 @@ wijzigen" (en een kleinere "Afwijzen") voor wie het voorstel niet zelf
 deed. Geaccepteerde trainingen staan ook onder Instellingen →
 "Mijn trainingen" (`app/settings/MyTrainingsScreen.tsx`), voor beide
 deelnemers, ongeacht ieders eigen abonnement.
+
+**De "Mijn trainingen"-rij in Instellingen is tijdelijk verborgen** (op
+verzoek, `SHOW_MY_TRAININGS_ROW` in `SettingsScreen.tsx` staat op
+`false`) - de rest van de functie hierboven (voorstellen, accepteren,
+wijzigen, afwijzen, de kaart in de chat) is onveranderd actief. Het
+scherm/de route zelf (`MyTrainingsScreen.tsx`, `navigation/types.ts`'s
+`"MyTrainings"`) bestaat nog gewoon; alleen de link ernaartoe is weg.
+Zet `SHOW_MY_TRAININGS_ROW` terug op `true` om de rij weer te tonen.
 
 Migratie `supabase/migrations/0024_trainings_planner.sql` (en, voor nieuwe
 installaties, hetzelfde blok in `0001_init.sql`) legt dit vast:
@@ -846,58 +1311,905 @@ getest worden. Dit moet jij zelf doen:
    secret `RESEND_FROM_EMAIL` (bijv. `Sportfrend <support@sportfrend.app>`)
    voor een eigen afzenderadres.
 
-## RevenueCat (Betalen-scherm)
+## RevenueCat (Premium/Elite-abonnementen)
 
-Het Betalen-scherm (`app/premium/PaymentScreen.tsx`) draait nu in een
-**sandbox-modus** die duidelijk als zodanig gelabeld is in de app: er wordt
-geen echte betaling verwerkt, en `react-native-purchases` (RevenueCat's SDK)
-is nog niet geïnstalleerd. Dat is een bewuste keuze, geen omissie: die SDK is
-een native module die niet in Expo Go zit (in tegenstelling tot bijv.
-`expo-image-picker` of `@react-native-community/datetimepicker`, die dat wel
-zijn) - installeren zou een custom EAS development/production build vereisen,
-en Expo Go (waarmee dit hele project tot nu toe getest is) zou de app dan
-niet meer kunnen draaien.
+Echte RevenueCat-integratie (`react-native-purchases` +
+`react-native-purchases-ui`) - de eerdere sandbox-modus
+(`purchasePlanSandbox`/`restorePurchasesSandbox`, een los custom
+`PaymentScreen.tsx`) is vervangen. Beide pakketten zijn native modules,
+net als `@sentry/react-native` - ze draaien niet in Expo Go, alleen in een
+custom EAS dev/production build (zie "Development build op Android"
+hierboven).
 
-`lib/purchases.ts` bevat wel al de productconfiguratie (product-ID's,
-entitlements) die een echte koppeling zou gebruiken, en sandbox-versies van
-de functies (`purchasePlanSandbox`, `restorePurchasesSandbox`) met exact de
-vorm die de echte RevenueCat SDK-aanroepen straks zouden hebben - het
-vervangen van die twee functies door echte `Purchases.purchasePackage()` /
-`Purchases.restorePurchases()`-aanroepen zou de enige codewijziging moeten
-zijn wanneer de SDK er eenmaal in zit.
+**Wat er nu staat:**
 
-**Stappen die jij zelf moet zetten om dit later echt te maken:**
+- Twee entitlements, `premium` en `elite` (matcht dit project se
+  bestaande drie-lagen-abonnement: Basis/Premium/Elite blijft ongewijzigd
+  - zie de "Welke Ontdekken-filters een abonnement mag gebruiken"-sectie
+  hierboven voor hoe `subscriptions.plan` overal in de database gebruikt
+  wordt).
+- Vier producten (maandelijks + jaarlijks per plan), zie
+  `REVENUECAT_PRODUCT_IDS` in `lib/purchases.ts`:
+  - Premium maandelijks — `sportfrend_premium_monthly` (iOS) /
+    `sportfrend:premium-monthly` (Android)
+  - Premium jaarlijks — `sportfrend_premium_yearly` (iOS) /
+    `sportfrend:premium-yearly` (Android)
+  - Elite maandelijks — `sportfrend_elite_monthly` (iOS) /
+    `sportfrend:elite-monthly` (Android)
+  - Elite jaarlijks — `sportfrend_elite_yearly` (iOS) /
+    `sportfrend:elite-yearly` (Android)
+- Twee Offerings in RevenueCat, geïdentificeerd als `premium` en `elite`
+  (`REVENUECAT_OFFERING_IDS`), elk met een maandelijks en een jaarlijks
+  package. `PricingScreen.tsx`'s "Kies"-knop op de Premium-kaart
+  presenteert de `premium`-offering, de Elite-kaart de `elite`-offering -
+  via RevenueCat's eigen, kant-en-klare **Paywall**
+  (`RevenueCatUI.presentPaywall({ offering })`,
+  `presentPaywallForPlan()` in `lib/purchases.ts`). Die paywall regelt
+  zelf package-selectie, de native store-aankoopdialoog,
+  laad-/foutstatussen én "aankopen herstellen" - er is geen eigen
+  betaalscherm meer nodig.
+- **Customer Center** (`RevenueCatUI.presentCustomerCenter()`) voor
+  zelfservice-abonnementsbeheer (opzeggen, wisselen van plan,
+  aankoopgeschiedenis, restitutie aanvragen op iOS) - volledig
+  geconfigureerd vanuit het RevenueCat-dashboard, geen eigen UI nodig.
+  Instellingen → "Abonnement beheren" opent dit voor een account met een
+  actief betaald abonnement, en `PricingScreen` (kiezen/upgraden) voor
+  een Basis-account (`SettingsScreen.tsx`'s `onManageSubscription`).
+- `lib/AuthContext.tsx` koppelt de RevenueCat-identiteit aan de
+  Supabase-sessie: `Purchases.logIn(userId)` bij inloggen,
+  `Purchases.logOut()` bij uitloggen, en een app-brede
+  `CustomerInfoUpdateListener` die `customerInfo`/`plan` in de context
+  actueel houdt (reactief, geen polling) - elk scherm leest dit via
+  `useAuth()` in plaats van zelf RevenueCat aan te roepen.
+- Een expliciete **"Aankopen herstellen"**-knop onderaan `PricingScreen`
+  (`restorePurchases()` in `lib/purchases.ts`, roept
+  `Purchases.restorePurchases()` aan) - naast het herstel-mechanisme dat
+  RevenueCat's eigen paywall-UI al tijdens een aankooppoging aanbiedt.
+  Deze knop werkt ook zonder ooit de paywall te openen (reinstall, nieuw
+  toestel, een eerdere aankoop op een ander account) en toont altijd een
+  duidelijke melding: "Je eerdere aankoop is herkend en hersteld." als er
+  daadwerkelijk een actief entitlement wordt gevonden, anders "Er zijn
+  geen eerdere aankopen gevonden om te herstellen op dit account." -
+  `Purchases.restorePurchases()` zelf gooit geen fout als er niets te
+  herstellen is, dus dat onderscheid wordt hier gemaakt op basis van
+  `getPlanFromCustomerInfo()` op het resultaat.
 
-1. Maak een account aan op [revenuecat.com](https://app.revenuecat.com) en
-   maak een nieuw project aan.
-2. Voeg in dat project een iOS-app en een Android-app toe (App Store
-   Connect-bundle-ID / Google Play-pakketnaam van deze app).
-3. Maak in **App Store Connect** en **Google Play Console** twee
-   auto-renewable/abonnement-producten aan:
-   - Premium — €4,99/maand — product-ID `sportfrend_premium_monthly` (iOS) /
-     `sportfrend:premium-monthly` (Android)
-   - Elite — €9,99/maand — product-ID `sportfrend_elite_monthly` (iOS) /
-     `sportfrend:elite-monthly` (Android)
-   (Deze exacte ID's staan ook in `lib/purchases.ts` - als je andere ID's
-   kiest, moeten ze daar aangepast worden.)
-4. Koppel die producten in RevenueCat aan twee entitlements, `premium` en
-   `elite`, en maak een Offering met beide als packages.
-5. Kopieer de **Public API keys** (RevenueCat-dashboard → Project settings →
-   API keys) voor iOS en Android, en zet ze als
-   `EXPO_PUBLIC_REVENUECAT_IOS_KEY` / `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY` -
-   zowel lokaal in `.env` als in de EAS-omgevingsvariabelen (dezelfde plek
-   waar `EXPO_PUBLIC_SUPABASE_URL` nu al staat).
-6. Laat daarna de daadwerkelijke SDK-installatie en -koppeling bouwen (een
-   vervolgstap: `react-native-purchases` toevoegen, `lib/purchases.ts`'s
-   sandbox-functies vervangen door echte SDK-aanroepen, en een nieuwe
-   EAS-build maken) - dat kan pas nadat stap 1 t/m 5 hierboven staan, en dat
-   testen kan dan niet meer via Expo Go.
+**Store-review-compliance op `PricingScreen` (3.1.2/Payments policy)**:
+onder de pakketten staan nu een duidelijke verlengings-tekst
+("Abonnementen worden automatisch verlengd tot je opzegt. Opzeggen kan op
+elk moment via de instellingen van de App Store of Google Play, minstens
+24 uur voor het einde van de lopende periode.") en links naar de
+privacyverklaring en algemene voorwaarden (dezelfde
+`constants/legal.ts`-constanten als het registratiescherm en
+Instellingen → "Juridisch"). De prijs per pakket toont nu een expliciet
+€-teken (`"€4,99 / mnd"`, was `"4,99"` + een losse "Vanaf €/mnd"-tekst).
+`NOT_PRESENTED` (de paywall kon niet geopend worden, bv. offering nog niet
+geconfigureerd in het dashboard) toont nu "Het betaalscherm kon niet
+geopend worden, probeer het later opnieuw." in plaats van stilzwijgend
+niets te doen - voorheen gegroepeerd met `CANCELLED` (een bewuste
+gebruikersannulering, die terecht geen melding toont). Instellingen heeft
+een nieuwe "Juridisch"-sectie met dezelfde twee links, en de FAQ heeft een
+nieuwe regel over opzeggen via de App Store/Google Play.
+
+**Waarom de database niet zomaar de client vertrouwt** (de belangrijkste
+architectuurkeuze hier): de RevenueCat-SDK op een toestel is geen
+vertrouwde bron voor wat de *database* moet geloven over iemands
+abonnement - een aangepaste client zou zelf kunnen claimen "ik heb
+Elite". De oude sandbox-flow had precies dit gat (`upsertSubscription()`
+was gewoon door de client zelf aan te roepen, RLS controleerde alleen
+"is dit je eigen rij", nooit "heb je hiervoor betaald"). Sinds
+`0031_subscriptions_webhook_only.sql` mag `authenticated` niet meer
+zelf naar `subscriptions` schrijven (alleen nog SELECT op de eigen rij)
+- de **enige** schrijver is nu `supabase/functions/revenuecat-webhook`,
+een server-side Edge Function (service-role key) die bij elke
+RevenueCat-gebeurtenis de subscriber opnieuw opvraagt via RevenueCat's
+eigen REST API (niet vertrouwen op de payload van één webhook-event
+alleen, dat rapporteert maar één entitlement tegelijk) en op basis
+daarvan `plan`/`status`/`price_cents`/`current_period_end` bijwerkt. De
+client zelf gebruikt `CustomerInfo` nog wél rechtstreeks voor *directe*
+UI-feedback (geen wachttijd op de webhook), maar de database - en dus
+elke RLS-policy/SQL-functie die een betaalde functie afschermt - vertrouwt
+uitsluitend wat via de webhook binnenkomt.
+
+**Dashboard-setup die jij zelf moet doen** (kan niet vanuit deze sandbox
+- geen netwerktoegang tot RevenueCat/App Store Connect/Play Console):
+
+1. Maak een account aan op [revenuecat.com](https://app.revenuecat.com)
+   en een project (of gebruik het bestaande project bij je meegegeven
+   sleutel `test_JLnrnMjweEhqJrGiLDFLTMDyAza`).
+2. Voeg een iOS-app en een Android-app toe aan dat project (App Store
+   Connect-bundle-ID `com.sportfrend.app` / Google Play-pakketnaam
+   `com.sportfrend.app`, zie `app.config.js`).
+3. Maak in **App Store Connect** en **Google Play Console** de acht
+   producten hierboven aan (auto-renewable/abonnement, maandelijks +
+   jaarlijks per plan).
+4. Koppel die producten in RevenueCat aan de entitlements `premium` en
+   `elite`.
+5. Maak twee Offerings, `premium` en `elite`, elk met een `$rc_monthly`-
+   en `$rc_annual`-package die naar het bijbehorende product wijst.
+6. Ontwerp voor beide Offerings een **Paywall** (Paywalls-tab in het
+   dashboard - geen code nodig, RevenueCatUI rendert 'm native).
+7. Zet **Customer Center** aan (Customer Center-tab) en configureer welke
+   management-opties (opzeggen, plan wijzigen, ...) beschikbaar zijn.
+8. Kopieer de **Public API keys** (Project settings → API keys → Public
+   API keys) voor iOS en Android naar `EXPO_PUBLIC_REVENUECAT_IOS_KEY` /
+   `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY` - lokaal in `.env` én als
+   EAS-omgevingsvariabelen (dezelfde plek als `EXPO_PUBLIC_SUPABASE_URL`).
+   De meegegeven sleutel (`test_JLnrnMjweEhqJrGiLDFLTMDyAza`) is zo'n
+   Public API key - controleer in het dashboard of dit de iOS- of de
+   Android-sleutel is (of dezelfde geldt voor beide) en vul de andere aan.
+9. Zet de webhook op (Project settings → Integrations → Webhooks → +
+   Add): URL = je gedeployde `revenuecat-webhook`-functie
+   (`https://<project-ref>.supabase.co/functions/v1/revenuecat-webhook`),
+   Authorization header value = een zelfgekozen random string.
+10. Deploy de functie en zet de bijbehorende secrets (nooit hier
+    committen):
+    ```
+    supabase functions deploy revenuecat-webhook --no-verify-jwt
+    supabase secrets set REVENUECAT_SECRET_KEY=<RevenueCat Secret API key>
+    supabase secrets set REVENUECAT_WEBHOOK_AUTH_HEADER=<dezelfde random string als stap 9>
+    ```
+    (`REVENUECAT_SECRET_KEY` is de **Secret** API key, niet de Public key
+    uit stap 8 - Project settings → API keys → Secret API keys. Deze mag
+    nooit in de client terechtkomen.)
+11. Maak sandbox/test-accounts aan (App Store Connect → Sandbox Testers,
+    Google Play Console → License testers) om een aankoop echt te kunnen
+    doorlopen zonder te betalen.
+
+**Build/testen - géén `eas update` (OTA) meer voor deze wijziging.**
+`react-native-purchases`/`react-native-purchases-ui` zijn native modules
+die net toegevoegd zijn - een bestaande, al geïnstalleerde preview/
+production build heeft die native code nog niet, en zou crashen op elke
+aanroep ernaartoe als je deze wijziging via een gewone OTA-update
+publiceert. Er is een **nieuwe native build** nodig, niet zomaar een
+JS-update:
+```
+npx eas-cli build --profile development --platform android
+npx eas-cli build:run --platform android --latest
+```
+(zelfde development-buildprofiel als in "Development build op Android"
+hierboven - stap 1 t/m 11 hierboven moeten wel eerst staan, anders is er
+niets om te testen).
+
+**Getest**: `npx tsc --noEmit` schoon (tegen de daadwerkelijk
+geïnstalleerde SDK's eigen TypeScript-definities, niet alleen aannames);
+`expo export` bundelt zonder fouten en de bundel bevat de nieuwe
+paywall-/customer-center-aanroepen en alle acht product-ID's. De
+`0031_subscriptions_webhook_only.sql`-migratie is lokaal getest (los
+Postgres-schema): vóór de migratie kon een ingelogde gebruiker zichzelf
+via een directe UPDATE naar `plan = 'elite'` zetten (de kwetsbaarheid
+bevestigd); ná de migratie weigert diezelfde UPDATE (0 rijen, RLS), een
+gebruiker kan nog wel zijn eigen rij lezen maar niet die van een ander,
+en een write via de service-role (wat de webhook gebruikt) werkt
+onveranderd. De Edge Function zelf (Deno, buiten `tsc`'s scope) en de
+daadwerkelijke aankoopflow (paywall, entitlement-toekenning,
+webhook-aflevering) zijn handmatig nagelopen tegen RevenueCat's
+gedocumenteerde API, maar kunnen alleen écht getest worden tegen een
+opgezet RevenueCat-project + een native build op een toestel/simulator -
+geen van beide is beschikbaar in deze sandbox.
+
+**Aanvulling (Aankopen herstellen, renewal-tekst/links, €-teken,
+`NOT_PRESENTED`)**: `npx tsc --noEmit` blijft schoon en een nieuwe
+`expo export`-bundel bevat (elk precies éénmaal, bevestigt dat alleen
+`constants/legal.ts` de URL's bevat) beide juridische links, de
+verlengings-tekst, de "Aankopen herstellen"-tekst, de nieuwe
+`NOT_PRESENTED`-melding en het nieuwe `"€4,99 / mnd"`/`"€9,99 / mnd"`-
+formaat. `restorePurchases()`/de `NOT_PRESENTED`-tak zelf zijn, net als de
+rest van de aankoopflow hierboven, alleen tegen RevenueCat's API-
+documentatie nagelopen - ook hier is een opgezet RevenueCat-project + een
+native build niet beschikbaar in deze sandbox om de knop daadwerkelijk
+een herstel te laten uitvoeren.
+
+## Sentry crash-reporting
+
+`ErrorBoundary.tsx` bestond al, maar deed tot nu toe alleen `console.error(...)`
+- onzichtbaar in een gepubliceerde/preview build, dus in de praktijk nul
+zichtbaarheid op crashes bij echte gebruikers. `@sentry/react-native`
+(+ diens Expo-config-plugin en Metro-integratie) verhelpt dat: onafgehandelde
+JS-exceptions, onafgehandelde promise-rejections, én render-fouten die
+`ErrorBoundary.tsx` opvangt, komen nu allemaal in het Sentry-dashboard
+terecht, met leesbare (niet-geminificeerde) stacktraces.
+
+**Hoe dit is opgezet:**
+
+- **`app.config.js`** (was `app.json` - moest dynamisch worden om
+  `SENTRY_DSN` uit de environment te kunnen lezen, wat een los `app.json`
+  niet kan) voegt `"@sentry/react-native"` toe aan `plugins` - dit is Sentry's
+  eigen Expo-config-plugin, die bij een `eas build` automatisch een
+  build-fase in het native Xcode-/Gradle-project injecteert die source maps
+  bouwt en uploadt. **Dat is dus letterlijk de "EAS Build-hook"** voor
+  source maps - geen los handgeschreven hook-script nodig, Sentry's plugin
+  regelt de native build-fase zelf. Bewust geen `organization`/`project`/
+  `authToken` als plugin-config meegegeven (Sentry's eigen plugin waarschuwt
+  daar expliciet tegen - een authToken in `app.config.js` zou in de
+  geshipte app terechtkomen) - die komen in plaats daarvan uit
+  `SENTRY_ORG`/`SENTRY_PROJECT`/`SENTRY_AUTH_TOKEN`, gelezen als
+  environment variables tijdens de build zelf (standaard sentry-cli-gedrag).
+- **`metro.config.js`** (nieuw bestand - bestond nog niet) gebruikt
+  `getSentryExpoConfig()` uit `@sentry/react-native/metro`. Dit is het
+  eigenlijke mechanisme achter leesbare stacktraces: het voegt een Metro-
+  serializer toe die een uniek **Debug ID** inbakt in zowel de bundel als
+  de bijbehorende source map. Sentry matcht een crash aan zijn source map
+  via dat Debug ID, niet via een release-naam - belangrijk voor dit
+  project specifiek, omdat de meeste wijzigingen via `eas update` (OTA)
+  verschijnen, niet via een verse `eas build` waar een release-naam
+  natuurlijk bij past.
+- **`lib/sentry.ts`** leest de DSN via `Constants.expoConfig.extra.sentryDsn`
+  (zie hieronder waarom niet rechtstreeks via `process.env`), en roept
+  `Sentry.init()` aan met:
+  - `release`: `<slug>@<version>` (stabiel per app-store-versie)
+  - `dist`: `Updates.updateId` (een verse UUID per `eas update`-publicatie)
+    of `"dev"` als er geen actieve OTA-update is - dit is wat "release-
+    tracking per build" hier concreet betekent, aangezien native
+    `eas build`s zeldzaam zijn vergeleken met `eas update`-publicaties.
+  - `environment`: `Updates.channel` (`development`/`preview`/`production`,
+    dezelfde drie kanalen als `eas.json`), met een `__DEV__`-fallback voor
+    een lokale Metro-dev-server-sessie waar `Updates.channel` altijd `null`
+    is.
+  - Faalt open zoals de rest van deze app's optionele-configuratie-afhandeling
+    (`isSupabaseConfigured`, `lib/supabase.ts`): ontbreekt `SENTRY_DSN`, dan
+    wordt er een `console.warn` gelogd en slaat `initSentry()` de rest over
+    in plaats van de app te laten crashen bij opstarten.
+  - `Sentry.init()`'s standaard-integraties installeren zelf al een globale
+    `ErrorUtils`-handler (onafgehandelde JS-exceptions) én
+    unhandled-rejection-tracking - het aanroepen van `Sentry.init()` zelf is
+    dus al genoeg, geen aparte handlers nodig.
+- **`App.tsx`** roept `initSentry()` aan op module-niveau (buiten de
+  component, vóórdat er iets anders kan crashen) en exporteert
+  `Sentry.wrap(App)` in plaats van de kale `App`-component - dat voegt
+  Sentry's eigen top-level foutopvang en touch-breadcrumbs toe, *naast* de
+  bestaande `ErrorBoundary` binnenin (die blijft ongewijzigd voor zijn
+  eigen Nederlandstalige fallback-UI).
+- **`ErrorBoundary.tsx`** roept nu `Sentry.captureException(error, ...)`
+  aan in `componentDidCatch` - een render-fout die hier terechtkomt bereikt
+  nooit de globale `ErrorUtils`-handler (React vangt hem af vóórdat hij
+  daar komt), dus dit is het enige punt waar zo'n fout alsnog gerapporteerd
+  wordt.
+
+**Waarom `SENTRY_DSN` (geen `EXPO_PUBLIC_`-prefix) via `extra` in plaats van
+rechtstreeks `process.env`:** een DSN is geen geheim (het is een write-only
+eindpunt-identifier, vergelijkbaar met een Segment/Mixpanel write-key) en zou
+prima met een `EXPO_PUBLIC_`-prefix gekund hebben, zoals
+`EXPO_PUBLIC_SUPABASE_URL`. Omdat de variabele hier al vast `SENTRY_DSN` heet
+(zonder prefix), leest `app.config.js` hem in plaats daarvan in op
+config-evaluatietijd (Node.js, niet Metro) en geeft hem door via `extra` -
+`lib/sentry.ts` leest hem terug via `Constants.expoConfig.extra.sentryDsn`.
+
+**Test-crash-knop** (Instellingen → onderaan, alleen zichtbaar met
+`__DEV__`): gooit een fout rechtstreeks vanuit een `onPress`-handler, dus
+*buiten* React's render-cyclus om - dit test bewust het nieuwe globale-
+foutafhandelings-pad (`ErrorUtils`, via `Sentry.init()`'s standaard-
+integraties), niet het al langer bestaande `ErrorBoundary`-pad. Verschijnt
+in een build waarin `SENTRY_DSN` correct staat na een paar seconden als
+nieuwe issue in het Sentry-dashboard.
+
+**Handmatige stappen die jij zelf moet zetten:**
+
+1. **Maak een Sentry-project aan** (Platform: React Native), en kopieer de
+   DSN (Project settings → Client Keys (DSN)).
+2. **Zet `SENTRY_DSN`** lokaal in `.env` én als EAS-omgevingsvariabele
+   (dezelfde plek als `EXPO_PUBLIC_SUPABASE_URL`).
+3. **Voor source maps op een echte `eas build`** (App Store/Play Store-
+   inzendingen): zet `SENTRY_ORG`, `SENTRY_PROJECT` en `SENTRY_AUTH_TOKEN`
+   (Sentry-dashboard → Settings → Auth Tokens, scope `project:releases` +
+   `org:read`) als EAS-secrets:
+   ```bash
+   eas secret:create --scope project --name SENTRY_ORG --value <je-org-slug>
+   eas secret:create --scope project --name SENTRY_PROJECT --value <je-project-slug>
+   eas secret:create --scope project --name SENTRY_AUTH_TOKEN --value <je-auth-token> --type string
+   ```
+   De config-plugin regelt de rest automatisch tijdens de build.
+4. **Voor source maps op een `eas update`-publicatie** (de gebruikelijke
+   manier waarop dit project wijzigingen uitrolt - geen native build, dus
+   de stap hierboven wordt dan nooit uitgevoerd): bouw en publiceer met
+   dezelfde, vooraf gebouwde `dist`-map, en upload daarna diezelfde map naar
+   Sentry:
+   ```bash
+   npx expo export --platform all --source-maps
+   npx eas-cli update --branch preview --input-dir dist --skip-bundler --non-interactive
+   SENTRY_AUTH_TOKEN=<je-auth-token> SENTRY_ORG=<je-org-slug> SENTRY_PROJECT=<je-project-slug> \
+     npm run sentry:upload-sourcemaps
+   ```
+   (`--input-dir dist --skip-bundler` laat `eas update` exact de al
+   gebouwde map publiceren in plaats van zelf nog een keer te bundelen -
+   zonder dat zouden de geüploade source maps niet gegarandeerd bij de
+   daadwerkelijk gepubliceerde bundel horen.)
+5. **Bouw en installeer een development build op een Android-testtoestel**
+   om de crash-knop te kunnen zien (die is `__DEV__`-only, dus nooit
+   zichtbaar in een preview/productie-build) - zie
+   "Development build op Android (voor de Sentry-testknop)" hieronder voor
+   de exacte commando's.
+6. **Test met de verborgen crash-knop** (Instellingen, onderaan) en
+   controleer of de fout binnen enkele seconden in het Sentry-dashboard
+   verschijnt, met een leesbare (niet-geminificeerde) stacktrace.
+
+### Development build op Android (voor de Sentry-testknop)
+
+Geen Google Play Console-account nodig - "internal distribution" is een
+kaal, rechtstreeks installeerbaar `.apk`-bestand, buiten de Play Store om
+(zelfde aanpak als eerder voor het testen van echte pushmeldingen, zie
+"Pushmeldingen" hierboven: Expo Go ondersteunt sinds SDK 53 geen remote
+pushmeldingen meer, en kan hoe dan ook nooit een custom native module als
+`@sentry/react-native` laden - vandaar een eigen development build in
+plaats van Expo Go).
+
+```bash
+# 1. Eenmalig: zorg dat SENTRY_DSN lokaal bekend is (stap 1-2 hierboven) -
+#    de dev-client haalt zijn JS live op van jouw Metro-server (stap 4
+#    hieronder), dus app.config.js leest SENTRY_DSN dan uit jouw eigen
+#    lokale .env, niet uit een EAS-secret.
+cat .env | grep SENTRY_DSN   # controleer dat hij hier al in staat
+
+# 2. Start de build in de cloud (~10-15 min, geen Android Studio/Xcode
+#    lokaal nodig). Eerste keer: EAS biedt aan een Android-keystore voor
+#    je te genereren - accepteer dat, geen Play Console-account nodig.
+npx eas-cli build --profile development --platform android
+
+# 3. Zodra de build klaar is, installeer hem op je Android-toestel.
+#    Optie A - eenvoudigst, geen kabel nodig: scan de QR-code die eas
+#    build aan het eind toont met je telefoon (of open de build-URL in de
+#    browser op je telefoon) en tik "Installeren". Android vraagt de
+#    eerste keer om toestemming voor "apps van deze bron installeren".
+#    Optie B - telefoon via USB verbonden met deze computer (adb/USB-
+#    debugging aan): installeert automatisch op het aangesloten toestel.
+npx eas-cli build:run --platform android --latest
+
+# 4. Start de Metro-bundler (dezelfde .env als stap 1 wordt hier gebruikt)
+#    en open de zojuist geïnstalleerde app op je telefoon - die toont een
+#    "dev client"-scherm waar je verbindt met deze sessie (scan de QR-code
+#    die hieronder verschijnt, telefoon en computer moeten op hetzelfde
+#    wifi-netwerk zitten - gebruik --tunnel als dat niet zo is).
+npx expo start --dev-client
+
+# 5. Log in de app in (of maak een testaccount) tot je bij Instellingen
+#    bent, tik helemaal onderaan op "Test crash (Sentry)", en kijk binnen
+#    een paar seconden in het Sentry-dashboard (Issues) of de fout
+#    verschijnt.
+```
+
+**Getest vanuit deze omgeving** (geen live Sentry-account/netwerktoegang tot
+sentry.io beschikbaar hier, dus de daadwerkelijke dashboard-check is aan
+jou - zie stap 6 hierboven): `npx tsc --noEmit` schoon; `npx expo export
+--source-maps` produceert een `.hbc`-bundel mét bijbehorende `.map` met een
+`debugId`-veld; `sentry-expo-upload-sourcemaps dist` herkent en matcht die
+bundel+sourcemap correct (faalt zoals verwacht pas op de daadwerkelijke
+netwerkupload, door een nep-token en geen netwerktoegang vanuit deze
+sandbox); een bundle-export bevestigt dat de test-crash-knop alleen in
+een `--dev`-bundel aanwezig is, niet in een productie-achtige bundel; en
+`npx eas-cli config --profile development --platform android` bevestigt
+dat het `development`-buildprofiel daadwerkelijk resolvet naar
+`distribution: internal`, `developmentClient: true`, `buildType: apk` en
+`credentialsSource: remote` (EAS genereert zelf een Android-keystore,
+geen Play Console-account nodig). `expo-dev-client` was nog geen
+dependency - zonder dat pakket faalt een `developmentClient: true`-build;
+toegevoegd via `npx expo install expo-dev-client` en aan `app.config.js`'s
+`plugins` toegevoegd (veilig voor élk profiel - `eas.json`'s eigen
+`developmentClient`-vlag per profiel bepaalt of de dev-launcher-native-code
+daadwerkelijk actief is, niet de aanwezigheid van deze plugin).
+
+## Contentfilter (aanstootgevende taal)
+
+Basale, automatische filter op bio (profiel), berichten (chat), posts
+(prikbord) en trainingsvoorstellen (opmerking-veld), ter voorbereiding op
+Apple's App Store Review Guideline 1.2 (User-Generated Content), die van
+apps met UGC verlangt dat ze objectionable content kunnen filteren en een
+manier hebben om het te verwijderen.
+
+**Hard blokkeren, niet waarschuwen-met-doorsturen.** `0027_content_filter.sql`
+koos aanvankelijk voor "waarschuwen + toch kunnen versturen + markeren"
+(afweging nog steeds volledig uitgeschreven bovenaan dat bestand, als
+achtergrond). `0028_content_filter_hard_block.sql` verandert dit naar
+een expliciete, bewuste productbeslissing: een treffer wordt nu
+**geweigerd**, niet alleen gemarkeerd - er is geen "toch versturen"-optie
+meer, de gebruiker moet de tekst aanpassen.
+
+**Hoe het hard blokkeren technisch werkt** (zie de volledige uitleg
+bovenaan `0028_content_filter_hard_block.sql`): de vier triggers zijn
+`BEFORE INSERT/UPDATE` (was `AFTER`). Bij een treffer schrijft
+`flag_content_if_needed()` eerst een rij naar `flagged_content`, en geeft
+daarna `return NULL` - Postgres' ingebouwde manier om die ene rij
+stilletjes te annuleren zónder een fout op te werpen die ook de
+zojuist geschreven audit-rij zou terugdraaien (`raise exception` zou dat
+wél doen - Postgres kent geen "onafhankelijke" subtransactie binnen
+dezelfde triggeraanroep zonder een aparte databaseverbinding, bv. via
+`dblink` - een afhankelijkheid die hier bewust vermeden is). Een
+geannuleerde INSERT/UPDATE meldt zich bij de client als "0 rijen
+geraakt", niet als een foutmelding - daarom gebruikt elke schrijfactie nu
+`.select().single()` (`sendMessage()`, `createPost()`,
+`createTraining()`/`updateTrainingProposal()` in `lib/api.ts`, en de
+profiel-upsert in `EditProfileScreen.tsx`): PostgREST geeft dan een
+expliciete, herkenbare fout (`PGRST116`, "0 rows") in plaats van een
+stille no-op die de gebruiker laat denken dat het gelukt is.
+`getDataErrorMessage()` (`lib/api.ts`) vertaalt die `PGRST116`-fout naar
+een vriendelijke melding - dit is puur het server-side vangnet voor een
+client die de onderstaande client-side check overslaat; de normale flow
+komt hier nooit, omdat `checkContentFilter()` de aanvraag al client-side
+tegenhoudt vóórdat de server ooit bereikt wordt.
+
+**Opbouw** (`0027_content_filter.sql` + `0028_content_filter_hard_block.sql`,
+gemirrored in `0001_init.sql` voor nieuwe installaties):
+
+- `content_filter_words` — de woordenlijst zelf: `word`, `language`
+  (`nl`/`en`), `category` (`scheldwoord`/`seksueel`/`haatdragend`),
+  `active`. RLS aan, bewust **geen** policies - alleen beheerbaar via
+  directe SQL (SQL editor/migraties), nooit via de app. Uitbreiden of
+  uitschakelen kan zonder ooit een release te doen:
+  ```sql
+  insert into public.content_filter_words (word, language, category)
+  values ('nieuwerdant', 'nl', 'scheldwoord');
+
+  update public.content_filter_words set active = false where word = 'trut';
+  ```
+  Basisset: ~60 woorden, Nederlands + Engels, verdeeld over
+  scheldwoorden/seksueel-expliciet/haatdragend - bewust compact om valse
+  positieven te beperken, geen uitputtende lijst.
+- `find_flagged_words(text) returns text[]` — de matcher. Woordgrens-
+  matching (`\m...\M`, Postgres' "heel woord", geen kale substring) zodat
+  bv. "ras" niet matcht binnen "raster". Let op: dit is bewust een
+  heel-woord-match, dus "kutzooi" (aan elkaar geschreven) matcht **niet**
+  op "kut" - hetzelfde principe dat "raster" beschermt. `security
+  definer` + `grant execute ... to authenticated`, zodat de client 'm kan
+  aanroepen voor de waarschuwing vóór versturen, zonder zelf `SELECT` op
+  de ruwe woordenlijst nodig te hebben (die blijft zo onzichtbaar voor de
+  client).
+- `flagged_content` — audit trail van **geweigerde pogingen** (sinds
+  `0028`; vóór `0028` was dit een audit trail van gepubliceerde-maar-
+  gemarkeerde content): `user_id`, `source_table`
+  (`profiles`/`messages`/`posts`/`trainings`), `source_id` (bij een
+  geweigerde INSERT: het al gegenereerde maar nooit weggeschreven id van
+  die rij - Postgres vult kolomdefaults al in vóórdat een BEFORE-trigger
+  draait; bij een geweigerde UPDATE: het echte id van de bestaande,
+  ongewijzigd gebleven rij), `matched_words`, `reason`, `status`
+  (`pending`/`reviewed`/`dismissed`), `created_at`. RLS aan, bewust
+  **geen** policies - anders dan `reports` kan zelfs de geweigerde
+  gebruiker zijn eigen rijen hier niet zien (dat zou het triggerende
+  woord weglekken). Bedoeld voor het moderatie-overzicht (aparte taak)
+  via directe service-role-toegang.
+- `flag_content_if_needed()` — de trigger-functie, kijkt via
+  `TG_TABLE_NAME` welke tekstkolom/eigenaar-kolom hoort bij de tabel die
+  hem aanriep. Bij een treffer: schrijft een rij naar `flagged_content`,
+  daarna `return NULL` (annuleert de INSERT/UPDATE). Zonder treffer:
+  `return NEW` (gaat gewoon door).
+- Vier `BEFORE`-triggers: `flag_bio_content` (`profiles`, `insert or
+  update of bio`), `flag_message_content` (`messages`, `insert`),
+  `flag_post_content` (`posts`, `insert`), `flag_training_content`
+  (`trainings`, `insert or update of note`).
+- `lib/contentFilter.ts` — client-side helpers: `checkContentFilter(text)`
+  roept `find_flagged_words()` aan (faalt open - een mislukte aanroep
+  laat de poging client-side doorgaan, de server-side trigger hierboven
+  is dan het vangnet, net als elke andere optionele status-RPC in dit
+  project) en `showContentFilterBlockedAlert(what, participle)` toont de
+  "Ongepaste taal"-melding met alleen een "OK"-knop - geen "toch
+  versturen"-optie. Aangeroepen vanuit `EditProfileScreen.tsx` (bio),
+  `ChatDetailScreen.tsx` (bericht, ook bij een afbeelding met bijschrift),
+  `NewPostScreen.tsx` (post), `TrainingFormModal.tsx` (opmerking, alleen
+  als niet leeg) en `MatchScreen.tsx` (het allereerste bericht na een
+  nieuwe match/"CONNECTIE!").
+
+Draai `0027_content_filter.sql` gevolgd door
+`0028_content_filter_hard_block.sql` op je bestaande database (als
+`0027` al gedraaid is, volstaat alleen `0028`) - `0001_init.sql` is ook
+bijgewerkt voor nieuwe installaties. Controleer na het draaien met:
+
+```sql
+select
+  tgname,
+  case when tgtype & 2 = 2 then 'BEFORE' else 'AFTER' end as timing
+from pg_trigger
+where tgname in ('flag_bio_content', 'flag_message_content', 'flag_post_content', 'flag_training_content')
+  and not tgisinternal
+order by tgname;
+-- verwacht: alle vier op 'BEFORE'
+
+select pg_get_functiondef('public.flag_content_if_needed()'::regprocedure) ilike '%return null%' as hard_blocks;
+-- verwacht: true
+
+select public.find_flagged_words('die training was echt kut vandaag') as test_match;
+-- verwacht: {kut}
+```
+
+Beide migraties bevatten ook een zelfcontrolerend `do $$ ... $$`-blok
+onderaan (zelfde aanpak als `0022`/`0023`/`0024`/`0026`) dat bij het
+draaien zelf al een specifieke `EXCEPTION` opwerpt zodra iets hiervan
+niet klopt.
+
+**Getest**: lokaal (los Postgres-schema met minimale stand-ins voor
+`profiles`/`messages`/`posts`/`trainings`, geen netwerktoegang tot
+Supabase vanuit deze omgeving) - beide migraties draaien idempotent; een
+schone bio/bericht/post/trainingsopmerking slaagt gewoon (1 rij
+geraakt/geretourneerd); een tekst met een woord uit de lijst
+(Nederlands én Engels getest) wordt voor alle vier de tabellen
+daadwerkelijk geweigerd (`UPDATE 0`/`INSERT 0 0`, 0 rijen
+`RETURNING`, de bio/opmerking blijft op de vorige waarde staan, er
+wordt geen nieuwe message/post-rij aangemaakt) én levert precies één rij
+op in `flagged_content` met het juiste `source_table`/`matched_words`;
+`authenticated` kan `content_filter_words` noch `flagged_content` direct
+uitlezen, maar wel `find_flagged_words()` aanroepen. `npx tsc --noEmit`
+blijft schoon na het omzetten van alle vijf de aanroeppunten (inclusief
+`MatchScreen.tsx`, een eerder gemiste aanroepplek - zie hieronder), en
+een `expo export`-bundel bevat de nieuwe "Ongepaste taal"-melding en
+geen spoor meer van de oude "toch versturen"-dialoog.
+
+**Bijvangst tijdens deze wijziging**: `MatchScreen.tsx` (het
+"CONNECTIE!"-scherm met het invoerveld voor het allereerste bericht na
+een match) riep `sendMessage()` altijd al rechtstreeks aan, zonder ooit
+door `checkContentFilter()` te zijn gegaan - een aparte aanroepplek naast
+`ChatDetailScreen.tsx`'s `onSend`, gemist bij de oorspronkelijke
+implementatie in `0027`. Nu ook aangekoppeld.
+
+## Moderatie-overzicht
+
+Basaal moderatiescherm, ter voorbereiding op Apple's App Store Review
+Guideline 1.2 (binnen 24 uur kunnen reageren op gerapporteerde/gemarkeerde
+content). Alleen toegankelijk voor één account
+(`floris.reinders@gmail.com`) - een e-mailadres-check, bewust geen
+rollen-tabel/systeem (dit project heeft nog geen ander gebruik voor
+rollen, en één hardcoded adres is eenvoudiger te auditen dan een tabel
+met precies één rij).
+
+**Toegang - twee lagen, met verschillende sterkte**:
+
+1. **Client-side (UX, geen beveiliging)**: `constants/moderator.ts`
+   exporteert `MODERATOR_EMAIL` - de enige plek in de app waar dit adres
+   staat. `SettingsScreen.tsx` toont de "Moderatie"-rij alleen wanneer
+   `session.user.email === MODERATOR_EMAIL`; voor elk ander account
+   bestaat de ingang eenvoudigweg niet ("verborgen/beperkte route" uit de
+   opdracht). `ModerationScreen.tsx` zelf checkt hetzelfde nog eens en
+   toont "Geen toegang" als iemand de route toch weet te raden/forceren.
+2. **Database (de echte grens)**: `public.is_moderator()`
+   (`0029_moderation_dashboard.sql`) is de enige plek waar dit adres
+   *server-side* staat - een `security definer`-functie die `auth.users`
+   opzoekt via `auth.uid()` (nodig omdat `authenticated` zelf geen
+   toegang tot `auth.users` heeft) en vergelijkt met het hardcoded adres.
+   Elke RLS-policy hieronder roept deze functie aan, dus zelfs een
+   client die de check in stap 1 volledig overslaat (gewijzigde app,
+   directe API-aanroep) krijgt gewoon niets terug.
+
+**RLS-policies** (permissive - ze voegen toe aan de bestaande policies,
+nemen niets weg bij een gewone gebruiker):
+- `reports`: "Moderator can view all reports" (SELECT, alle rapportages,
+  niet alleen de eigen rapportages van `0012_moderation_reports_blocks.sql`)
+  en "Moderator can update reports" (UPDATE, voor de "Afgehandeld"-knop).
+- `flagged_content`: "Moderator can view flagged content" (SELECT) - deze
+  tabel had sinds `0027_content_filter.sql` bewust **geen enkele**
+  policy (ook de gemarkeerde gebruiker zelf kon zijn eigen rijen niet
+  zien); dit is de eerste keer dat iemand dit via de app kan lezen.
+
+**Het scherm** (`app/settings/ModerationScreen.tsx`) toont twee lijsten:
+- Openstaande rapportages (`status in ('open', 'reviewing')`) met
+  melder, gerapporteerde gebruiker, reden, details, tijdstip
+  (`fetchOpenReports()`, `lib/api.ts`).
+- De 50 meest recente `flagged_content`-rijen: gebruiker, brontabel,
+  getriggerde woord(en), tijdstip (`fetchRecentFlaggedContent()`).
+
+Twee acties, elk met een paar tikken:
+- **"Afgehandeld"** op een rapportage → `resolveReport()` zet `status`
+  op `'resolved'` (bestaande waarde uit `0012`'s check-constraint, geen
+  nieuwe status nodig).
+- **"Verwijder gebruiker"** (op zowel een rapportage- als een
+  flagged_content-rij) → hergebruikt de bestaande
+  account-verwijderfunctionaliteit: `deleteAccount(userId)`
+  (`lib/auth.ts`) roept dezelfde `delete-account` Edge Function aan als
+  "Account verwijderen" in Instellingen, nu met een optionele
+  `target_user_id` in de request body. De Edge Function checkt zelf
+  (opnieuw, via de JWT van de aanroeper - niet via wat de request body
+  beweert) `is_moderator()` voordat een `target_user_id` die niet de
+  aanroeper zelf is, wordt gehonoreerd; zie de uitgebreide comment
+  bovenaan `supabase/functions/delete-account/index.ts`. Er is geen
+  aparte "schorsen" (tijdelijk) geïmplementeerd - de opdracht vroeg
+  expliciet om de bestaande verwijderfunctionaliteit te hergebruiken
+  "indien mogelijk", en permanent verwijderen is wat er al bestond.
+
+Draai `0029_moderation_dashboard.sql` op je bestaande database -
+`0001_init.sql` is ook bijgewerkt voor nieuwe installaties. Deploy
+daarna de bijgewerkte Edge Function opnieuw (`supabase functions deploy
+delete-account`) - anders blijft "Verwijder gebruiker" in het
+moderatie-overzicht een "Geen toegang"-fout geven, ook al is de
+database-kant klaar. Controleer na het draaien van de migratie met:
+
+```sql
+select
+  (select count(*) from pg_proc where proname = 'is_moderator' and pronamespace = 'public'::regnamespace) as has_is_moderator,
+  has_function_privilege('authenticated', 'public.is_moderator()', 'execute') as authenticated_can_call,
+  (select count(*) from pg_policies where tablename = 'reports' and policyname = 'Moderator can view all reports') as reports_select_policy,
+  (select count(*) from pg_policies where tablename = 'reports' and policyname = 'Moderator can update reports') as reports_update_policy,
+  (select count(*) from pg_policies where tablename = 'flagged_content' and policyname = 'Moderator can view flagged content') as flagged_select_policy;
+-- verwacht: 1, true, 1, 1, 1
+```
+
+De migratie zelf bevat ook een zelfcontrolerend `do $$ ... $$`-blok
+onderaan (zelfde aanpak als `0022`-`0028`) dat bij het draaien zelf al
+een specifieke `EXCEPTION` opwerpt zodra iets hiervan niet klopt.
+
+**Getest**: lokaal (los Postgres-schema met minimale stand-ins voor
+`auth.users`/`profiles`/`reports`/`flagged_content`, geen netwerktoegang
+tot Supabase vanuit deze omgeving) - de migratie draait idempotent;
+`is_moderator()` geeft `true` voor het moderator-e-mailadres en `false`
+voor elk ander account; de moderator kan alle rapportages lezen (niet
+alleen de eigen) én de status bijwerken; een gewone gebruiker (de
+melder) kan nog steeds alleen zijn eigen rapportage lezen (de
+pre-existing `0012`-policy blijft ongewijzigd werken) maar kan die
+**niet** updaten (`UPDATE 0`, RLS weigert het stil); de gerapporteerde
+gebruiker zelf ziet 0 rapportages; de moderator kan `flagged_content`
+lezen, een gewone/gemarkeerde gebruiker ziet daar nog steeds 0 rijen
+(ongewijzigd tov. `0027`); een onbevoegde/niet-ingelogde rol (`anon`)
+ziet 0 rijen in beide tabellen. `npx tsc --noEmit` blijft schoon, en een
+`expo export`-bundel bevat de nieuwe schermtekst en precies één
+voorkomen van het moderator-e-mailadres (bevestigt dat
+`constants/moderator.ts` de enige bron is, geen losse kopieën die uit
+elkaar kunnen lopen). De Edge Function zelf (Deno, buiten `tsc`'s
+scope - `supabase/functions/**` staat expliciet in `tsconfig.json`'s
+`exclude`) is handmatig nagelopen op de nieuwe
+`target_user_id`/`is_moderator()`-tak; een end-to-end test daarvan kan
+alleen tegen een echte Supabase-deployment (geen netwerktoegang tot
+Supabase vanuit deze omgeving).
+
+### "Moderatie"-rij niet zichtbaar? Exacte plek + de layout-bug die dit veroorzaakte
+
+De rij staat helemaal onderaan Instellingen: onder het "Account"-blok
+(Mijn profiel bewerken/E-mail wijzigen/Locatie wijzigen/Abonnement
+beheren/Mijn gegevens opvragen), voorbij "Notificatievoorkeuren",
+"Privacy" en "Ondersteuning", **na** "Uitloggen" en "Account
+verwijderen" - als eigen "Moderatie"-sectie met precies één rij
+("Moderatie-overzicht"), vlak boven de (`__DEV__`-only) "Ontwikkelaar"-
+sectie.
+
+Twee eerdere, plausibele-maar-onjuiste verklaringen zijn hier al
+gehard tegen (blijven nuttig als achtergrond, maar waren niet de
+daadwerkelijke oorzaak): `0030_moderator_email_case_insensitive.sql`
+maakt `is_moderator()` én de client-side check hoofdletter-ongevoelig
+(`select email from auth.users where lower(email) = lower('floris.reinders@gmail.com');`
+om je eigen schrijfwijze te checken), en een EAS Update wordt pas
+*gedownload* bij het opstarten en pas *toegepast* bij de eerstvolgende
+herstart daarna (dus altijd twee keer volledig afsluiten en heropenen
+na een nieuwe preview build).
+
+**De daadwerkelijke oorzaak**: `SettingsScreen.tsx` had helemaal geen
+`ScrollView` - alle secties stonden in een platte `View`/Fragment
+direct in `ScreenContainer`'s `flex: 1`-content-`View`. Zolang het
+scherm weinig secties had paste alles nog net binnen de viewport, maar
+met de latere toevoeging van de Moderatie-sectie (en de nog steeds in
+de bundel aanwezige, alleen verborgen "Mijn trainingen"-rij) werd de
+totale inhoud hoger dan het scherm - zonder `ScrollView` is er dan
+simpelweg niets om verder te scrollen, en blijft alles voorbij de
+zichtbare viewport (deels achter de vast gepositioneerde `BottomNav`,
+`position: "absolute"`, zie `components/BottomNav.tsx`) onbereikbaar.
+Opgelost door alle secties in een `<ScrollView
+contentContainerStyle={styles.scrollContent}>` te wrappen (met
+`paddingBottom: BOTTOM_NAV_HEIGHT + spacing.md`, exact hetzelfde
+patroon als `MyTrainingsScreen.tsx` en `ModerationScreen.tsx` al
+gebruikten) - puur een layout-fix, geen gedragswijziging.
+
+## Moderatie-e-mail (nieuwe rapportage)
+
+Naast de in-app meldingen (zie "Meldingencentrum" hieronder) en het
+moderatiescherm zelf (zie "Moderatie-overzicht") krijgt de moderator nu
+ook een **e-mail** zodra er een nieuwe rapportage binnenkomt - zodat die
+niet onopgemerkt blijft tot iemand toevallig het moderatiescherm opent.
+
+**Hoe het werkt**: een database webhook op `INSERT` in `public.reports`
+roept een nieuwe Edge Function aan, `send-moderation-alert`
+(`supabase/functions/send-moderation-alert/index.ts`), die via
+[Resend](https://resend.com) een e-mail stuurt. Dezelfde opzet als
+`send-message-push`/`send-match-push` (zie "Pushmeldingen" hierboven):
+geen gebruikers-JWT (de aanroeper is Postgres, geen ingelogde gebruiker),
+dus authenticatie loopt via een gedeeld geheim in de `x-webhook-secret`-
+header, gecontroleerd tegen de **al bestaande** `DB_WEBHOOK_SECRET`-secret
+(hergebruikt `verifyWebhookSecret()`/`createServiceRoleClient()`/
+`jsonResponse()` uit `_shared/push.ts` - geen nieuw geheim nodig voor dit
+deel).
+
+**Inhoud van de e-mail** (onderwerp "Nieuwe rapportage op Sportfrend"):
+de reden, eventuele details, de naam van de gerapporteerde gebruiker, en
+het tijdstip (in de `Europe/Amsterdam`-tijdzone) - plus de zin dat de
+rapportage binnen 24 uur beoordeeld moet worden via Instellingen →
+Moderatie-overzicht. **Bewust weggelaten** (data-minimalisatie): de
+identiteit van de melder, `match_id`, en alle berichtinhoud - niets
+hiervan staat sowieso in `reports` (zie "RLS-beveiligingsaudit"), dus er
+is ook niets van over te nemen.
+
+**Twee secrets, één al bestaand:**
+
+- `RESEND_API_KEY` en `RESEND_FROM_EMAIL` - al geconfigureerd (zie
+  "Klantenservice-e-mail (Resend)" hierboven), deze functie hergebruikt
+  ze ongewijzigd.
+- **Nieuw**: `MODERATOR_ALERT_EMAIL` - het ontvangende adres. Valt terug
+  op **`info.sportfrend@gmail.com`** als deze secret niet gezet is, dus
+  strikt genomen optioneel:
+  ```bash
+  supabase secrets set MODERATOR_ALERT_EMAIL=info.sportfrend@gmail.com
+  ```
+
+**Handmatige stappen die jij zelf moet zetten:**
+
+1. **Deploy de Edge Function** (`--no-verify-jwt`, zelfde reden als bij
+   de pushmeldingen-functies - er is geen gebruikers-JWT om te
+   verifiëren, `verifyWebhookSecret()` is de echte toegangscontrole):
+   ```bash
+   supabase functions deploy send-moderation-alert --no-verify-jwt
+   ```
+2. **Maak de database webhook handmatig aan in het Supabase-dashboard**
+   (**Database → Webhooks → Create a new webhook**) - dit project heeft
+   het `supabase_functions`-schema niet beschikbaar, dus de SQL-trigger-
+   aanpak uit `0011_push_notifications.sql`
+   (`supabase_functions.http_request(...)`) werkt hier niet; de
+   dashboard-UI zet onder water een equivalente trigger op zonder dat
+   schema nodig te hebben. Vul in:
+   - **Table**: `reports` (schema `public`)
+   - **Events**: alleen **Insert** (niet Update/Delete)
+   - **Type of webhook**: HTTP Request
+   - **HTTP Method**: `POST`
+   - **URL**: `https://duefdlibkeghdskongjd.supabase.co/functions/v1/send-moderation-alert`
+   - **HTTP Headers**: voeg toe
+     - `Content-type: application/json`
+     - `x-webhook-secret: <dezelfde waarde als je al bij DB_WEBHOOK_SECRET
+       hebt gezet voor de pushmeldingen, zie "Pushmeldingen" stap 2>`
+3. Als `DB_WEBHOOK_SECRET` nog nooit gezet is (bijv. als de
+   pushmeldingen-functies nog niet gedeployed zijn), genereer en zet die
+   eerst:
+   ```bash
+   openssl rand -hex 32
+   supabase secrets set DB_WEBHOOK_SECRET=<de gegenereerde waarde>
+   ```
+
+**Testen dat de mail aankomt** (nadat stap 1-3 hierboven zijn gedaan):
+maak vanuit de app een echte rapportage aan (Sporter-profiel of chat →
+"Rapporteren"), of voer rechtstreeks in de Supabase SQL Editor een test-
+insert uit:
+```sql
+insert into public.reports (reporter_id, reported_id, reason, details)
+values ('<jouw eigen user-id>', '<een andere bestaande user-id>', 'Test', 'Testrapportage voor de e-mailkoppeling.');
+```
+Controleer binnen enkele seconden de inbox van `MODERATOR_ALERT_EMAIL`
+(of `info.sportfrend@gmail.com` als die secret niet gezet is). Komt er
+niets aan, bekijk de **Logs** van de `send-moderation-alert`-functie in
+het Supabase-dashboard (Edge Functions → Logs) - een `401` betekent een
+verkeerde/ontbrekende `x-webhook-secret`-header op de webhook, een `502`
+een Resend-foutmelding (zie diezelfde logs voor de exacte Resend-respons).
+
+**Getest**: deze sandbox heeft geen netwerktoegang tot Supabase of
+Resend, dus een echte end-to-end deploy/verzending kon hier niet
+gebeuren - dat is aan jou via de stappen hierboven. Wel lokaal getest met
+een echte Deno-runtime (`deno run`, de daadwerkelijke
+`send-moderation-alert/index.ts`, niet een kopie): de globale `fetch`
+gemonkeypatcht om de Resend- en Supabase-REST-aanroepen te onderscheppen
+(alles daarbuiten gaat gewoon naar het echte `fetch`, inclusief de HTTP-
+requests die de test naar de lokale `Deno.serve`-server zelf stuurt) en
+een import-map die de `@supabase/supabase-js`-importeer vervangt door een
+minimale lokale stub (deze sandbox heeft ook geen toegang tot esm.sh).
+Bevestigd: een verkeerde/ontbrekende `x-webhook-secret` geeft `401` zonder
+dat Resend wordt aangeroepen; een geldige rapportage geeft `200` en
+precies één Resend-aanroep met het juiste onderwerp, de naam van de
+gerapporteerde gebruiker (via een losse profiles-lookup), de reden, de
+details, de 24-uur-zin en de verwijzing naar Moderatie-overzicht; de
+melder (`reporter_id`) komt nergens in de verstuurde e-mail voor (expliciet
+gecontroleerd, data-minimalisatie); `MODERATOR_ALERT_EMAIL` overschrijft
+de `info.sportfrend@gmail.com`-fallback zodra gezet; een rapportage zonder
+`details` laat de "Details"-paragraaf gewoon helemaal weg (geen letterlijke
+"null" in de mail); een onvolledige payload geeft `400`; een ontbrekende
+`RESEND_API_KEY` geeft `500`, beide zonder een Resend-aanroep te wagen; en
+een foutmelding van Resend zelf (getest met een gemockte `429`) geeft
+`502`. `deno check` (met dezelfde import-map-stub) geeft geen
+type-fouten. Geen app-/clientcode gewijzigd in deze taak, dus geen nieuwe
+preview build nodig.
+
+## Meldingencentrum
+
+Het belletje-icoon in `TopBar.tsx` navigeerde voorheen naar `PostsFeedScreen`
+(het prikbord) - niets met meldingen te maken, puur een verkeerde koppeling.
+Dat is nu een echt meldingencentrum: een nieuwe `notifications`-tabel,
+gevuld via database-triggers (nooit door de client zelf - zie de RLS-
+afweging hieronder), en een nieuw scherm (`NotificationsScreen.tsx`).
+
+**`0032_notifications.sql`** - `public.notifications`: `id`, `user_id`
+(ontvanger), `type` (`match`/`message`/`moderation_update`),
+`reference_id`, `is_read`, `created_at`. `reference_id` heeft bewust
+**geen** foreign key - het wijst, afhankelijk van `type`, naar een
+`matches.id` (`match`/`message` - hetzelfde id dat `ChatDetail` als
+`chatId` gebruikt) of een `reports.id` (`moderation_update`). Een FK kan
+hier niet (het zou naar twee verschillende tabellen moeten kunnen wijzen
+afhankelijk van een andere kolom) - zelfde polymorfe patroon als
+`flagged_content.source_table`/`source_id` uit `0027_content_filter.sql`.
+
+Drie triggers vullen de tabel automatisch:
+- `notify_new_match` (`after insert on matches`) - een rij voor **beide**
+  betrokkenen zodra een match ontstaat.
+- `notify_new_message` (`after insert on messages`) - een rij voor de
+  **ontvanger** (nooit de afzender) - zoekt via `match_id` op welke van de
+  twee deelnemers niet de afzender is.
+- `notify_report_resolved` (`after update of status on reports`) - een
+  rij voor de **melder** (`reporter_id`, nooit de gerapporteerde persoon),
+  alleen bij een daadwerkelijke overgang náár `'resolved'`
+  (`old.status is distinct from 'resolved'` - voorkomt een dubbele
+  melding als status om wat voor reden dan ook nogmaals op `'resolved'`
+  gezet zou worden). Dit vuurt vanzelf zodra `ModerationScreen.tsx`'s
+  "Afgehandeld"-knop (`resolveReport()`) de status wijzigt - geen
+  aanpassing daar nodig.
+
+**RLS**: SELECT + UPDATE voor de eigen rijen (`auth.uid() = user_id`) -
+UPDATE is nodig voor "markeer als gelezen" vanuit de client. Bewust
+**geen** INSERT-policy: een melding aanmaken is uitsluitend iets wat de
+(`security definer`) triggerfuncties hierboven doen. Zonder die
+beperking zou een account voor zichzelf nepmeldingen kunnen aanmaken -
+onschuldig op zich (het is toch al hun eigen rij), maar er is ook geen
+enkele legitieme reden voor de client om dit rechtstreeks te doen, dus
+dicht bij de bron gehouden, zelfde redenering als `flagged_content`s
+ontbrekende policies.
+
+**Client-kant**:
+- `lib/api.ts`: `fetchNotifications(userId)` (leest de meldingen, en voor
+  `match`/`message`-rijen in een tweede round trip de bijbehorende matches
+  mét de andere deelnemer erbij - `reference_id` heeft geen FK, dus
+  PostgREST kan dit niet in één query embedden zoals `fetchConnections()`
+  wel kan via een echte FK), `fetchUnreadNotificationCount(userId)`,
+  `markNotificationRead(id)`.
+- `TopBar.tsx`: het belletje-icoon navigeert nu naar `"Notifications"`
+  (was `"PostsFeed"`), met een rood bolletje met het aantal ongelezen
+  meldingen (`fetchUnreadNotificationCount()`, opnieuw opgehaald via
+  `useFocusEffect` - TopBar is geen navigator-scherm zelf, maar zit wel
+  in de render-boom van welk scherm dan ook actief is, dus dit triggert
+  gewoon telkens wanneer dat omliggende scherm focus krijgt).
+- `NotificationsScreen.tsx`: chronologische lijst (nieuwste eerst), met
+  een korte beschrijving per type ("Nieuwe match met [naam]", "Nieuw
+  bericht van [naam]", "Je rapportage is afgehandeld"), een gevulde
+  achtergrond + vet lettertype + rood bolletje voor ongelezen rijen. Een
+  tik markeert altijd als gelezen (optimistisch, direct zichtbaar) én
+  navigeert naar `ChatDetail` voor `match`/`message` - **behalve** voor
+  `moderation_update` (geen chat/match om naartoe te gaan, zoals
+  gevraagd) of wanneer de bijbehorende match niet meer bestaat (bv. na
+  "Vriend verwijderen" - `otherUser` is dan `null`), in welk geval alleen
+  gemarkeerd wordt.
+- **Prikbord blijft bereikbaar**: via Menu → "Berichten"
+  (`MenuScreen.tsx`) - dat bestond al naast de (nu gecorrigeerde)
+  TopBar-koppeling, dus geen nieuwe ingang nodig.
+
+Draai `0032_notifications.sql` op je bestaande database - `0001_init.sql`
+is ook bijgewerkt voor nieuwe installaties. Controleer na het draaien met:
+
+```sql
+select
+  (select count(*) from pg_proc where proname = 'notify_on_new_match' and pronamespace = 'public'::regnamespace) as has_match_fn,
+  (select count(*) from pg_proc where proname = 'notify_on_new_message' and pronamespace = 'public'::regnamespace) as has_message_fn,
+  (select count(*) from pg_proc where proname = 'notify_on_report_resolved' and pronamespace = 'public'::regnamespace) as has_report_fn,
+  (select count(*) from pg_trigger where tgname = 'notify_new_match' and not tgisinternal) as has_match_trigger,
+  (select count(*) from pg_trigger where tgname = 'notify_new_message' and not tgisinternal) as has_message_trigger,
+  (select count(*) from pg_trigger where tgname = 'notify_report_resolved' and not tgisinternal) as has_report_trigger,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'notifications' and cmd = 'SELECT') as select_policy,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'notifications' and cmd = 'UPDATE') as update_policy,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'notifications' and cmd = 'INSERT') as insert_policy;
+-- verwacht: 1, 1, 1, 1, 1, 1, 1, 1, 0
+```
+
+De migratie zelf bevat ook een zelfcontrolerend `do $$ ... $$`-blok
+onderaan (zelfde aanpak als `0022`-`0031`) dat bij het draaien zelf al
+een specifieke `EXCEPTION` opwerpt zodra iets hiervan niet klopt.
+
+**Getest**: lokaal (los Postgres-schema met `profiles`/`matches`/
+`messages`/`reports`/`notifications`, geen netwerktoegang tot Supabase
+vanuit deze omgeving) - de migratie draait idempotent; een nieuwe match
+geeft precies 2 rijen (één per deelnemer); een nieuw bericht geeft
+precies 1 rij, voor de ontvanger, nooit voor de afzender (in beide
+richtingen getest); een rapportage die naar `'resolved'` gaat geeft
+precies 1 rij voor de melder, nooit voor de gerapporteerde gebruiker;
+nogmaals naar `'resolved'` zetten (no-op-overgang) of naar `'dismissed'`
+zetten geeft geen (extra) melding; RLS bevestigd: een gebruiker ziet en
+markeert alleen zijn eigen rijen (niet die van een ander), een directe
+INSERT door `authenticated` wordt geweigerd (geen INSERT-policy - alleen
+de triggerfuncties mogen schrijven), en `anon` ziet niets.
+`npx tsc --noEmit` blijft schoon, en een `expo export`-bundel bevat de
+nieuwe schermtekst ("MELDINGEN", de drie beschrijvingsvarianten) en de
+nieuwe API-functies. Een live tik-test op een device (badge-telling,
+navigatie, gelezen-status) was niet mogelijk in deze sandbox (geen
+netwerktoegang tot Supabase om in te loggen).
 
 ## Scripts
 
 - `npm start` — start de Expo dev server
 - `npm run ios` / `npm run android` / `npm run web`
 - `npm run typecheck` — TypeScript compileren zonder output
+- `npm run sentry:upload-sourcemaps` — upload source maps uit `dist/` naar
+  Sentry (zie "Sentry crash-reporting" hierboven) - vereist
+  `SENTRY_AUTH_TOKEN`/`SENTRY_ORG`/`SENTRY_PROJECT` in de environment
 
 ## Notities
 

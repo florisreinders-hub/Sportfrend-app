@@ -1,10 +1,10 @@
 # Data-inventaris: persoonsgegevens in Sportfrend
 
-Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0014_discover_profiles_location_privacy.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest.
+Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend verzamelt en opslaat, waar (Supabase-database, Supabase Storage, Supabase Auth), hoe lang, en welke externe diensten deze gegevens ook verwerken. Het is gebaseerd op het huidige schema (`supabase/migrations/0001_init.sql` t/m `0036_availability_dayparts.sql`) en de code die daadwerkelijk naar deze tabellen schrijft/leest, inclusief `lib/sentry.ts` (crash-reporting, geen migratie), `lib/contentFilter.ts` (client-side deel van de contentfilter) en `lib/purchases.ts` (RevenueCat, geen migratie).
 
-**Dit is een technische inventaris, geen juridisch document.** Voor een AVG/GDPR-verwerkersregister, verwerkersovereenkomsten met Supabase/Resend/Expo/RevenueCat, en een officiële bewaartermijnenbeleid is juridisch advies nodig - dit document is bedoeld als de feitelijke basis daarvoor.
+**Dit is een technische inventaris, geen juridisch document.** Voor een AVG/GDPR-verwerkersregister, verwerkersovereenkomsten met Supabase/Resend/Expo/RevenueCat/Sentry, en een officiële bewaartermijnenbeleid is juridisch advies nodig - dit document is bedoeld als de feitelijke basis daarvoor.
 
-Laatst bijgewerkt: bij de migratie die exacte locatiegegevens afschermt (zie §5) - `0014_discover_profiles_location_privacy.sql`.
+Laatst bijgewerkt: bij migratie `0036_availability_dayparts.sql` (`profiles.availability_days` opnieuw geclassificeerd als persoonsgegeven, zie §2 `profiles` - was voorheen ten onrechte als "app-instelling" ingedeeld samen met `is_onboarded`/`profile_visible`/`push_notifications_enabled`) - zie §2 (`profiles`).
 
 Gebruikers kunnen zelf een overzicht van (vrijwel) alle onderstaande gegevens opvragen via **Instellingen → "Mijn gegevens opvragen"** - zie README.md §"Mijn gegevens opvragen (recht op inzage/dataportabiliteit)" en `lib/dataExport.ts`.
 
@@ -21,7 +21,7 @@ Buiten de eigen tabellen om beheert Supabase Auth zelf al persoonsgegevens - dit
 | Sessie-/refresh-tokens | Gevoelig (credential) | Tot uitloggen of verlopen |
 | Aanmaakdatum, laatste inlogtijd (Supabase-interne velden) | Persoonsgegeven | Tot accountverwijdering |
 
-Wordt volledig verwijderd door **"Account verwijderen"** in Instellingen (`supabase/functions/delete-account`), via `auth.admin.deleteUser()`. Omdat `profiles.id references auth.users(id) on delete cascade`, cascadeert die ene verwijdering automatisch door naar alle tabellen hieronder.
+Wordt volledig verwijderd door **"Account verwijderen"** in Instellingen (`supabase/functions/delete-account`), via `auth.admin.deleteUser()`. Omdat `profiles.id references auth.users(id) on delete cascade`, cascadeert die ene verwijdering automatisch door naar alle tabellen hieronder. Sinds migratie `0029_moderation_dashboard.sql` kan dezelfde Edge Function ook het account van een ándere gebruiker verwijderen ("Verwijder gebruiker" in het moderatie-overzicht) - alleen wanneer de aanroeper zelf `is_moderator()` doorstaat (server-side herverifieerd via diens eigen JWT, niet vertrouwd op wat de aanvraag beweert).
 
 ---
 
@@ -42,11 +42,15 @@ Eén rij per gebruiker; bevat het overgrote deel van de persoonsgegevens in de a
 | `latitude`, `longitude` | Ja, **exacte GPS-coördinaten** | **Ja, hoog gevoelig** | Tot accountverwijdering of handmatige wijziging - zie §5. Sinds `0014_discover_profiles_location_privacy.sql` **niet meer rechtstreeks uitleesbaar door wie dan ook**, ook niet de eigenaar zelf via een gewone kolom-select - alleen via `get_my_location()` (eigen rij) of als berekende `distance_km` via `discover_profiles()` voor anderen. |
 | `search_radius_km` | Nee (instelling, geen persoonsgegeven op zich) | - | - |
 | `avatar_url`, `photo_url` | Ja (foto van de gebruiker) | Ja (biometrisch-achtig beeldmateriaal) | Zie §3 (Storage) - oude foto's blijven staan tot accountverwijdering |
-| `is_onboarded`, `profile_visible`, `push_notifications_enabled`, `availability_days` | Nee (app-instellingen) | - | - |
+| `is_onboarded`, `profile_visible`, `push_notifications_enabled` | Nee (app-instellingen) | - | - |
+| `availability_days` | Ja (door de gebruiker zelf ingevuld: op welke dag + dagdeel - ochtend/middag/avond, zie `0036_availability_dayparts.sql` - diegene wil sporten) | - | Tot accountverwijdering of handmatige wijziging. Wordt aan niemand anders rechtstreeks getoond - uitsluitend gebruikt als matchingscriterium binnen `discover_profiles()` ("Slimme beschikbaarheids match", Elite-only als zoekfilter, zie `0023_discover_profiles_availability_filter.sql`): een andere gebruiker ziet alleen of jouw profiel wel/niet in hun zoekresultaat verschijnt, nooit welke dagen/dagdelen jij hebt ingevuld. In te zien en te wijzigen via **Instellingen → "Mijn beschikbaarheid"** (alle abonnementen) en opgenomen in "Mijn gegevens opvragen" (`lib/dataExport.ts`). |
 | `expo_push_token` | Ja (apparaat-identifier) | Ja - zie §5 | Tot accountverwijdering of nieuwe registratie (wordt overschreven) |
+| `terms_accepted_at` | Nee (bewijs van toestemming, geen inhoudelijk persoonsgegeven) | - | Tot accountverwijdering - geen eigen verwijder-/wijzigfunctie, bewust (zie hieronder) |
 | `created_at`, `updated_at` | Metadata | - | Tot accountverwijdering |
 
 RLS + kolomrechten: elke rij is leesbaar door alle ingelogde gebruikers **behalve** `expo_push_token` en `latitude`/`longitude` (beide kolom-niveau geblokkeerd voor de `authenticated`-rol, alleen bereikbaar via de `SECURITY DEFINER`-functies hierboven) en behalve wanneer er een blokkade bestaat of `profile_visible = false` (dan alleen zichtbaar voor de eigenaar zelf of een bestaande match). Zie `supabase/migrations/0013_rls_security_audit_fixes.sql` en `0014_discover_profiles_location_privacy.sql`.
+
+Sinds migratie `0033_terms_acceptance.sql`: `terms_accepted_at` legt vast *wanneer* iemand akkoord ging met de algemene voorwaarden en de privacyverklaring (verplicht vinkje bij registratie, zie `RegisterDetailsScreen.tsx`) - `null` voor elk account dat vóór deze migratie al bestond. Gevuld door `handle_new_user()` op het moment dat `auth.users` ontstaat (leest `terms_accepted: true` uit de signup-metadata die de client meegeeft), niet door een latere client-schrijfactie - dat is precies waarom de kolom ook achteraf niet zelf gewijzigd kan worden: de `authenticated`-rol heeft hier wél leesrecht (kolom-niveau, net als de meeste andere profielkolommen) maar géén schrijfrecht meer op deze ene kolom (`revoke update on public.profiles from authenticated` gevolgd door een expliciete `grant update (...)` die `terms_accepted_at` bewust overslaat) - de bestaande rij-niveau RLS-policy ("Users can update their own profile") alleen kan dit niet afdwingen, RLS is niet kolom-bewust. Opgenomen in "Mijn gegevens opvragen" (`lib/dataExport.ts`).
 
 ### `swipes`
 
@@ -112,7 +116,11 @@ Alleen een actief Elite-abonnement (`has_elite_access()`, zie §"subscriptions")
 | `reason`, `details` | Ja, kan gevoelige beschuldigingen bevatten | Ja | idem |
 | `status` | Nee (moderatie-workflow) | - | - |
 
-Alleen de melder zelf kan zijn eigen rapportages lezen; er is geen moderator-rol/dashboard in de app zelf (moderatie gebeurt nu via directe databasetoegang met de service-role key).
+De melder zelf kan zijn eigen rapportages lezen. Sinds migratie `0029_moderation_dashboard.sql` kan daarnaast precies één account (`floris.reinders@gmail.com`, via de `security definer`-functie `public.is_moderator()` - zie README.md §"Moderatie-overzicht") **alle** rapportages lezen én de status bijwerken (bv. naar `resolved`), vanuit een in-app moderatiescherm (`ModerationScreen.tsx`, alleen bereikbaar voor dat ene account). Geen apart rollen-systeem - één hardcoded e-mailadres, uitsluitend server-side afgedwongen via RLS.
+
+Sinds migratie `0026_reports_and_support_daily_limits.sql` mag een account maximaal 10 rapportages per dag aanmaken (`can_submit_report_today()`, afgedwongen op de INSERT-policy) - voorheen onbeperkt, een mogelijk intimidatiemiddel (iemand overspoelen met valse meldingen).
+
+Sinds de Edge Function `send-moderation-alert` triggert elke nieuwe rapportage ook een e-mail naar de moderator via Resend (§4) - zie README.md §"Moderatie-e-mail (nieuwe rapportage)". Alleen de reden, eventuele details, de naam van de gerapporteerde gebruiker en het tijdstip gaan in die mail - niet de identiteit van de melder en niet `match_id` (data-minimalisatie, en dat laatste staat sowieso al niet in `reports` elders gevoelig beschreven).
 
 ### `blocks`
 
@@ -128,11 +136,35 @@ Alleen de melder zelf kan zijn eigen rapportages lezen; er is geen moderator-rol
 
 Sinds migratie `0019_discover_daily_limit.sql` is `plan` niet langer alleen informatief: `discover_profiles()` leest deze kolom (alleen een rij met `status = 'active'` telt mee, dus een gekozen-maar-niet-"betaald" `pending`-plan telt als Basis) om de dagelijkse Ontdekken-aanbevelingslimiet te bepalen (Basis 5/dag, Premium 15/dag, Elite onbeperkt). Sinds migratie `0020_messages_daily_limit.sql` geldt hetzelfde voor de dagelijkse berichtenlimiet (Basis 3/dag, Premium/Elite onbeperkt), afgedwongen op de INSERT-policy van `messages`. Sinds migratie `0021_discover_profiles_plan_filters.sql` bepaalt `plan` ook welke Ontdekken-filters bruikbaar zijn (Basis: alleen Sport + Afstand, tot 50km; Premium/Elite: ook Leeftijd en Niveau, Afstand tot 150km) - eveneens afgedwongen binnen `discover_profiles()` zelf. Sinds migratie `0022_posts_premium_only.sql` bepaalt `plan` ook of het "prikbord" (`posts`/`post_likes`) toegankelijk is: alleen een actief Premium- of Elite-abonnement mag posts lezen, plaatsen of liken - een Basis-account ziet niets van deze tabellen, afgedwongen via `has_posts_access()` in de RLS-policies zelf. Sinds migratie `0023_discover_profiles_availability_filter.sql` bepaalt `plan` ook of de "Slimme beschikbaarheids match"-filter (overlap met `profiles.availability_days`) in `discover_profiles()` wordt toegepast: uitsluitend voor een actief Elite-abonnement - voor Basis én Premium wordt de meegestuurde `p_availability_days`-waarde genegeerd. Sinds migratie `0024_trainings_planner.sql` bepaalt `plan` ook of een rij in `trainings` mag worden *aangemaakt* (`has_elite_access()`, uitsluitend een actief Elite-abonnement) - reageren op een al bestaande training is niet aan `plan` gebonden.
 
+Sinds migratie `0031_subscriptions_webhook_only.sql` is deze tabel **read-only** voor `authenticated` (alleen SELECT op de eigen rij) - de enige schrijver is `supabase/functions/revenuecat-webhook`, die bij elke RevenueCat-gebeurtenis de subscriber server-side opnieuw opvraagt (met een secret die nooit de client bereikt) en op basis daarvan deze rij bijwerkt. Zie README.md §"RevenueCat (Premium/Elite-abonnementen)" voor de volledige architectuur, inclusief waarom de eerdere client-schrijfbare opzet een kwetsbaarheid was (een account kon zichzelf zonder te betalen naar `plan = 'elite'` zetten).
+
 ### `support_requests`
 
 | Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
 |---|---|---|---|
 | `user_id`, `subject`, `message` | Ja, vrije tekst | Potentieel (afhankelijk van inhoud) | Tot accountverwijdering - geen eigen verwijderfunctie |
+
+Sinds migratie `0026_reports_and_support_daily_limits.sql` mag een account maximaal 5 klantenservice-aanvragen per dag aanmaken (`can_submit_support_request_today()`, afgedwongen op de INSERT-policy) - voorheen onbeperkt, en elke aanvraag triggert een echte e-mail via Resend (§4), dus onbeperkt misbruik kostte ook echt geld/quota.
+
+### `flagged_content`
+
+| Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
+|---|---|---|---|
+| `user_id` | Ja | Ja (moderatiegegeven) | Tot accountverwijdering - geen eigen verwijderfunctie |
+| `source_table`, `source_id`, `matched_words`, `reason`, `status` | Nee (verwijst terug naar de bron-rij; `matched_words` is het/de getriggerde woord(en) uit de lijst, geen los stuk vrije tekst) | Matig | idem |
+
+Sinds migratie `0027_content_filter.sql`: automatische controle wanneer `bio` (`profiles`), een chatbericht (`messages`), een post (`posts`) of een trainingsopmerking (`trainings.note`) een woord uit `content_filter_words` bevat (woordgrens-matching, Nederlands + Engels, scheldwoorden/seksueel-expliciet/haatdragend - zie README.md §"Contentfilter"). Sinds migratie `0028_content_filter_hard_block.sql` wordt de content bij een treffer **daadwerkelijk geweigerd** (niet alleen gemarkeerd) - een `BEFORE INSERT/UPDATE`-trigger annuleert de schrijfactie zelf, dus een rij hier betekent voortaan altijd "geweigerde poging", nooit meer "gepubliceerde-maar-gemarkeerde content". Deze weigering is niet te omzeilen (database-niveau, ongeacht wat de client doet); de `content` zelf staat dus nergens meer opgeslagen bij een treffer, alleen het feit dát er een poging was, met welk(e) woord(en). RLS staat aan zonder policies voor een gewone gebruiker: zelfs de geweigerde gebruiker zelf kan zijn eigen rijen hier niet lezen (dat zou het triggerende woord weglekken). Sinds migratie `0029_moderation_dashboard.sql` kan het ene moderator-account (zie `reports` hierboven) deze rijen wel lezen, via het in-app moderatiescherm - de eerste keer dat deze tabel via de app in plaats van alleen via directe service-role-toegang bereikbaar is.
+
+`content_filter_words` (de woordenlijst zelf) bevat geen persoonsgegevens - puur beheerde configuratie, geen gebruikersdata, ook zonder policies voor `authenticated` (onzichtbaar voor de client, alleen bereikbaar via de `security definer`-functie `find_flagged_words()`).
+
+### `notifications`
+
+| Kolom | Persoonsgegeven | Gevoelig | Bewaartermijn |
+|---|---|---|---|
+| `user_id` | Ja (ontvanger van de melding) | - | Tot accountverwijdering - geen eigen verwijderfunctie |
+| `type`, `reference_id`, `is_read`, `created_at` | Nee (verwijst terug naar de bron-rij - een match, bericht of rapportage; geen los stuk vrije tekst) | - | idem |
+
+Sinds migratie `0032_notifications.sql`: het in-app meldingencentrum, gekoppeld aan het belletje-icoon in `TopBar` (dat voorheen ten onrechte naar het prikbord navigeerde). Rijen worden uitsluitend server-side aangemaakt door drie `security definer`-triggerfuncties (`authenticated` heeft geen INSERT-recht op deze tabel): bij een nieuwe match (`notify_on_new_match()`, voor beide betrokkenen), bij een nieuw bericht (`notify_on_new_message()`, alleen voor de ontvanger, niet de afzender) en wanneer een rapportage naar `status = 'resolved'` overgaat (`notify_on_report_resolved()`, alleen voor de melder, niet de gerapporteerde - en niet opnieuw bij een latere no-op update). RLS staat een gebruiker toe uitsluitend zijn eigen rijen te lezen en te markeren als gelezen (`is_read`) - geen INSERT-policy, dus een gebruiker kan zelf nooit een melding aanmaken of aan een ander toekennen. Zie README.md §"Meldingencentrum" voor de volledige architectuur.
 
 ---
 
@@ -153,12 +185,14 @@ Beide buckets zijn publiek leesbaar (`public: true`) - elke URL is opvraagbaar d
 |---|---|---|---|
 | **Supabase** (database, auth, storage, edge functions, realtime) | Alle bovenstaande gegevens - dit ís de primaire opslag | Kernfunctionaliteit van de app | - |
 | **Resend** (`send-support-email`) | Naam, e-mailadres, gebruikers-ID, onderwerp en volledige tekst van een Klantenservice-bericht | E-mail naar `info.sportfrend@gmail.com` sturen bij een support-aanvraag | README.md §"Klantenservice-e-mail (Resend)" |
+| **Resend** (`send-moderation-alert`) | Naam van de gerapporteerde gebruiker, reden, eventuele details, tijdstip van een rapportage - **niet** de identiteit van de melder | E-mail naar `MODERATOR_ALERT_EMAIL` (standaard `info.sportfrend@gmail.com`) sturen bij elke nieuwe rapportage | README.md §"Moderatie-e-mail (nieuwe rapportage)" |
 | **Expo / EAS** (Push-API, `exp.host`) | Expo push-token, verzendernaam (`full_name`), **eerste 120 tekens van een berichttekst**, "Je hebt een match met {naam}", of sport/locatie van een geaccepteerde training (herinnering 2 uur van tevoren) | Pushmeldingen bij nieuwe berichten/matches/trainingsherinneringen | README.md §"Pushmeldingen (Expo Notifications)", §"Trainings & Buddy Planner (Elite-only)" |
 | **Expo / EAS** (Update-hosting, `u.expo.dev`) | Geen gebruikersgegevens - alleen de gecompileerde JS-bundle (code, geen userdata) wordt gehost | OTA-updates van de preview build | - |
-| **RevenueCat** (nog niet live - sandbox-modus) | **Nog niet van toepassing.** Bij een echte integratie: de gebruikers-ID (als RevenueCat `app_user_id`), aankoopgeschiedenis en abonnementsstatus, gedeeld met Apple/Google's eigen betaalinfrastructuur via de store zelf | Toekomstige verwerking van echte betalingen voor Premium/Elite | README.md §"RevenueCat (Betalen-scherm)", `lib/purchases.ts` |
-| **Apple / Google** (locatietoestemming, pushregistratie, toekomstige in-app-aankopen) | Locatietoestemming en pushregistratie lopen via het besturingssysteem zelf; app-storegegevens zodra RevenueCat live gaat | Platform-services | - |
+| **RevenueCat** (`react-native-purchases`, `supabase/functions/revenuecat-webhook`) | De Supabase gebruikers-ID (als RevenueCat `app_user_id` - `Purchases.logIn()`), aankoop-/abonnementsstatus (welk entitlement/product, verloopdatum), apparaat-/platforminformatie die de SDK zelf verzamelt voor attributie. **Geen** creditcard-/betaalgegevens - die lopen uitsluitend via Apple/Google's eigen betaalinfrastructuur, RevenueCat en deze app zien alleen het resultaat (actief/niet actief) | Premium/Elite-abonnementen: aankoop, entitlement-toekenning, en de server-side sync naar `subscriptions` | README.md §"RevenueCat (Premium/Elite-abonnementen)", `lib/purchases.ts`, `0031_subscriptions_webhook_only.sql` |
+| **Apple / Google** (App Store / Google Play, in-app-aankopen) | Betaalgegevens en aankooptransacties lopen volledig via de store zelf - noch Sportfrend noch RevenueCat ziet ooit een kaartnummer. Ook locatietoestemming en pushregistratie lopen via het besturingssysteem | Platform-services, betaalverwerking | - |
+| **Sentry** (crash-reporting, `lib/sentry.ts`) | Crash-/foutgegevens: foutmelding + stacktrace, device-model, OS-versie, app-versie/build, scherm-/tik-breadcrumbs vóór de crash. **Geen** IP-adres of andere default-PII (`sendDefaultPii` staat niet aan) en geen gebruikers-ID/e-mailadres - er wordt nergens `Sentry.setUser(...)` aangeroepen | Crashes/onafgehandelde fouten opsporen na lancering | README.md §"Sentry crash-reporting" |
 
-Geen analytics-, crash-reporting- of trackingdiensten (bijv. Sentry, Amplitude, Mixpanel) zijn op dit moment in het project geïntegreerd - geverifieerd via `package.json`.
+Geen analytics- of trackingdiensten (bijv. Amplitude, Mixpanel) zijn op dit moment in het project geïntegreerd - geverifieerd via `package.json`. Sentry (zie hierboven) is uitsluitend crash-reporting, geen gedragsanalytics.
 
 ---
 

@@ -39,6 +39,7 @@ import {
   updateTrainingProposal,
   uploadChatImage,
 } from "@/lib/api";
+import { checkContentFilter, showContentFilterBlockedAlert } from "@/lib/contentFilter";
 import { ReportModal } from "@/components/ReportModal";
 import { TrainingCard } from "@/components/TrainingCard";
 import { TrainingFormModal } from "@/components/TrainingFormModal";
@@ -235,6 +236,11 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
   const onSend = async () => {
     if (!draft.trim() || !session?.user || sending) return;
     const body = draft.trim();
+    const flagged = await checkContentFilter(body);
+    if (flagged.length > 0) {
+      showContentFilterBlockedAlert("bericht", "verstuurd");
+      return;
+    }
     setDraft("");
     setSending(true);
     try {
@@ -263,6 +269,14 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
       quality: 0.7,
     });
     if (result.canceled || !result.assets[0]) return;
+
+    if (draft.trim()) {
+      const flagged = await checkContentFilter(draft);
+      if (flagged.length > 0) {
+        showContentFilterBlockedAlert("bericht", "verstuurd");
+        return;
+      }
+    }
 
     setUploadingImage(true);
     try {
@@ -321,8 +335,14 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
         <Pressable onPress={() => navigation.goBack()} hitSlop={8}>
           <Ionicons name="arrow-back" size={24} color={colors.black} />
         </Pressable>
-        <Image source={{ uri: photo }} style={styles.avatar} />
-        <Text style={styles.name}>{name}</Text>
+        <Pressable
+          style={({ pressed }) => [styles.profileLink, pressed && styles.profileLinkPressed]}
+          onPress={() => navigation.navigate("SporterProfile", { sporterId: otherUserId })}
+          hitSlop={4}
+        >
+          <Image source={{ uri: photo }} style={styles.avatar} />
+          <Text style={styles.name}>{name}</Text>
+        </Pressable>
         <View style={{ flex: 1 }} />
         <Pressable onPress={onOpenMenu} hitSlop={8}>
           <Ionicons name="ellipsis-vertical" size={22} color={colors.black} />
@@ -477,6 +497,14 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+  },
+  profileLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  profileLinkPressed: {
+    opacity: 0.6,
   },
   avatar: {
     width: 32,

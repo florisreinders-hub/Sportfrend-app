@@ -25,6 +25,7 @@ create table if not exists public.profiles (
   profile_visible boolean not null default true,
   availability_days text[] not null default '{}',
   expo_push_token text,
+  terms_accepted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -225,16 +226,30 @@ create trigger set_subscriptions_updated_at
   for each row execute function public.set_updated_at();
 
 -- Auto-create a profile row whenever a new auth user signs up.
+-- terms_accepted_at: see 0033_terms_acceptance.sql for the full
+-- explanation - RegisterDetailsScreen.tsx passes `terms_accepted: true`
+-- as signup metadata only once its required checkbox is ticked, which
+-- lands in auth.users.raw_user_meta_data before this trigger fires.
 create or replace function public.handle_new_user()
-returns trigger as $$
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
 begin
-  insert into public.profiles (id) values (new.id)
+  insert into public.profiles (id, terms_accepted_at) values (
+    new.id,
+    case
+      when (new.raw_user_meta_data ->> 'terms_accepted')::boolean is true then now()
+      else null
+    end
+  )
   on conflict (id) do nothing;
   insert into public.subscriptions (user_id, plan) values (new.id, 'basis')
   on conflict (user_id) do nothing;
   return new;
 end;
-$$ language plpgsql security definer;
+$$;
 
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
@@ -277,7 +292,7 @@ revoke select on public.profiles from authenticated;
 grant select (
   id, full_name, birthdate, gender, bio, sport, level, city,
   search_radius_km, avatar_url, photo_url, is_onboarded, push_notifications_enabled,
-  profile_visible, availability_days, created_at, updated_at
+  profile_visible, availability_days, terms_accepted_at, created_at, updated_at
 ) on public.profiles to authenticated;
 
 -- Blocked users are hidden from each other everywhere profiles are read
@@ -319,6 +334,26 @@ create policy "Users can insert their own profile"
   on public.profiles for insert
   to authenticated
   with check (auth.uid() = id);
+
+-- terms_accepted_at: readable (see the SELECT grant above, which already
+-- includes it) but never client-writable, even on your own row - RLS's
+-- "Users can update their own profile" policy above is per-row, not
+-- per-column, so this needs the same kolomrechten mechanism as
+-- latitude/longitude's SELECT restriction further down this file. See
+-- 0033_terms_acceptance.sql for the full explanation; this mirrors that
+-- migration's revoke/grant for a fresh install - including
+-- expo_push_token, which the create table statement above already
+-- defines, unlike on the pre-existing production database
+-- 0033_terms_acceptance.sql itself targets (that column was never
+-- actually added there - see that file's own comments), so the two
+-- grant lists intentionally differ by exactly that one column.
+revoke update on public.profiles from authenticated;
+grant update (
+  id, full_name, birthdate, gender, bio, sport, level, city,
+  latitude, longitude, search_radius_km, avatar_url, photo_url,
+  is_onboarded, push_notifications_enabled, profile_visible,
+  availability_days, expo_push_token, created_at, updated_at
+) on public.profiles to authenticated;
 
 create policy "Users manage their own swipes"
   on public.swipes for all
@@ -613,26 +648,141 @@ create policy "Users can view their own subscription"
   to authenticated
   using (auth.uid() = user_id);
 
--- selectPendingPlan()/upsertSubscription() (lib/api.ts) both .upsert() -
--- Postgres compiles that to INSERT ... ON CONFLICT DO UPDATE, which needs
--- INSERT privilege even when the row already exists and the statement
--- ends up just updating it. Without this policy that upsert is blocked by
--- RLS unconditionally - see supabase/migrations/0007_subscriptions_insert_policy.sql.
-create policy "Users can insert their own subscription"
-  on public.subscriptions for insert
-  to authenticated
-  with check (auth.uid() = user_id);
+-- No INSERT/UPDATE policy for `authenticated` here on purpose (see
+-- 0031_subscriptions_webhook_only.sql for the full write-up, needed for
+-- databases that already existed before this) - RevenueCat's webhook
+-- (supabase/functions/revenuecat-webhook), running with the service-role
+-- key, is the only writer of this table. A client-writable policy here
+-- would let an account set its own plan to 'elite' directly, without ever
+-- paying.
 
-create policy "Users can update their own subscription"
-  on public.subscriptions for update
-  to authenticated
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
+-- Flat (not plan-dependent) daily caps on reports/support_requests - see
+-- 0026_reports_and_support_daily_limits.sql for the full writeup. Unlike
+-- messages_plan_daily_limit()/discover_plan_daily_limit(), these two are
+-- pure abuse-prevention (false reports, Resend e-mail spend), not a
+-- paid-tier perk, so every plan gets the same limit.
+create or replace function public.reports_daily_limit()
+returns int
+language sql
+immutable
+as $$
+  select 10;
+$$;
+
+create or replace function public.can_submit_report_today()
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_used_today int;
+begin
+  if v_uid is null then
+    return false;
+  end if;
+
+  select count(*) into v_used_today
+  from public.reports r
+  where r.reporter_id = v_uid and r.created_at::date = current_date;
+
+  return v_used_today < public.reports_daily_limit();
+end;
+$$;
+
+create or replace function public.reports_daily_status()
+returns table (daily_limit int, used_today int, remaining int)
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_daily_limit int := public.reports_daily_limit();
+  v_used_today int;
+begin
+  if v_uid is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select count(*) into v_used_today
+  from public.reports r
+  where r.reporter_id = v_uid and r.created_at::date = current_date;
+
+  return query select v_daily_limit, v_used_today, greatest(v_daily_limit - v_used_today, 0);
+end;
+$$;
+
+grant execute on function public.reports_daily_limit() to authenticated;
+grant execute on function public.can_submit_report_today() to authenticated;
+grant execute on function public.reports_daily_status() to authenticated;
+
+create or replace function public.support_requests_daily_limit()
+returns int
+language sql
+immutable
+as $$
+  select 5;
+$$;
+
+create or replace function public.can_submit_support_request_today()
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_used_today int;
+begin
+  if v_uid is null then
+    return false;
+  end if;
+
+  select count(*) into v_used_today
+  from public.support_requests sr
+  where sr.user_id = v_uid and sr.created_at::date = current_date;
+
+  return v_used_today < public.support_requests_daily_limit();
+end;
+$$;
+
+create or replace function public.support_requests_daily_status()
+returns table (daily_limit int, used_today int, remaining int)
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_daily_limit int := public.support_requests_daily_limit();
+  v_used_today int;
+begin
+  if v_uid is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select count(*) into v_used_today
+  from public.support_requests sr
+  where sr.user_id = v_uid and sr.created_at::date = current_date;
+
+  return query select v_daily_limit, v_used_today, greatest(v_daily_limit - v_used_today, 0);
+end;
+$$;
+
+grant execute on function public.support_requests_daily_limit() to authenticated;
+grant execute on function public.can_submit_support_request_today() to authenticated;
+grant execute on function public.support_requests_daily_status() to authenticated;
 
 create policy "Users can insert their own support requests"
   on public.support_requests for insert
   to authenticated
-  with check (auth.uid() = user_id);
+  with check (auth.uid() = user_id and public.can_submit_support_request_today());
 
 create policy "Users can view their own support requests"
   on public.support_requests for select
@@ -642,7 +792,7 @@ create policy "Users can view their own support requests"
 create policy "Users can create their own reports"
   on public.reports for insert
   to authenticated
-  with check (auth.uid() = reporter_id);
+  with check (auth.uid() = reporter_id and public.can_submit_report_today());
 
 create policy "Users can view their own reports"
   on public.reports for select
@@ -1211,3 +1361,366 @@ revoke execute on function public.claim_training_reminders(int) from public, ano
 grant execute on function public.claim_training_reminders(int) to service_role;
 
 alter publication supabase_realtime add table public.trainings;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Content filter (aanstootgevende taal): zie 0027_content_filter.sql voor
+-- de volledige uitleg/afweging (waarschuwen + markeren, niet hard
+-- blokkeren - Apple App Store Review Guideline 1.2). Alleen mirrored hier
+-- voor nieuwe installaties.
+-- ─────────────────────────────────────────────────────────────────────────
+create table if not exists public.content_filter_words (
+  id uuid primary key default uuid_generate_v4(),
+  word text not null,
+  language text not null check (language in ('nl', 'en')),
+  category text not null check (category in ('scheldwoord', 'seksueel', 'haatdragend')),
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  unique (word, language)
+);
+
+alter table public.content_filter_words enable row level security;
+-- Bewust geen policies voor `authenticated` - deze tabel is alleen
+-- beheerd via directe SQL-toegang (SQL editor/migraties), niet via de
+-- app. find_flagged_words() hieronder is `security definer` en leest hem
+-- daarom zonder dat `authenticated` er zelf SELECT op nodig heeft - de
+-- ruwe woordenlijst blijft zo onzichtbaar voor de client (triviaal te
+-- omzeilen als je hem kent), terwijl de check-functie er wél gebruik van
+-- kan maken.
+
+-- Basisset: Nederlands + Engels, scheldwoorden/seksueel expliciet/
+-- haatdragend. Bewust compact (geen duizenden woorden) om valse
+-- positieven te beperken - uitbreiden kan altijd via een simpele insert,
+-- zie de "Uitbreiden" sectie in README.md.
+insert into public.content_filter_words (word, language, category) values
+  -- Nederlands - scheldwoorden
+  ('klootzak', 'nl', 'scheldwoord'),
+  ('klootviool', 'nl', 'scheldwoord'),
+  ('kutwijf', 'nl', 'scheldwoord'),
+  ('kuttenkop', 'nl', 'scheldwoord'),
+  ('hoerenjong', 'nl', 'scheldwoord'),
+  ('rotzak', 'nl', 'scheldwoord'),
+  ('kankerlijer', 'nl', 'scheldwoord'),
+  ('kankerhoer', 'nl', 'scheldwoord'),
+  ('teringlijer', 'nl', 'scheldwoord'),
+  ('tyfuslijer', 'nl', 'scheldwoord'),
+  ('klote', 'nl', 'scheldwoord'),
+  ('kut', 'nl', 'scheldwoord'),
+  ('lul', 'nl', 'scheldwoord'),
+  ('eikel', 'nl', 'scheldwoord'),
+  ('trut', 'nl', 'scheldwoord'),
+  ('hoer', 'nl', 'scheldwoord'),
+  ('slet', 'nl', 'scheldwoord'),
+  ('klootzakken', 'nl', 'scheldwoord'),
+  -- Nederlands - seksueel expliciet
+  ('neuken', 'nl', 'seksueel'),
+  ('neuk', 'nl', 'seksueel'),
+  ('geneukt', 'nl', 'seksueel'),
+  ('sperma', 'nl', 'seksueel'),
+  ('kutneuken', 'nl', 'seksueel'),
+  ('pornoslet', 'nl', 'seksueel'),
+  ('tieten', 'nl', 'seksueel'),
+  -- Nederlands - haatdragend
+  ('mongool', 'nl', 'haatdragend'),
+  ('kankerhomo', 'nl', 'haatdragend'),
+  ('flikker', 'nl', 'haatdragend'),
+  ('kutmarokkaan', 'nl', 'haatdragend'),
+  ('kankerjood', 'nl', 'haatdragend'),
+  ('kutneger', 'nl', 'haatdragend'),
+  ('scheldkanker', 'nl', 'haatdragend'),
+  -- Engels - scheldwoorden
+  ('fuck', 'en', 'scheldwoord'),
+  ('fucker', 'en', 'scheldwoord'),
+  ('motherfucker', 'en', 'scheldwoord'),
+  ('bitch', 'en', 'scheldwoord'),
+  ('asshole', 'en', 'scheldwoord'),
+  ('bastard', 'en', 'scheldwoord'),
+  ('dumbass', 'en', 'scheldwoord'),
+  ('douchebag', 'en', 'scheldwoord'),
+  ('piece of shit', 'en', 'scheldwoord'),
+  ('shithead', 'en', 'scheldwoord'),
+  -- Engels - seksueel expliciet
+  ('cunt', 'en', 'seksueel'),
+  ('cock', 'en', 'seksueel'),
+  ('dick', 'en', 'seksueel'),
+  ('pussy', 'en', 'seksueel'),
+  ('whore', 'en', 'seksueel'),
+  ('slut', 'en', 'seksueel'),
+  ('cum', 'en', 'seksueel'),
+  ('blowjob', 'en', 'seksueel'),
+  ('handjob', 'en', 'seksueel'),
+  -- Engels - haatdragend
+  ('nigger', 'en', 'haatdragend'),
+  ('nigga', 'en', 'haatdragend'),
+  ('faggot', 'en', 'haatdragend'),
+  ('retard', 'en', 'haatdragend'),
+  ('retarded', 'en', 'haatdragend'),
+  ('spic', 'en', 'haatdragend'),
+  ('chink', 'en', 'haatdragend'),
+  ('kike', 'en', 'haatdragend'),
+  ('tranny', 'en', 'haatdragend')
+on conflict (word, language) do nothing;
+
+-- find_flagged_words: het eigenlijke matchen - woordgrens-matching
+-- (\m...\M, Postgres' regex-equivalent van "heel woord", niet zomaar een
+-- kale substring) om overmatige valse positieven te beperken (bv. "ras"
+-- matcht niet binnen "raster"). `security definer` zodat `authenticated`
+-- dit kan aanroepen (voor de client-side waarschuwing vóór versturen)
+-- zonder zelf SELECT op de ruwe woordenlijst nodig te hebben.
+create or replace function public.find_flagged_words(p_text text)
+returns text[]
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select coalesce(array_agg(distinct w.word), '{}'::text[])
+  from public.content_filter_words w
+  where w.active
+    and p_text is not null
+    and p_text ~* ('\m' || regexp_replace(w.word, '([.^$*+?()\[\]{}\\|])', '\\\1', 'g') || '\M');
+$$;
+
+grant execute on function public.find_flagged_words(text) to authenticated;
+
+-- flagged_content: audit trail van elke keer dat find_flagged_words() een
+-- treffer gaf bij het opslaan van bio/bericht/post/trainingsopmerking -
+-- zie de "Afweging" hierboven voor waarom dit content niet weigert, en
+-- de "Hard afgedwongen" alinea voor waarom dit wél altijd gebeurt,
+-- ongeacht wat de client doet.
+create table if not exists public.flagged_content (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  source_table text not null check (source_table in ('profiles', 'messages', 'posts', 'trainings')),
+  source_id uuid not null,
+  matched_words text[] not null,
+  reason text,
+  status text not null default 'pending' check (status in ('pending', 'reviewed', 'dismissed')),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists flagged_content_status_idx on public.flagged_content (status);
+create index if not exists flagged_content_user_id_idx on public.flagged_content (user_id);
+
+alter table public.flagged_content enable row level security;
+-- Bewust geen policies - net als `reports` op dit moment ("Alleen de
+-- melder zelf kan zijn eigen rapportages lezen" geldt hier zelfs niet:
+-- een gebruiker mag zijn eigen flags niet eens zien, dat zou het
+-- filterwoord weglekken) is dit uitsluitend voor moderatie via directe
+-- service-role-toegang, tot taak 2 (moderatie-overzicht) een eigen
+-- moderator-gerichte policy toevoegt.
+
+-- flag_content_if_needed: de trigger-functie zelf - kijkt welke tabel
+-- hem aanriep (TG_TABLE_NAME) om de juiste tekstkolom en eigenaar-kolom
+-- te pakken, en schrijft bij een treffer een rij naar flagged_content.
+-- Sinds 0028_content_filter_hard_block.sql: BEFORE-trigger die bij een
+-- treffer `return NULL` geeft (annuleert de INSERT/UPDATE, geen fout die
+-- ook de flagged_content-insert zou terugdraaien) - hard blokkeren, niet
+-- meer alleen markeren. Zie 0028 voor de volledige uitleg.
+create or replace function public.flag_content_if_needed()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_text text;
+  v_user_id uuid;
+  v_matched text[];
+begin
+  if TG_TABLE_NAME = 'messages' then
+    v_text := NEW.body;
+    v_user_id := NEW.sender_id;
+  elsif TG_TABLE_NAME = 'posts' then
+    v_text := NEW.body;
+    v_user_id := NEW.author_id;
+  elsif TG_TABLE_NAME = 'trainings' then
+    v_text := NEW.note;
+    v_user_id := NEW.created_by;
+  elsif TG_TABLE_NAME = 'profiles' then
+    v_text := NEW.bio;
+    v_user_id := NEW.id;
+  else
+    raise exception 'flag_content_if_needed() is not configured for table %', TG_TABLE_NAME;
+  end if;
+
+  if v_text is null then
+    return NEW;
+  end if;
+
+  v_matched := public.find_flagged_words(v_text);
+
+  if array_length(v_matched, 1) > 0 then
+    insert into public.flagged_content (user_id, source_table, source_id, matched_words, reason)
+    values (v_user_id, TG_TABLE_NAME, NEW.id, v_matched, 'Automatisch geweigerd door woordenlijst-filter (hard block)');
+
+    return NULL;
+  end if;
+
+  return NEW;
+end;
+$$;
+
+-- BEFORE (niet AFTER): annuleert de rij zelf bij een treffer. Alleen op
+-- INSERT, en op UPDATE alleen wanneer de relevante tekstkolom daadwerkelijk
+-- in de UPDATE-statement zit (`update of <kolom>`) - zonder dat zou bv.
+-- elke keer dat iemand zijn Ontdekken-zichtbaarheid toggelt (een heel
+-- andere kolom op profiles) een overbodige herscan van de bio triggeren.
+drop trigger if exists flag_bio_content on public.profiles;
+create trigger flag_bio_content
+  before insert or update of bio on public.profiles
+  for each row execute function public.flag_content_if_needed();
+
+drop trigger if exists flag_message_content on public.messages;
+create trigger flag_message_content
+  before insert on public.messages
+  for each row execute function public.flag_content_if_needed();
+
+drop trigger if exists flag_post_content on public.posts;
+create trigger flag_post_content
+  before insert on public.posts
+  for each row execute function public.flag_content_if_needed();
+
+drop trigger if exists flag_training_content on public.trainings;
+create trigger flag_training_content
+  before insert or update of note on public.trainings
+  for each row execute function public.flag_content_if_needed();
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Moderatie-overzicht: zie 0029_moderation_dashboard.sql voor de volledige
+-- uitleg. is_moderator() is de enige plek waar het moderator-e-mailadres
+-- staat (geen rollen-tabel) - alleen mirrored hier voor nieuwe installaties.
+-- lower(...) op beide kanten (sinds 0030_moderator_email_case_insensitive.sql)
+-- zodat een verschil in hoofdlettergebruik dit nooit stilletjes laat falen.
+-- ─────────────────────────────────────────────────────────────────────────
+create or replace function public.is_moderator()
+returns boolean
+language sql
+security definer
+set search_path = public, auth
+stable
+as $$
+  select exists (
+    select 1 from auth.users
+    where id = auth.uid()
+      and lower(email) = lower('floris.reinders@gmail.com')
+  );
+$$;
+
+grant execute on function public.is_moderator() to authenticated;
+
+drop policy if exists "Moderator can view all reports" on public.reports;
+create policy "Moderator can view all reports"
+  on public.reports for select
+  to authenticated
+  using (public.is_moderator());
+
+drop policy if exists "Moderator can update reports" on public.reports;
+create policy "Moderator can update reports"
+  on public.reports for update
+  to authenticated
+  using (public.is_moderator())
+  with check (public.is_moderator());
+
+drop policy if exists "Moderator can view flagged content" on public.flagged_content;
+create policy "Moderator can view flagged content"
+  on public.flagged_content for select
+  to authenticated
+  using (public.is_moderator());
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Meldingencentrum: zie 0032_notifications.sql voor de volledige uitleg -
+-- alleen mirrored hier voor nieuwe installaties.
+-- ─────────────────────────────────────────────────────────────────────────
+create table if not exists public.notifications (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  type text not null check (type in ('match', 'message', 'moderation_update')),
+  reference_id uuid not null,
+  is_read boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists notifications_user_id_created_at_idx on public.notifications (user_id, created_at desc);
+create index if not exists notifications_user_id_unread_idx on public.notifications (user_id) where not is_read;
+
+alter table public.notifications enable row level security;
+
+drop policy if exists "Users can view their own notifications" on public.notifications;
+create policy "Users can view their own notifications"
+  on public.notifications for select
+  to authenticated
+  using (auth.uid() = user_id);
+
+drop policy if exists "Users can update their own notifications" on public.notifications;
+create policy "Users can update their own notifications"
+  on public.notifications for update
+  to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create or replace function public.notify_on_new_match()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.notifications (user_id, type, reference_id) values
+    (new.user_a_id, 'match', new.id),
+    (new.user_b_id, 'match', new.id);
+  return new;
+end;
+$$;
+
+drop trigger if exists notify_new_match on public.matches;
+create trigger notify_new_match
+  after insert on public.matches
+  for each row execute function public.notify_on_new_match();
+
+create or replace function public.notify_on_new_message()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_receiver_id uuid;
+begin
+  select case when m.user_a_id = new.sender_id then m.user_b_id else m.user_a_id end
+    into v_receiver_id
+  from public.matches m
+  where m.id = new.match_id;
+
+  if v_receiver_id is not null then
+    insert into public.notifications (user_id, type, reference_id)
+    values (v_receiver_id, 'message', new.match_id);
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists notify_new_message on public.messages;
+create trigger notify_new_message
+  after insert on public.messages
+  for each row execute function public.notify_on_new_message();
+
+create or replace function public.notify_on_report_resolved()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.status = 'resolved' and old.status is distinct from 'resolved' then
+    insert into public.notifications (user_id, type, reference_id)
+    values (new.reporter_id, 'moderation_update', new.id);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists notify_report_resolved on public.reports;
+create trigger notify_report_resolved
+  after update of status on public.reports
+  for each row execute function public.notify_on_report_resolved();

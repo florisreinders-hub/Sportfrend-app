@@ -15,14 +15,17 @@ export type RootStackParamList = {
   ChatList: undefined;
   ChatDetail: { chatId: string; name: string; photo: string; otherUserId: string };
   PostsFeed: undefined;
+  Notifications: undefined;
   NewPost: { eventDate?: string } | undefined;
   Settings: undefined;
   Pricing: undefined;
-  Payment: { plan: "premium" | "elite" };
   Helpdesk: undefined;
   Faq: undefined;
   Support: undefined;
   ChangeEmail: undefined;
   DataExport: undefined;
   MyTrainings: undefined;
+  Moderation: undefined;
+  Availability: undefined;
+  Onboarding: undefined;
 };

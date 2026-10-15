@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from "react";
+import * as Sentry from "@sentry/react-native";
 import { StatusBar } from "expo-status-bar";
 import * as Linking from "expo-linking";
 import { NavigationContainer, useNavigationContainerRef } from "@react-navigation/native";
@@ -19,9 +20,22 @@ import { FilterProvider } from "@/lib/FilterContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { handleAuthDeepLink } from "@/lib/deepLinking";
+import { initSentry } from "@/lib/sentry";
+import { configurePurchases } from "@/lib/purchases";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 
-export default function App() {
+// Module-level, not inside the component - must run once, before anything
+// else in the app can throw (including the very first render), and doesn't
+// depend on any component's lifecycle.
+initSentry();
+
+// Also module-level: configure() only needs to run once, and AuthContext's
+// identifyPurchaser()/resetPurchaserIdentity() (called on sign-in/out) and
+// its CustomerInfo listener both assume the SDK is already configured by
+// the time AuthProvider's own effect runs.
+configurePurchases();
+
+function App() {
   const [fontsLoaded, fontError] = useFonts({
     RubikMonoOne_400Regular,
     Ruluko_400Regular,
@@ -111,6 +125,13 @@ export default function App() {
     </ErrorBoundary>
   );
 }
+
+// Sentry.wrap() adds its own top-level error boundary (feeds crashes it
+// catches into the same pipeline as the global handlers from initSentry()
+// above) and touch-event breadcrumbs - on top of, not instead of, the
+// custom ErrorBoundary already inside App() above, which stays in place
+// for its own Dutch-language fallback UI.
+export default Sentry.wrap(App);
 
 const styles = StyleSheet.create({
   center: {

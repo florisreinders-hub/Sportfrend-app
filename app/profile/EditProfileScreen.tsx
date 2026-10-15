@@ -16,6 +16,7 @@ import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { getDataErrorMessage, PROFILE_COLUMNS, Profile } from "@/lib/api";
 import { sportPhotoPlaceholder } from "@/constants/placeholders";
+import { checkContentFilter, showContentFilterBlockedAlert } from "@/lib/contentFilter";
 
 type Props = NativeStackScreenProps<RootStackParamList, "EditProfile">;
 
@@ -106,15 +107,27 @@ export default function EditProfileScreen({ navigation }: Props) {
 
   const onSave = async () => {
     if (!session?.user) return;
+    const flagged = await checkContentFilter(bio);
+    if (flagged.length > 0) {
+      showContentFilterBlockedAlert("bio", "opgeslagen");
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     // upsert (not update): a profile row might not exist yet for this
     // user for whatever reason - see LocationSetupScreen's saveLocation
     // for the same reasoning (a plain .update() would silently match zero
     // rows and "succeed" without writing anything in that case).
+    // .select().single() (not a bare upsert): the only way to detect a
+    // server-side content-filter rejection (0028_content_filter_hard_block.sql's
+    // BEFORE trigger cancels the row via `return NULL`, which is otherwise
+    // indistinguishable from success - a plain upsert without .select()
+    // always returns `data: null` either way).
     const { error } = await supabase
       .from("profiles")
-      .upsert({ id: session.user.id, full_name: fullName, sport, level, city, bio, photo_url: photoUrl }, { onConflict: "id" });
+      .upsert({ id: session.user.id, full_name: fullName, sport, level, city, bio, photo_url: photoUrl }, { onConflict: "id" })
+      .select("id")
+      .single();
     setSaving(false);
     if (error) {
       setSaveError(getDataErrorMessage(error));

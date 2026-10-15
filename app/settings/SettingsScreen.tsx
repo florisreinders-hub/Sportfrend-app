@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Switch, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
@@ -7,16 +7,38 @@ import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
-import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
+import { BOTTOM_NAV_HEIGHT, colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { deleteAccount, signOut } from "@/lib/auth";
 import { fetchProfileSettings, getDataErrorMessage, updateProfileSettings } from "@/lib/api";
+import { MODERATOR_EMAIL } from "@/constants/moderator";
+import { presentCustomerCenter } from "@/lib/purchases";
+import { openLegalUrl, PRIVACY_URL, TERMS_URL } from "@/constants/legal";
+import { ONBOARDING_SETTINGS_ROW_LABEL } from "@/constants/onboarding";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Settings">;
 
+// Tijdelijk verborgen op verzoek (de rest van de Trainings & Buddy
+// Planner-functie - "Plan een training" in de chat, voorstellen/
+// accepteren/afwijzen - blijft gewoon actief; alleen dit
+// overzichtsscherm in Instellingen is uit het zicht). Zet terug op
+// `true` om de rij weer te tonen - de route/het scherm zelf
+// (MyTrainingsScreen, navigation/types.ts's "MyTrainings") is niet
+// verwijderd.
+const SHOW_MY_TRAININGS_ROW = false;
+
 export default function SettingsScreen({ navigation }: Props) {
-  const { session } = useAuth();
+  const { session, plan } = useAuth();
   const userId = session?.user?.id;
+  // .toLowerCase() aan beide kanten: Supabase Auth normaliseert een
+  // e-mailadres doorgaans naar lowercase, maar een exacte === zonder dit
+  // zou bij de kleinste afwijking (bv. een adres dat ooit met een
+  // hoofdletter is ingevoerd) deze rij stilletjes nooit tonen, zonder
+  // enige foutmelding - precies zo'n stil-falende vergelijking is de
+  // dienst geweest bij eerdere bugs in dit project. is_moderator() in de
+  // database (0030_moderator_email_case_insensitive.sql) is op dezelfde
+  // manier gehard, want dat is de échte grens - dit hier is alleen UX.
+  const isModerator = session?.user?.email?.toLowerCase() === MODERATOR_EMAIL.toLowerCase();
   const [loading, setLoading] = useState(true);
   const [pushEnabled, setPushEnabled] = useState(true);
   const [profileVisible, setProfileVisible] = useState(true);
@@ -66,6 +88,24 @@ export default function SettingsScreen({ navigation }: Props) {
     }
   };
 
+  // "Abonnement beheren": Pricing (choose/upgrade) for a Basis account,
+  // RevenueCat's own Customer Center (cancel, change plan, view purchase
+  // history, request a refund on iOS) for an already-paying one - there's
+  // nothing to "manage" via Pricing once a plan is active, and presenting
+  // the paywall again for an upgrade/downgrade is exactly what Customer
+  // Center's own "change plans" option already covers.
+  const onManageSubscription = async () => {
+    if (plan === "basis") {
+      navigation.navigate("Pricing");
+      return;
+    }
+    try {
+      await presentCustomerCenter();
+    } catch (e) {
+      Alert.alert("Kon niet openen", getDataErrorMessage(e));
+    }
+  };
+
   const onSignOut = async () => {
     setSigningOut(true);
     try {
@@ -77,6 +117,21 @@ export default function SettingsScreen({ navigation }: Props) {
       setSigningOut(false);
       Alert.alert("Uitloggen mislukt", getDataErrorMessage(e));
     }
+  };
+
+  // Dev-only (__DEV__, see the render below) - deliberately thrown inside
+  // an event handler, not during render, so this does NOT get caught by
+  // ErrorBoundary.tsx (a component tree error boundary only catches
+  // render/lifecycle errors, never an event-handler throw - see React's
+  // own docs on error boundaries). It's meant to exercise the *other*
+  // capture path instead: lib/sentry.ts's initSentry() default
+  // integrations install a global `ErrorUtils` handler specifically for
+  // this kind of "uncaught JS exception outside render" case. Tapping this
+  // should therefore surface as a new issue in the Sentry dashboard within
+  // a few seconds, tagged with this build's release/dist (see
+  // README.md's "Sentry crash-reporting" section for how to verify this).
+  const onTestCrash = () => {
+    throw new Error("Sentry test-crash vanuit Instellingen (SettingsScreen.tsx, __DEV__-only knop)");
   };
 
   const onDeleteAccount = () => {
@@ -114,7 +169,7 @@ export default function SettingsScreen({ navigation }: Props) {
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: spacing.xl }} />
       ) : (
-        <>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Account</Text>
             <Pressable style={styles.row} onPress={() => navigation.navigate("EditProfile")}>
@@ -132,7 +187,7 @@ export default function SettingsScreen({ navigation }: Props) {
               <Text style={styles.rowLabel}>Locatie wijzigen</Text>
               <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
             </Pressable>
-            <Pressable style={styles.row} onPress={() => navigation.navigate("Pricing")}>
+            <Pressable style={styles.row} onPress={onManageSubscription}>
               <Ionicons name="star-outline" size={20} color={colors.black} />
               <Text style={styles.rowLabel}>Abonnement beheren</Text>
               <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
@@ -142,11 +197,18 @@ export default function SettingsScreen({ navigation }: Props) {
               <Text style={styles.rowLabel}>Mijn gegevens opvragen</Text>
               <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
             </Pressable>
-            <Pressable style={styles.row} onPress={() => navigation.navigate("MyTrainings")}>
-              <Ionicons name="barbell-outline" size={20} color={colors.black} />
-              <Text style={styles.rowLabel}>Mijn trainingen</Text>
+            <Pressable style={styles.row} onPress={() => navigation.navigate("Availability")}>
+              <Ionicons name="calendar-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>Mijn beschikbaarheid</Text>
               <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
             </Pressable>
+            {SHOW_MY_TRAININGS_ROW ? (
+              <Pressable style={styles.row} onPress={() => navigation.navigate("MyTrainings")}>
+                <Ionicons name="barbell-outline" size={20} color={colors.black} />
+                <Text style={styles.rowLabel}>Mijn trainingen</Text>
+                <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+              </Pressable>
+            ) : null}
           </View>
 
           <View style={styles.section}>
@@ -174,6 +236,11 @@ export default function SettingsScreen({ navigation }: Props) {
 
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Ondersteuning</Text>
+            <Pressable style={styles.row} onPress={() => navigation.navigate("Onboarding")}>
+              <Ionicons name="sparkles-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>{ONBOARDING_SETTINGS_ROW_LABEL}</Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+            </Pressable>
             <Pressable style={styles.row} onPress={() => navigation.navigate("Helpdesk")}>
               <Ionicons name="help-circle-outline" size={20} color={colors.black} />
               <Text style={styles.rowLabel}>Helpdesk</Text>
@@ -191,6 +258,20 @@ export default function SettingsScreen({ navigation }: Props) {
             </Pressable>
           </View>
 
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Juridisch</Text>
+            <Pressable style={styles.row} onPress={() => openLegalUrl(TERMS_URL)}>
+              <Ionicons name="document-text-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>Algemene voorwaarden</Text>
+              <Ionicons name="open-outline" size={18} color={colors.textSecondary} />
+            </Pressable>
+            <Pressable style={styles.row} onPress={() => openLegalUrl(PRIVACY_URL)}>
+              <Ionicons name="shield-checkmark-outline" size={20} color={colors.black} />
+              <Text style={styles.rowLabel}>Privacyverklaring</Text>
+              <Ionicons name="open-outline" size={18} color={colors.textSecondary} />
+            </Pressable>
+          </View>
+
           <Pressable style={styles.row} onPress={onSignOut} disabled={signingOut}>
             <Ionicons name="log-out-outline" size={20} color={colors.danger} />
             <Text style={[styles.rowLabel, styles.logout]}>{signingOut ? "Bezig met uitloggen..." : "Uitloggen"}</Text>
@@ -202,7 +283,33 @@ export default function SettingsScreen({ navigation }: Props) {
               {deleting ? "Account wordt verwijderd..." : "Account verwijderen"}
             </Text>
           </Pressable>
-        </>
+
+          {isModerator ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Moderatie</Text>
+              <Pressable style={styles.row} onPress={() => navigation.navigate("Moderation")}>
+                <Ionicons name="shield-checkmark-outline" size={20} color={colors.black} />
+                <Text style={styles.rowLabel}>Moderatie-overzicht</Text>
+                <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+          ) : null}
+
+          {__DEV__ ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Ontwikkelaar</Text>
+              <Pressable style={styles.row} onPress={onTestCrash}>
+                <Ionicons name="bug-outline" size={20} color={colors.danger} />
+                <Text style={[styles.rowLabel, styles.logout]}>Test crash (Sentry)</Text>
+              </Pressable>
+              <Text style={styles.hint}>
+                Alleen zichtbaar in development. Gooit een onafgehandelde fout buiten React's render-cyclus om
+                (dus niet via ErrorBoundary.tsx) - hiermee verifieer je dat lib/sentry.ts's globale
+                foutafhandeling een fout daadwerkelijk naar het Sentry-dashboard stuurt.
+              </Text>
+            </View>
+          ) : null}
+        </ScrollView>
       )}
 
       <BottomNav active="menu" />
@@ -211,6 +318,9 @@ export default function SettingsScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
+  scrollContent: {
+    paddingBottom: BOTTOM_NAV_HEIGHT + spacing.md,
+  },
   header: {
     fontFamily: fonts.display,
     fontSize: fontSizes.lg,

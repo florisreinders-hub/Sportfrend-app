@@ -23,6 +23,7 @@ import EditProfileScreen from "@/app/profile/EditProfileScreen";
 import ChatListScreen from "@/app/chat/ChatListScreen";
 import ChatDetailScreen from "@/app/chat/ChatDetailScreen";
 import PostsFeedScreen from "@/app/chat/PostsFeedScreen";
+import NotificationsScreen from "@/app/chat/NotificationsScreen";
 import NewPostScreen from "@/app/chat/NewPostScreen";
 
 import MenuScreen from "@/app/settings/MenuScreen";
@@ -33,14 +34,17 @@ import SupportScreen from "@/app/settings/SupportScreen";
 import ChangeEmailScreen from "@/app/settings/ChangeEmailScreen";
 import DataExportScreen from "@/app/settings/DataExportScreen";
 import MyTrainingsScreen from "@/app/settings/MyTrainingsScreen";
+import ModerationScreen from "@/app/settings/ModerationScreen";
+import AvailabilityScreen from "@/app/settings/AvailabilityScreen";
 
 import PricingScreen from "@/app/premium/PricingScreen";
-import PaymentScreen from "@/app/premium/PaymentScreen";
+
+import OnboardingScreen from "@/app/onboarding/OnboardingScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export function RootNavigator() {
-  const { session, initializing, hasLocation, checkingLocation } = useAuth();
+  const { session, initializing, hasLocation, onboardingSeen, checkingLocation } = useAuth();
 
   // While signed in, hold the spinner a beat longer to know whether the
   // profile already has a location before the navigator picks its first
@@ -56,7 +60,14 @@ export function RootNavigator() {
     );
   }
 
-  const initialRouteName = session ? (hasLocation ? "Home" : "LocationSetup") : "Login";
+  // A user with a location already set but who hasn't seen the onboarding
+  // carousel yet (existing accounts, the first time this app version
+  // reaches their device) lands on Onboarding instead of Home - same
+  // one-time treatment as a brand new user, who instead reaches it via
+  // LocationSetupScreen's own continueToApp() once they finish that
+  // screen (not via this initialRouteName, which only applies on a cold
+  // app start).
+  const initialRouteName = session ? (hasLocation ? (onboardingSeen ? "Home" : "Onboarding") : "LocationSetup") : "Login";
 
   return (
     <Stack.Navigator initialRouteName={initialRouteName} screenOptions={{ headerShown: false }}>
@@ -83,6 +94,7 @@ export function RootNavigator() {
           <Stack.Screen name="ChatList" component={ChatListScreen} />
           <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
           <Stack.Screen name="PostsFeed" component={PostsFeedScreen} />
+          <Stack.Screen name="Notifications" component={NotificationsScreen} />
           <Stack.Screen name="NewPost" component={NewPostScreen} />
           <Stack.Screen name="Settings" component={SettingsScreen} />
           <Stack.Screen name="Helpdesk" component={HelpdeskScreen} />
@@ -91,8 +103,10 @@ export function RootNavigator() {
           <Stack.Screen name="ChangeEmail" component={ChangeEmailScreen} />
           <Stack.Screen name="DataExport" component={DataExportScreen} />
           <Stack.Screen name="MyTrainings" component={MyTrainingsScreen} />
+          <Stack.Screen name="Moderation" component={ModerationScreen} />
+          <Stack.Screen name="Availability" component={AvailabilityScreen} />
+          <Stack.Screen name="Onboarding" component={OnboardingScreen} />
           <Stack.Screen name="Pricing" component={PricingScreen} />
-          <Stack.Screen name="Payment" component={PaymentScreen} />
         </>
       )}
     </Stack.Navigator>

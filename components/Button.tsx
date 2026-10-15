@@ -1,6 +1,6 @@
 import React from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, ViewStyle } from "react-native";
-import { colors, fonts, fontSizes, radii } from "@/constants/theme";
+import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 
 type Variant = "primary" | "danger" | "outline" | "ghost";
 
@@ -39,11 +39,17 @@ export function Button({ label, onPress, variant = "primary", disabled, loading,
 
 const styles = StyleSheet.create({
   base: {
-    height: 48,
+    // minHeight (not a fixed height): a long label, a narrow screen, or a
+    // larger system font size can all make the label wrap onto a second
+    // line - a fixed height would leave that second line clipped instead
+    // of growing the button to fit. A short label at the default font
+    // size still renders at exactly this 48px floor, same as before.
+    minHeight: 48,
     borderRadius: radii.md,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 24,
+    paddingVertical: spacing.sm,
     borderWidth: 1,
   },
   pressed: {
@@ -55,6 +61,7 @@ const styles = StyleSheet.create({
   label: {
     fontFamily: fonts.bodySemiBold,
     fontSize: fontSizes.md,
+    textAlign: "center",
   },
   labelSolid: {
     color: colors.black,

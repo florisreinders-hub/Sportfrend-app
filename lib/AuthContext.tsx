@@ -1,22 +1,46 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
+import type { CustomerInfo } from "react-native-purchases";
 import { isSupabaseConfigured, supabase } from "./supabase";
-import { registerForPushNotificationsAsync } from "./notifications";
+import { clearPushToken, registerForPushNotificationsAsync } from "./notifications";
+import { addCustomerInfoListener, fetchCustomerInfo, getPlanFromCustomerInfo, identifyPurchaser, resetPurchaserIdentity } from "./purchases";
+import { hasSeenOnboarding } from "./onboarding";
 
 type AuthContextValue = {
   session: Session | null;
   initializing: boolean;
   /** Whether the signed-in user's profile already has a location saved. */
   hasLocation: boolean;
-  /** True while the location check for the current session is in flight. */
+  /**
+   * Whether this user has already seen the onboarding carousel on this
+   * device (lib/onboarding.ts, AsyncStorage - no database column). Fetched
+   * alongside hasLocation below, under the same checkingLocation flag, so
+   * RootNavigator's initial route can pick "Onboarding" vs "Home" without
+   * a separate loading gate.
+   */
+  onboardingSeen: boolean;
+  /** True while the location/onboarding-seen check for the current session is in flight. */
   checkingLocation: boolean;
+  /**
+   * RevenueCat's CustomerInfo for the signed-in user (null while
+   * unconfigured/not yet fetched/signed out). Kept here, centrally,
+   * rather than each screen managing its own fetch + listener -
+   * addCustomerInfoListener() (lib/purchases.ts) keeps this current the
+   * instant a purchase/renewal/expiration happens, without polling.
+   */
+  customerInfo: CustomerInfo | null;
+  /** Derived from customerInfo - "basis" | "premium" | "elite". See lib/purchases.ts's getPlanFromCustomerInfo(). */
+  plan: "basis" | "premium" | "elite";
 };
 
 const AuthContext = createContext<AuthContextValue>({
   session: null,
   initializing: true,
   hasLocation: false,
+  onboardingSeen: true,
   checkingLocation: false,
+  customerInfo: null,
+  plan: "basis",
 });
 
 // Reads via get_my_location() (see PROFILE_COLUMNS's comment in lib/api.ts)
@@ -43,7 +67,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [initializing, setInitializing] = useState(true);
   const [hasLocation, setHasLocation] = useState(false);
+  const [onboardingSeen, setOnboardingSeen] = useState(true);
   const [checkingLocation, setCheckingLocation] = useState(false);
+  const [customerInfo, setCustomerInfo] = useState<CustomerInfo | null>(null);
 
   // Tracks which user's location we've already checked, so a background
   // token refresh (onAuthStateChange fires for that too, not just a real
@@ -53,6 +79,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const checkedUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    // Registered once, for the app's whole lifetime, not re-registered per
+    // sign-in/out - RevenueCat's own logIn()/logOut() (called below)
+    // determines *which* customer this reflects; the listener itself just
+    // needs to exist to catch a purchase/renewal/expiration/refund
+    // whenever RevenueCat reports one, without polling getCustomerInfo()
+    // on a timer.
+    addCustomerInfoListener(setCustomerInfo);
+
     if (!isSupabaseConfigured) {
       // No valid Supabase project configured: don't hang on a network call that
       // will only ever fail, just fall through to the signed-out state.
@@ -67,12 +101,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (data.session?.user) {
           checkedUserIdRef.current = data.session.user.id;
           setCheckingLocation(true);
-          setHasLocation(await fetchHasLocation(data.session.user.id));
+          const [hasLoc, seenOnboarding] = await Promise.all([
+            fetchHasLocation(data.session.user.id),
+            hasSeenOnboarding(data.session.user.id),
+          ]);
+          setHasLocation(hasLoc);
+          setOnboardingSeen(seenOnboarding);
           setCheckingLocation(false);
           // Fire-and-forget: a permission prompt shouldn't hold up the
           // app's own loading state, and a denial/failure here isn't
           // fatal to anything else.
           registerForPushNotificationsAsync(data.session.user.id);
+          await identifyPurchaser(data.session.user.id);
+          setCustomerInfo(await fetchCustomerInfo());
         }
       })
       .catch((error) => {
@@ -87,8 +128,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const userId = newSession?.user?.id ?? null;
 
       if (!userId) {
+        // Capture who just signed out before clearing the ref: this
+        // device's push token must be removed from *their* profile, not
+        // left pointing here - otherwise a push meant for them (a new
+        // match/message) would still arrive on whatever device/account
+        // signs in here next. See clearPushToken()'s own comment.
+        const signedOutUserId = checkedUserIdRef.current;
         checkedUserIdRef.current = null;
         setHasLocation(false);
+        setOnboardingSeen(true);
+        setCustomerInfo(null);
+        resetPurchaserIdentity();
+        if (signedOutUserId) {
+          clearPushToken(signedOutUserId);
+        }
         return;
       }
 
@@ -97,20 +150,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      // A *different* user's session replacing the previous one directly
+      // (no intervening signed-out state) isn't a path this app's own UI
+      // takes - signing out always fires its own null-session event
+      // first - but guard it anyway: the previous user's token must not
+      // be left behind here either.
+      const previousUserId = checkedUserIdRef.current;
+      if (previousUserId) {
+        clearPushToken(previousUserId);
+      }
+
       checkedUserIdRef.current = userId;
       setCheckingLocation(true);
-      fetchHasLocation(userId).then((result) => {
-        setHasLocation(result);
+      Promise.all([fetchHasLocation(userId), hasSeenOnboarding(userId)]).then(([hasLoc, seenOnboarding]) => {
+        setHasLocation(hasLoc);
+        setOnboardingSeen(seenOnboarding);
         setCheckingLocation(false);
       });
       registerForPushNotificationsAsync(userId);
+      identifyPurchaser(userId).then(async () => {
+        setCustomerInfo(await fetchCustomerInfo());
+      });
     });
 
     return () => listener.subscription.unsubscribe();
   }, []);
 
   return (
-    <AuthContext.Provider value={{ session, initializing, hasLocation, checkingLocation }}>
+    <AuthContext.Provider
+      value={{
+        session,
+        initializing,
+        hasLocation,
+        onboardingSeen,
+        checkingLocation,
+        customerInfo,
+        plan: getPlanFromCustomerInfo(customerInfo),
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

@@ -11,6 +11,7 @@ import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { getAuthErrorMessage } from "@/lib/auth";
+import { CHECK_SPAM_FOLDER_HINT } from "@/constants/messages";
 
 type Props = NativeStackScreenProps<RootStackParamList, "ChangeEmail">;
 
@@ -61,10 +62,13 @@ export default function ChangeEmailScreen({ navigation }: Props) {
       <DetailHeader title="E-mail wijzigen" />
       <View style={styles.content}>
         {sent ? (
-          <Text style={styles.confirmation}>
-            We hebben een bevestigingslink gestuurd naar {newEmail}. Bevestig de wijziging via die e-mail voordat hij
-            ingaat.
-          </Text>
+          <>
+            <Text style={styles.confirmation}>
+              We hebben een bevestigingslink gestuurd naar {newEmail}. Bevestig de wijziging via die e-mail voordat
+              hij ingaat.
+            </Text>
+            <Text style={styles.hint}>{CHECK_SPAM_FOLDER_HINT}</Text>
+          </>
         ) : (
           <>
             <Text style={styles.intro}>Vul je nieuwe e-mailadres in. We sturen een bevestigingslink.</Text>
@@ -124,5 +128,12 @@ const styles = StyleSheet.create({
     color: colors.primaryDark,
     textAlign: "center",
     marginTop: spacing.xl,
+  },
+  hint: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.textSecondary,
+    textAlign: "center",
+    marginTop: spacing.xs,
   },
 });

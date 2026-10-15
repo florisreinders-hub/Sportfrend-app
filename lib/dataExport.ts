@@ -9,6 +9,7 @@ import {
   fetchOwnSwipes,
   fetchPostsByAuthor,
   fetchSubscription,
+  formatAvailabilityDays,
   Message,
   OwnBlock,
   OwnReport,
@@ -36,6 +37,8 @@ export type DataExportMatch = {
 
 export type DataExportResult = {
   profile: Profile | null;
+  /** Fetched separately, same reasoning as `location` below: terms_accepted_at isn't part of PROFILE_COLUMNS (that constant is also used to read *other* users' profiles, and this is account-owner-only metadata, not something to expose there). */
+  termsAcceptedAt: string | null;
   /**
    * Fetched separately via get_my_location() - profileResult (below) uses
    * PROFILE_COLUMNS, which no longer includes latitude/longitude for
@@ -54,9 +57,10 @@ export type DataExportResult = {
 };
 
 export async function fetchDataExport(userId: string): Promise<DataExportResult> {
-  const [profileResult, location, connections, posts, swipes, subscription, supportRequests, reports, blocks] =
+  const [profileResult, termsResult, location, connections, posts, swipes, subscription, supportRequests, reports, blocks] =
     await Promise.all([
       supabase.from("profiles").select(PROFILE_COLUMNS).eq("id", userId).maybeSingle(),
+      supabase.from("profiles").select("terms_accepted_at").eq("id", userId).maybeSingle(),
       fetchMyLocation(),
       fetchConnections(userId),
       fetchPostsByAuthor(userId),
@@ -67,6 +71,7 @@ export async function fetchDataExport(userId: string): Promise<DataExportResult>
       fetchOwnBlocks(userId),
     ]);
   if (profileResult.error) throw profileResult.error;
+  if (termsResult.error) throw termsResult.error;
 
   const matches: DataExportMatch[] = await Promise.all(
     connections.map(async (match: any) => ({
@@ -79,6 +84,7 @@ export async function fetchDataExport(userId: string): Promise<DataExportResult>
 
   return {
     profile: profileResult.data as Profile | null,
+    termsAcceptedAt: (termsResult.data as { terms_accepted_at: string | null } | null)?.terms_accepted_at ?? null,
     location,
     matches,
     posts,
@@ -117,9 +123,11 @@ export function formatDataExportText(data: DataExportResult, userId: string, use
     lines.push(`Profielfoto-URL: ${p.photo_url ?? "-"}`);
     lines.push(`Profiel zichtbaar in Ontdekken: ${(p as any).profile_visible === false ? "Nee" : "Ja"}`);
     lines.push(`Pushmeldingen aan: ${(p as any).push_notifications_enabled === false ? "Nee" : "Ja"}`);
+    lines.push(`Beschikbaarheid (gebruikt voor "Slimme beschikbaarheids match"): ${formatAvailabilityDays((p as any).availability_days ?? [])}`);
   } else {
     lines.push("Geen profielgegevens gevonden.");
   }
+  lines.push(`Akkoord met algemene voorwaarden en privacyverklaring gegeven op: ${dateFmt(data.termsAcceptedAt)}`);
   lines.push("");
 
   lines.push(`=== MATCHES EN BERICHTEN (${data.matches.length}) ===`);

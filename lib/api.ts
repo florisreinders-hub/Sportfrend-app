@@ -28,6 +28,17 @@ export function getDataErrorMessage(error: unknown): string {
       case "PGRST205":
       case "42P01":
         return "De database is nog niet volledig ingericht: de benodigde tabel bestaat niet. Voer de SQL-migratie (supabase/migrations/0001_init.sql) uit via de Supabase SQL editor of CLI.";
+      case "PGRST116":
+        // .single() got 0 rows back - in every place this app uses
+        // .select().single() on a write, that almost always means the
+        // content-filter's BEFORE trigger cancelled the row
+        // (0028_content_filter_hard_block.sql's `return NULL`). The normal
+        // flow never reaches this (checkContentFilter() blocks it
+        // client-side first, before this request is even sent) - this is
+        // the defense-in-depth fallback for when that pre-check didn't run
+        // (RPC failure, modified client) but the server-side trigger still
+        // rejected the write.
+        return "Dit bevat mogelijk ongepaste taal en is geweigerd. Pas de tekst aan en probeer opnieuw.";
       case "42501":
       case "PGRST301":
         return "Je hebt geen toegang tot deze gegevens. Log opnieuw in en probeer het nogmaals.";
@@ -567,6 +578,84 @@ export async function fetchConversations(userId: string): Promise<Conversation[]
     });
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Meldingencentrum (NotificationsScreen.tsx, TopBar.tsx's belletje-icoon) -
+// zie 0032_notifications.sql voor de triggers die deze rijen aanmaken.
+// ─────────────────────────────────────────────────────────────────────────
+export type NotificationType = "match" | "message" | "moderation_update";
+
+export type AppNotification = {
+  id: string;
+  type: NotificationType;
+  reference_id: string;
+  is_read: boolean;
+  created_at: string;
+  /** Alleen gezet voor 'match'/'message' - de andere deelnemer van de match die reference_id is. null voor 'moderation_update', of wanneer die match inmiddels niet meer bestaat (bv. "Vriend verwijderen"). */
+  otherUser: Profile | null;
+};
+
+/**
+ * notifications.reference_id heeft bewust geen foreign key (zie
+ * 0032_notifications.sql - het wijst naar matches óf reports, afhankelijk
+ * van `type`), dus PostgREST kan dit niet in één query embedden zoals
+ * fetchConnections() dat wel kan voor een echte FK. Twee round trips in
+ * plaats van één: eerst de meldingen zelf, dan (alleen voor 'match'/
+ * 'message'-rijen) de betrokken matches met de andere deelnemer erbij -
+ * zelfde profiel-embed-patroon als fetchConnections() hierboven.
+ */
+export async function fetchNotifications(userId: string, limit = 50): Promise<AppNotification[]> {
+  const { data: rows, error } = await supabase
+    .from("notifications")
+    .select("id, type, reference_id, is_read, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  const notifications = rows ?? [];
+
+  const matchIds = Array.from(
+    new Set(notifications.filter((n) => n.type === "match" || n.type === "message").map((n) => n.reference_id))
+  );
+
+  const otherUserByMatchId = new Map<string, Profile | null>();
+  if (matchIds.length > 0) {
+    const { data: matches, error: matchError } = await supabase
+      .from("matches")
+      .select(`id, user_a_id, user_b_id, user_a:profiles!matches_user_a_id_fkey(${PROFILE_COLUMNS}), user_b:profiles!matches_user_b_id_fkey(${PROFILE_COLUMNS})`)
+      .in("id", matchIds);
+    if (matchError) throw matchError;
+    for (const match of matches ?? []) {
+      const otherUser = (match.user_a_id === userId ? match.user_b : match.user_a) as unknown as Profile | null;
+      otherUserByMatchId.set(match.id, otherUser);
+    }
+  }
+
+  return notifications.map((n) => ({
+    ...n,
+    otherUser: n.type === "match" || n.type === "message" ? (otherUserByMatchId.get(n.reference_id) ?? null) : null,
+  }));
+}
+
+export async function fetchUnreadNotificationCount(userId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from("notifications")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .eq("is_read", false);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+export async function markNotificationRead(notificationId: string): Promise<void> {
+  const { error } = await supabase
+    .from("notifications")
+    .update({ is_read: true })
+    .eq("id", notificationId)
+    .select("id")
+    .single();
+  if (error) throw error;
+}
+
 const WEEKDAYS_NL = ["zo", "ma", "di", "wo", "do", "vr", "za"];
 
 /** Compact chat-list timestamp: "14:32" today, "Gisteren", weekday within a week, else "DD-MM-JJJJ". */
@@ -665,13 +754,22 @@ export type NewPostFields = {
 // the only "wanneer" field wanted now anyway, no time-of-day); sport stays
 // since it's still wanted, backed by migration 0003 instead.
 export async function createPost(authorId: string, body: string, fields: NewPostFields = {}) {
-  const { error } = await supabase.from("posts").insert({
-    author_id: authorId,
-    body,
-    image_url: fields.imageUrl ?? null,
-    sport: fields.sport ?? null,
-    event_date: fields.eventDate ?? null,
-  });
+  // .select("id").single() (not a bare insert): the only way to detect a
+  // server-side content-filter rejection (0028_content_filter_hard_block.sql's
+  // BEFORE trigger cancels the row via `return NULL`, which a plain
+  // insert without .select() can't distinguish from success - both report
+  // no error and no data).
+  const { error } = await supabase
+    .from("posts")
+    .insert({
+      author_id: authorId,
+      body,
+      image_url: fields.imageUrl ?? null,
+      sport: fields.sport ?? null,
+      event_date: fields.eventDate ?? null,
+    })
+    .select("id")
+    .single();
   if (error) throw error;
 }
 
@@ -706,31 +804,26 @@ export async function toggleLike(postId: string, userId: string, liked: boolean)
   }
 }
 
+/**
+ * Since 0031_subscriptions_webhook_only.sql, this is read-only: RevenueCat
+ * (via supabase/functions/revenuecat-webhook, running server-side with the
+ * service-role key) is the only writer of public.subscriptions -
+ * `authenticated` no longer has INSERT/UPDATE on this table at all, so a
+ * client can no longer grant itself a paid plan without actually paying
+ * (the gap the old upsertSubscription()/selectPendingPlan() sandbox
+ * functions left open). Screens that need to know the *current* plan for
+ * UI purposes (PricingScreen.tsx, SettingsScreen.tsx) read RevenueCat's
+ * own CustomerInfo directly instead (lib/purchases.ts's
+ * fetchCustomerInfo()/getPlanFromCustomerInfo()) - it updates the instant
+ * a purchase completes, without waiting on the webhook round trip.
+ * fetchSubscription() below is for read-only displays where a few
+ * seconds' lag until the webhook lands is fine (e.g. "Mijn gegevens
+ * opvragen" - lib/dataExport.ts).
+ */
 export async function fetchSubscription(userId: string) {
   const { data, error } = await supabase.from("subscriptions").select("*").eq("user_id", userId).maybeSingle();
   if (error) throw error;
   return data;
-}
-
-export async function upsertSubscription(userId: string, plan: "basis" | "premium" | "elite", priceCents: number) {
-  const { error } = await supabase
-    .from("subscriptions")
-    .upsert({ user_id: userId, plan, price_cents: priceCents, status: "active" }, { onConflict: "user_id" });
-  if (error) throw error;
-}
-
-/**
- * Records a plan chosen on the Pricing screen ahead of the (not yet real)
- * payment flow - status "pending", not "active", so a mere selection is
- * never mistaken for a completed payment. PaymentScreen's own checkout
- * still calls upsertSubscription() with status "active" once it actually
- * "pays".
- */
-export async function selectPendingPlan(userId: string, plan: "premium" | "elite", priceCents: number) {
-  const { error } = await supabase
-    .from("subscriptions")
-    .upsert({ user_id: userId, plan, price_cents: priceCents, status: "pending" }, { onConflict: "user_id" });
-  if (error) throw error;
 }
 
 export const WEEKDAY_OPTIONS: { key: string; label: string }[] = [
@@ -742,6 +835,84 @@ export const WEEKDAY_OPTIONS: { key: string; label: string }[] = [
   { key: "za", label: "Za" },
   { key: "zo", label: "Zo" },
 ];
+
+/**
+ * "Slimme beschikbaarheids match" picks dag + dagdeel, not just a day
+ * (0036_availability_dayparts.sql) - a selection is stored as combined
+ * keys like "ma-avond" (see availabilityKey() below), never a bare
+ * WEEKDAY_OPTIONS key on its own.
+ */
+export const DAYPART_OPTIONS: { key: string; label: string }[] = [
+  { key: "ochtend", label: "Ochtend" },
+  { key: "middag", label: "Middag" },
+  { key: "avond", label: "Avond" },
+];
+
+const WEEKDAY_FULL_NAMES: Record<string, string> = {
+  ma: "maandag",
+  di: "dinsdag",
+  wo: "woensdag",
+  do: "donderdag",
+  vr: "vrijdag",
+  za: "zaterdag",
+  zo: "zondag",
+};
+
+export function availabilityKey(day: string, daypart: string): string {
+  return `${day}-${daypart}`;
+}
+
+const LEGACY_DAY_CODES = WEEKDAY_OPTIONS.map((d) => d.key);
+
+/**
+ * Belt-and-braces fallback for 0036_availability_dayparts.sql: expands any
+ * bare day code ("ma") still found in availability_days into all 3
+ * dagdelen for that day, so a straggler row the migration somehow missed
+ * shows as "whole day selected" on read instead of silently vanishing
+ * (dropped by formatAvailabilityDays/the picker UI, neither of which
+ * recognize a bare day code) or crashing. Every write (updateProfileSettings)
+ * always produces clean day+dagdeel values only - this only ever runs on
+ * read, it never writes anything back itself.
+ */
+export function expandLegacyAvailabilityDays(days: string[]): string[] {
+  const expanded = new Set<string>();
+  for (const d of days) {
+    if (LEGACY_DAY_CODES.includes(d)) {
+      for (const part of DAYPART_OPTIONS) expanded.add(availabilityKey(d, part.key));
+    } else {
+      expanded.add(d);
+    }
+  }
+  return Array.from(expanded);
+}
+
+/**
+ * Human-readable Dutch rendering of combined day+dagdeel availability keys
+ * for display ("Mijn gegevens opvragen" - lib/dataExport.ts), e.g.
+ * ["za-ochtend", "ma-avond"] -> "maandagavond, zaterdagochtend". Sorted by
+ * weekday then dagdeel so the output order is stable regardless of the
+ * stored array's order. Runs expandLegacyAvailabilityDays() first so a
+ * straggler bare day code is shown as its 3 dagdelen rather than silently
+ * dropped (a key that still doesn't parse after that - never expected -
+ * is dropped rather than shown as garbage).
+ */
+export function formatAvailabilityDays(days: string[]): string {
+  const dayOrder = WEEKDAY_OPTIONS.map((d) => d.key);
+  const partOrder = DAYPART_OPTIONS.map((p) => p.key);
+  const parsed = expandLegacyAvailabilityDays(days)
+    .map((key) => {
+      const [day, part] = key.split("-");
+      if (!dayOrder.includes(day) || !partOrder.includes(part)) return null;
+      return { day, part };
+    })
+    .filter((x): x is { day: string; part: string } => x !== null)
+    .sort((a, b) => {
+      const dayDiff = dayOrder.indexOf(a.day) - dayOrder.indexOf(b.day);
+      return dayDiff !== 0 ? dayDiff : partOrder.indexOf(a.part) - partOrder.indexOf(b.part);
+    });
+  if (parsed.length === 0) return "Niet opgegeven";
+  return parsed.map(({ day, part }) => `${WEEKDAY_FULL_NAMES[day]}${part}`).join(", ");
+}
 
 export type ProfileSettings = {
   push_notifications_enabled: boolean;
@@ -759,7 +930,7 @@ export async function fetchProfileSettings(userId: string): Promise<ProfileSetti
   return {
     push_notifications_enabled: data?.push_notifications_enabled ?? true,
     profile_visible: data?.profile_visible ?? true,
-    availability_days: data?.availability_days ?? [],
+    availability_days: expandLegacyAvailabilityDays(data?.availability_days ?? []),
   };
 }
 
@@ -772,6 +943,34 @@ export async function fetchProfileSettings(userId: string): Promise<ProfileSetti
 export async function updateProfileSettings(userId: string, fields: Partial<ProfileSettings>) {
   const { error } = await supabase.from("profiles").upsert({ id: userId, ...fields }, { onConflict: "id" });
   if (error) throw error;
+}
+
+export type SupportRequestsDailyStatus = {
+  dailyLimit: number;
+  usedToday: number;
+  remaining: number;
+};
+
+/**
+ * The caller's daily Klantenservice-aanvraag quota (max 5/dag, flat for
+ * every plan - 0026_reports_and_support_daily_limits.sql). Every
+ * submission triggers a real outbound e-mail via Resend
+ * (notifySupportRequest() below), so this exists to guard that spend/quota,
+ * not to withhold a feature. The "Users can insert their own support
+ * requests" RLS policy enforces the actual limit server-side regardless of
+ * whether this is ever called - this exists purely so SupportScreen can
+ * show a clear "dagelijkse limiet bereikt" message instead of a bare
+ * RLS-violation error.
+ */
+export async function fetchSupportRequestsDailyStatus(): Promise<SupportRequestsDailyStatus> {
+  const { data, error } = await supabase.rpc("support_requests_daily_status");
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    dailyLimit: row?.daily_limit ?? 5,
+    usedToday: row?.used_today ?? 0,
+    remaining: row?.remaining ?? 0,
+  };
 }
 
 export async function createSupportRequest(userId: string, subject: string, message: string) {
@@ -816,6 +1015,32 @@ export const REPORT_REASONS: { key: string; label: string }[] = [
   { key: "spam", label: "Spam" },
   { key: "anders", label: "Anders" },
 ];
+
+export type ReportsDailyStatus = {
+  dailyLimit: number;
+  usedToday: number;
+  remaining: number;
+};
+
+/**
+ * The caller's daily rapportage-quota (max 10/dag, flat for every plan -
+ * 0026_reports_and_support_daily_limits.sql), pure abuse-prevention (a
+ * false-reports harassment vector) rather than a paid-tier perk. The
+ * "Users can create their own reports" RLS policy enforces the actual
+ * limit server-side regardless of whether this is ever called - this
+ * exists purely so ReportModal can show a clear "dagelijkse limiet
+ * bereikt" message instead of a bare RLS-violation error.
+ */
+export async function fetchReportsDailyStatus(): Promise<ReportsDailyStatus> {
+  const { data, error } = await supabase.rpc("reports_daily_status");
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    dailyLimit: row?.daily_limit ?? 10,
+    usedToday: row?.used_today ?? 0,
+    remaining: row?.remaining ?? 0,
+  };
+}
 
 /**
  * Saves a moderation report. `matchId` is only passed when reporting from a
@@ -916,4 +1141,76 @@ export async function fetchOwnBlocks(userId: string): Promise<OwnBlock[]> {
     .order("created_at", { ascending: false });
   if (error) throw error;
   return (data ?? []) as unknown as OwnBlock[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Moderatie-overzicht (ModerationScreen.tsx) - zie
+// 0029_moderation_dashboard.sql. Elke functie hieronder werkt voor elke
+// ingelogde gebruiker even goed clientside, maar levert voor iedereen
+// behalve de moderator een lege set op (of een RLS-fout bij de
+// update-functies) - is_moderator() in de database is de echte grens, dit
+// is geen aparte clientside toegangscontrole.
+// ─────────────────────────────────────────────────────────────────────────
+export type ModerationReport = {
+  id: string;
+  reporter_id: string;
+  reported_id: string;
+  reason: string;
+  details: string | null;
+  status: string;
+  created_at: string;
+  reporter: Profile | null;
+  reported: Profile | null;
+};
+
+/** Alleen 'open'/'reviewing' - een 'resolved'/'dismissed' rapportage hoeft niet meer in het overzicht te staan. */
+export async function fetchOpenReports(): Promise<ModerationReport[]> {
+  const { data, error } = await supabase
+    .from("reports")
+    .select(
+      `id, reporter_id, reported_id, reason, details, status, created_at,
+       reporter:profiles!reports_reporter_id_fkey(${PROFILE_COLUMNS}),
+       reported:profiles!reports_reported_id_fkey(${PROFILE_COLUMNS})`
+    )
+    .in("status", ["open", "reviewing"])
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as unknown as ModerationReport[];
+}
+
+/**
+ * .select().single() (not a bare update): the only reliable way to detect
+ * that the moderator-only RLS policy actually rejected this (0 rows
+ * matched/updated) instead of a bare `.update()` silently reporting
+ * success either way - same reasoning as the content-filter hard block's
+ * write paths (0028_content_filter_hard_block.sql).
+ */
+export async function resolveReport(reportId: string): Promise<void> {
+  const { error } = await supabase.from("reports").update({ status: "resolved" }).eq("id", reportId).select("id").single();
+  if (error) throw error;
+}
+
+export type ModerationFlaggedContent = {
+  id: string;
+  user_id: string;
+  source_table: string;
+  source_id: string;
+  matched_words: string[];
+  reason: string | null;
+  status: string;
+  created_at: string;
+  user: Profile | null;
+};
+
+export async function fetchRecentFlaggedContent(limit = 50): Promise<ModerationFlaggedContent[]> {
+  const { data, error } = await supabase
+    .from("flagged_content")
+    .select(
+      `id, user_id, source_table, source_id, matched_words, reason, status, created_at,
+       user:profiles!flagged_content_user_id_fkey(${PROFILE_COLUMNS})`
+    )
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []) as unknown as ModerationFlaggedContent[];
 }
