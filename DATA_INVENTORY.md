@@ -4,7 +4,7 @@ Dit document geeft een volledig overzicht van welke persoonsgegevens Sportfrend 
 
 **Dit is een technische inventaris, geen juridisch document.** Voor een AVG/GDPR-verwerkersregister, verwerkersovereenkomsten met Supabase/Resend/Expo/RevenueCat/Sentry, en een officiële bewaartermijnenbeleid is juridisch advies nodig - dit document is bedoeld als de feitelijke basis daarvoor.
 
-Laatst bijgewerkt: bij migratie `0036_availability_dayparts.sql` (`profiles.availability_days` opnieuw geclassificeerd als persoonsgegeven, zie §2 `profiles` - was voorheen ten onrechte als "app-instelling" ingedeeld samen met `is_onboarded`/`profile_visible`/`push_notifications_enabled`) - zie §2 (`profiles`).
+Laatst bijgewerkt: `trainings` en `notifications` toegevoegd aan "Mijn gegevens opvragen" (`lib/dataExport.ts`/`lib/api.ts`, geen migratie - alleen nieuwe RLS-gescoopte lees-fetchers) - zie §2 (`trainings`, `notifications`). Daarvoor: bij migratie `0036_availability_dayparts.sql` (`profiles.availability_days` opnieuw geclassificeerd als persoonsgegeven, zie §2 `profiles` - was voorheen ten onrechte als "app-instelling" ingedeeld samen met `is_onboarded`/`profile_visible`/`push_notifications_enabled`).
 
 Gebruikers kunnen zelf een overzicht van (vrijwel) alle onderstaande gegevens opvragen via **Instellingen → "Mijn gegevens opvragen"** - zie README.md §"Mijn gegevens opvragen (recht op inzage/dataportabiliteit)" en `lib/dataExport.ts`.
 
@@ -99,7 +99,7 @@ Sinds migratie `0024_trainings_planner.sql` ("Trainings & Buddy Planner", zie RE
 | `status`, `created_at` | Metadata | - | idem |
 | `reminder_sent_at` | Nee (alleen "is de 2-uur-van-tevoren-pushmelding al verstuurd", geen inhoud) | - | idem |
 
-Alleen een actief Elite-abonnement (`has_elite_access()`, zie §"subscriptions") mag een rij *aanmaken* (RLS INSERT-policy) - reageren (accepteren/afwijzen/"voorstel wijzigen") mag elke deelnemer van het match, ongeacht diens eigen plan. `claim_training_reminders()` (alleen aanroepbaar door `service_role`, nooit door een ingelogde gebruiker) stuurt via dezelfde Expo Push API als berichten/matches (§4) een herinnering circa 2 uur voor een geaccepteerde training.
+Alleen een actief Elite-abonnement (`has_elite_access()`, zie §"subscriptions") mag een rij *aanmaken* (RLS INSERT-policy) - reageren (accepteren/afwijzen/"voorstel wijzigen") mag elke deelnemer van het match, ongeacht diens eigen plan. `claim_training_reminders()` (alleen aanroepbaar door `service_role`, nooit door een ingelogde gebruiker) stuurt via dezelfde Expo Push API als berichten/matches (§4) een herinnering circa 2 uur voor een geaccepteerde training. Opgenomen in "Mijn gegevens opvragen" (`lib/dataExport.ts`, `fetchOwnTrainings()`) - elke training van een match waar de gebruiker deel van is, niet alleen de trainingen die hij/zij zelf voorstelde (dezelfde RLS-grens als bij matches/berichten).
 
 ### `posts` / `post_likes`
 
@@ -164,7 +164,7 @@ Sinds migratie `0027_content_filter.sql`: automatische controle wanneer `bio` (`
 | `user_id` | Ja (ontvanger van de melding) | - | Tot accountverwijdering - geen eigen verwijderfunctie |
 | `type`, `reference_id`, `is_read`, `created_at` | Nee (verwijst terug naar de bron-rij - een match, bericht of rapportage; geen los stuk vrije tekst) | - | idem |
 
-Sinds migratie `0032_notifications.sql`: het in-app meldingencentrum, gekoppeld aan het belletje-icoon in `TopBar` (dat voorheen ten onrechte naar het prikbord navigeerde). Rijen worden uitsluitend server-side aangemaakt door drie `security definer`-triggerfuncties (`authenticated` heeft geen INSERT-recht op deze tabel): bij een nieuwe match (`notify_on_new_match()`, voor beide betrokkenen), bij een nieuw bericht (`notify_on_new_message()`, alleen voor de ontvanger, niet de afzender) en wanneer een rapportage naar `status = 'resolved'` overgaat (`notify_on_report_resolved()`, alleen voor de melder, niet de gerapporteerde - en niet opnieuw bij een latere no-op update). RLS staat een gebruiker toe uitsluitend zijn eigen rijen te lezen en te markeren als gelezen (`is_read`) - geen INSERT-policy, dus een gebruiker kan zelf nooit een melding aanmaken of aan een ander toekennen. Zie README.md §"Meldingencentrum" voor de volledige architectuur.
+Sinds migratie `0032_notifications.sql`: het in-app meldingencentrum, gekoppeld aan het belletje-icoon in `TopBar` (dat voorheen ten onrechte naar het prikbord navigeerde). Rijen worden uitsluitend server-side aangemaakt door drie `security definer`-triggerfuncties (`authenticated` heeft geen INSERT-recht op deze tabel): bij een nieuwe match (`notify_on_new_match()`, voor beide betrokkenen), bij een nieuw bericht (`notify_on_new_message()`, alleen voor de ontvanger, niet de afzender) en wanneer een rapportage naar `status = 'resolved'` overgaat (`notify_on_report_resolved()`, alleen voor de melder, niet de gerapporteerde - en niet opnieuw bij een latere no-op update). RLS staat een gebruiker toe uitsluitend zijn eigen rijen te lezen en te markeren als gelezen (`is_read`) - geen INSERT-policy, dus een gebruiker kan zelf nooit een melding aanmaken of aan een ander toekennen. Zie README.md §"Meldingencentrum" voor de volledige architectuur. Opgenomen in "Mijn gegevens opvragen" (`lib/dataExport.ts`, `fetchOwnNotifications()`).
 
 ---
 

@@ -11,6 +11,7 @@ import { BOTTOM_NAV_HEIGHT, colors, fonts, fontSizes, radii, spacing } from "@/c
 import { useAuth } from "@/lib/AuthContext";
 import { getDataErrorMessage, sendDataExportEmail } from "@/lib/api";
 import { fetchDataExport, formatDataExportText } from "@/lib/dataExport";
+import { CHECK_SPAM_FOLDER_HINT } from "@/constants/messages";
 
 type Props = NativeStackScreenProps<RootStackParamList, "DataExport">;
 
@@ -83,7 +84,10 @@ export default function DataExportScreen(_props: Props) {
               doorlezen, of naar {userEmail || "je e-mailadres"} laten sturen.
             </Text>
             {sent ? (
-              <Text style={styles.confirmation}>Verstuurd! Check je inbox.</Text>
+              <>
+                <Text style={styles.confirmation}>Verstuurd! Check je inbox.</Text>
+                <Text style={styles.hint}>{CHECK_SPAM_FOLDER_HINT}</Text>
+              </>
             ) : (
               <Button label="Verstuur naar mijn e-mail" onPress={onSendEmail} loading={sending} />
             )}
@@ -115,6 +119,13 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.md,
     color: colors.primaryDark,
     textAlign: "center",
+  },
+  hint: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.textSecondary,
+    textAlign: "center",
+    marginTop: spacing.xs,
   },
   scroll: {
     flex: 1,

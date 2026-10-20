@@ -67,6 +67,12 @@ export function initSentry() {
     // with its own quota on the free tier and wasn't asked for here.
     enableAutoSessionTracking: true,
     debug: __DEV__,
+    // Explicit, not just left at the SDK default: no IP address, cookies,
+    // or other request/device PII gets attached to an event. This app
+    // never calls Sentry.setUser() either (see initSentry()'s own doc
+    // comment above) - crash reports stay limited to the "expo" context
+    // set below plus whatever the SDK's default integrations capture.
+    sendDefaultPii: false,
   });
 
   Sentry.setContext("expo", {
