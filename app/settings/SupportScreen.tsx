@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 import { RootStackParamList } from "@/navigation/types";
@@ -80,47 +80,52 @@ export default function SupportScreen(_props: Props) {
   return (
     <ScreenContainer withBottomPadding={false}>
       <DetailHeader title="Klantenservice" />
-      <View style={styles.content}>
-        {sent ? (
-          <Text style={styles.confirmation}>
-            Bedankt! We hebben je bericht ontvangen en reageren binnen 1 werkdag via e-mail.
-          </Text>
-        ) : limitReached ? (
-          <Text style={styles.limitReached}>
-            Je hebt vandaag het maximum van {dailyStatus!.dailyLimit} klantenservice-berichten bereikt. Probeer het
-            morgen opnieuw, of mail rechtstreeks naar info.sportfrend@gmail.com.
-          </Text>
-        ) : (
-          <>
-            <Text style={styles.intro}>
-              Kom je er niet uit? Stuur ons een bericht en we helpen je zo snel mogelijk verder.
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          {sent ? (
+            <Text style={styles.confirmation}>
+              Bedankt! We hebben je bericht ontvangen en reageren binnen 1 werkdag via e-mail.
             </Text>
-            <Input label="Onderwerp" placeholder="Waar gaat je vraag over?" value={subject} onChangeText={setSubject} />
-            <Input
-              label="Bericht"
-              placeholder="Beschrijf je vraag of probleem"
-              value={message}
-              onChangeText={setMessage}
-              multiline
-              style={styles.messageInput}
-            />
-            {error ? <Text style={styles.error}>{error}</Text> : null}
-            <Button
-              label="Versturen"
-              onPress={onSend}
-              loading={sending}
-              disabled={!subject.trim() || !message.trim()}
-              style={styles.cta}
-            />
-          </>
-        )}
-      </View>
+          ) : limitReached ? (
+            <Text style={styles.limitReached}>
+              Je hebt vandaag het maximum van {dailyStatus!.dailyLimit} klantenservice-berichten bereikt. Probeer het
+              morgen opnieuw, of mail rechtstreeks naar info.sportfrend@gmail.com.
+            </Text>
+          ) : (
+            <>
+              <Text style={styles.intro}>
+                Kom je er niet uit? Stuur ons een bericht en we helpen je zo snel mogelijk verder.
+              </Text>
+              <Input label="Onderwerp" placeholder="Waar gaat je vraag over?" value={subject} onChangeText={setSubject} />
+              <Input
+                label="Bericht"
+                placeholder="Beschrijf je vraag of probleem"
+                value={message}
+                onChangeText={setMessage}
+                multiline
+                style={styles.messageInput}
+              />
+              {error ? <Text style={styles.error}>{error}</Text> : null}
+              <Button
+                label="Versturen"
+                onPress={onSend}
+                loading={sending}
+                disabled={!subject.trim() || !message.trim()}
+                style={styles.cta}
+              />
+            </>
+          )}
+        </ScrollView>
+      </KeyboardAvoidingView>
       <BottomNav active="menu" />
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
+  flex: {
+    flex: 1,
+  },
   content: {
     padding: spacing.md,
   },

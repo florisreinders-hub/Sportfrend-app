@@ -14,7 +14,7 @@ export const ONBOARDING_SLIDES: OnboardingSlide[] = [
   {
     icon: "compass-outline",
     title: "Vind iemand om mee te sporten",
-    body: "Bekijk sporters bij jou in de buurt die dezelfde sport en een vergelijkbaar niveau hebben. Zie je iemand met wie je wilt trainen? Tik op het hartje.",
+    body: "Bekijk sporters bij jou in de buurt die dezelfde sport en een vergelijkbaar niveau hebben. Zie je iemand met wie je wilt trainen? Tik op Connect.",
   },
   {
     icon: "heart-outline",

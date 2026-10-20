@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Animated, Image, StyleSheet, Text, View } from "react-native";
+import { Animated, Image, KeyboardAvoidingView, Platform, StyleSheet, Text, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "@/navigation/types";
@@ -64,45 +64,47 @@ export default function MatchScreen({ route, navigation }: Props) {
   return (
     <ScreenContainer withBottomPadding={false}>
       <TopBar />
-      <View style={styles.photoWrap}>
-        <Image source={{ uri: matchedPhoto }} style={styles.photo} />
-        <Animated.View
-          style={[styles.banner, { opacity: bannerOpacity, transform: [{ scale: bannerScale }] }]}
-        >
-          <Text style={styles.bannerText}>CONNECTIE!</Text>
-        </Animated.View>
-      </View>
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+        <View style={styles.photoWrap}>
+          <Image source={{ uri: matchedPhoto }} style={styles.photo} />
+          <Animated.View
+            style={[styles.banner, { opacity: bannerOpacity, transform: [{ scale: bannerScale }] }]}
+          >
+            <Text style={styles.bannerText}>CONNECTIE!</Text>
+          </Animated.View>
+        </View>
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+        {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      <View style={styles.messageRow}>
-        <Input
-          placeholder="Stuur een bericht"
-          value={message}
-          onChangeText={(text) => {
-            setMessage(text);
-            if (error) setError(null);
-          }}
-          onSubmitEditing={onSend}
-          returnKeyType="send"
-          editable={!sending}
-          style={styles.messageInput}
+        <View style={styles.messageRow}>
+          <Input
+            placeholder="Stuur een bericht"
+            value={message}
+            onChangeText={(text) => {
+              setMessage(text);
+              if (error) setError(null);
+            }}
+            onSubmitEditing={onSend}
+            returnKeyType="send"
+            editable={!sending}
+            style={styles.messageInput}
+          />
+          <Ionicons
+            name="send"
+            size={24}
+            color={sending || !message.trim() ? colors.textSecondary : colors.black}
+            style={styles.sendIcon}
+            onPress={onSend}
+            hitSlop={8}
+          />
+        </View>
+
+        <Button
+          label="Verder zoeken"
+          onPress={() => navigation.replace("Home", { tab: "ontdekken" })}
+          style={styles.cta}
         />
-        <Ionicons
-          name="send"
-          size={24}
-          color={sending || !message.trim() ? colors.textSecondary : colors.black}
-          style={styles.sendIcon}
-          onPress={onSend}
-          hitSlop={8}
-        />
-      </View>
-
-      <Button
-        label="Verder zoeken"
-        onPress={() => navigation.replace("Home", { tab: "ontdekken" })}
-        style={styles.cta}
-      />
+      </KeyboardAvoidingView>
 
       <BottomNav active="home" />
     </ScreenContainer>
@@ -110,6 +112,9 @@ export default function MatchScreen({ route, navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
+  flex: {
+    flex: 1,
+  },
   photoWrap: {
     flex: 1,
     marginHorizontal: spacing.md,

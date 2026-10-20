@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { Button } from "@/components/Button";
@@ -82,50 +82,52 @@ export function TrainingFormModal({ visible, title, submitLabel, initialValues, 
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
-          <View style={styles.header}>
-            <Text style={styles.title}>{title}</Text>
-            <Pressable onPress={onClose} hitSlop={8}>
-              <Ionicons name="close-circle" size={26} color={colors.danger} />
-            </Pressable>
-          </View>
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+        <Pressable style={styles.backdrop} onPress={onClose}>
+          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.header}>
+              <Text style={styles.title}>{title}</Text>
+              <Pressable onPress={onClose} hitSlop={8}>
+                <Ionicons name="close-circle" size={26} color={colors.danger} />
+              </Pressable>
+            </View>
 
-          <ScrollView contentContainerStyle={styles.content}>
-            <Pressable style={styles.field} onPress={() => setDatePickerVisible(true)}>
-              <Ionicons name="calendar-outline" size={20} color={colors.black} />
-              <Text style={styles.fieldLabel}>{date ? date.split("-").reverse().join("-") : "Datum"}</Text>
-            </Pressable>
-            <Pressable style={styles.field} onPress={() => setTimePickerVisible(true)}>
-              <Ionicons name="time-outline" size={20} color={colors.black} />
-              <Text style={styles.fieldLabel}>{time ? time.slice(0, 5) : "Tijd"}</Text>
-            </Pressable>
-            {dateTimeLabel ? <Text style={styles.preview}>{dateTimeLabel}</Text> : null}
+            <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+              <Pressable style={styles.field} onPress={() => setDatePickerVisible(true)}>
+                <Ionicons name="calendar-outline" size={20} color={colors.black} />
+                <Text style={styles.fieldLabel}>{date ? date.split("-").reverse().join("-") : "Datum"}</Text>
+              </Pressable>
+              <Pressable style={styles.field} onPress={() => setTimePickerVisible(true)}>
+                <Ionicons name="time-outline" size={20} color={colors.black} />
+                <Text style={styles.fieldLabel}>{time ? time.slice(0, 5) : "Tijd"}</Text>
+              </Pressable>
+              {dateTimeLabel ? <Text style={styles.preview}>{dateTimeLabel}</Text> : null}
 
-            <Pressable style={styles.field} onPress={() => setSportPickerVisible(true)}>
-              <Ionicons name="basketball-outline" size={20} color={colors.black} />
-              <Text style={styles.fieldLabel}>{sportLabel}</Text>
-            </Pressable>
+              <Pressable style={styles.field} onPress={() => setSportPickerVisible(true)}>
+                <Ionicons name="basketball-outline" size={20} color={colors.black} />
+                <Text style={styles.fieldLabel}>{sportLabel}</Text>
+              </Pressable>
 
-            <Input
-              label="Locatie (optioneel)"
-              placeholder="Bijv. Sportpark De Toekomst"
-              value={location}
-              onChangeText={setLocation}
-            />
-            <Input
-              label="Opmerking (optioneel)"
-              placeholder="Bijv. Ik neem een extra racket mee"
-              value={note}
-              onChangeText={setNote}
-              multiline
-              style={styles.noteInput}
-            />
+              <Input
+                label="Locatie (optioneel)"
+                placeholder="Bijv. Sportpark De Toekomst"
+                value={location}
+                onChangeText={setLocation}
+              />
+              <Input
+                label="Opmerking (optioneel)"
+                placeholder="Bijv. Ik neem een extra racket mee"
+                value={note}
+                onChangeText={setNote}
+                multiline
+                style={styles.noteInput}
+              />
 
-            <Button label={submitLabel} onPress={onSubmitPress} loading={submitting} style={styles.submit} />
-          </ScrollView>
+              <Button label={submitLabel} onPress={onSubmitPress} loading={submitting} style={styles.submit} />
+            </ScrollView>
+          </Pressable>
         </Pressable>
-      </Pressable>
+      </KeyboardAvoidingView>
 
       <SelectModal
         visible={sportPickerVisible}
@@ -148,6 +150,9 @@ export function TrainingFormModal({ visible, title, submitLabel, initialValues, 
 }
 
 const styles = StyleSheet.create({
+  flex: {
+    flex: 1,
+  },
   backdrop: {
     flex: 1,
     backgroundColor: colors.overlay,

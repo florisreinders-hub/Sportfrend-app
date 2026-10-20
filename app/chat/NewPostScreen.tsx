@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
@@ -80,41 +80,45 @@ export default function NewPostScreen({ navigation, route }: Props) {
         <Text style={styles.title}>Bericht plaatsen</Text>
       </View>
 
-      <Input
-        placeholder="Wie heeft zin om te padellen dit weekend?"
-        value={body}
-        onChangeText={setBody}
-        multiline
-        style={styles.bodyInput}
-      />
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+        <ScrollView keyboardShouldPersistTaps="handled">
+          <Input
+            placeholder="Wie heeft zin om te padellen dit weekend?"
+            value={body}
+            onChangeText={setBody}
+            multiline
+            style={styles.bodyInput}
+          />
 
-      {imageUri ? <Image source={{ uri: imageUri }} style={styles.imagePreview} /> : null}
+          {imageUri ? <Image source={{ uri: imageUri }} style={styles.imagePreview} /> : null}
 
-      <View style={styles.toolRow}>
-        <Pressable onPress={pickImage} style={styles.toolButton}>
-          <Ionicons name="image-outline" size={22} color={colors.black} />
-          <Text style={styles.toolLabel}>Foto</Text>
-        </Pressable>
-        <Pressable style={styles.toolButton} onPress={() => setSportPickerVisible(true)}>
-          <Ionicons name="basketball-outline" size={22} color={colors.black} />
-          <Text style={styles.toolLabel}>{sportLabel}</Text>
-        </Pressable>
-        <Pressable style={styles.toolButton} onPress={() => setDatePickerVisible(true)}>
-          <Ionicons name="calendar-outline" size={22} color={colors.black} />
-          <Text style={styles.toolLabel}>{dateLabel ?? "Datum (optioneel)"}</Text>
-        </Pressable>
-      </View>
+          <View style={styles.toolRow}>
+            <Pressable onPress={pickImage} style={styles.toolButton}>
+              <Ionicons name="image-outline" size={22} color={colors.black} />
+              <Text style={styles.toolLabel}>Foto</Text>
+            </Pressable>
+            <Pressable style={styles.toolButton} onPress={() => setSportPickerVisible(true)}>
+              <Ionicons name="basketball-outline" size={22} color={colors.black} />
+              <Text style={styles.toolLabel}>{sportLabel}</Text>
+            </Pressable>
+            <Pressable style={styles.toolButton} onPress={() => setDatePickerVisible(true)}>
+              <Ionicons name="calendar-outline" size={22} color={colors.black} />
+              <Text style={styles.toolLabel}>{dateLabel ?? "Datum (optioneel)"}</Text>
+            </Pressable>
+          </View>
 
-      {dateLabel ? (
-        <Pressable style={styles.clearDate} onPress={() => setEventDate(null)} hitSlop={8}>
-          <Ionicons name="close-circle" size={16} color={colors.textSecondary} />
-          <Text style={styles.clearDateText}>Datum verwijderen</Text>
-        </Pressable>
-      ) : null}
+          {dateLabel ? (
+            <Pressable style={styles.clearDate} onPress={() => setEventDate(null)} hitSlop={8}>
+              <Ionicons name="close-circle" size={16} color={colors.textSecondary} />
+              <Text style={styles.clearDateText}>Datum verwijderen</Text>
+            </Pressable>
+          ) : null}
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+          {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      <Button label="Plaatsen" onPress={onPost} loading={posting} disabled={!body.trim()} style={styles.cta} />
+          <Button label="Plaatsen" onPress={onPost} loading={posting} disabled={!body.trim()} style={styles.cta} />
+        </ScrollView>
+      </KeyboardAvoidingView>
 
       <SelectModal
         visible={sportPickerVisible}
@@ -137,6 +141,9 @@ export default function NewPostScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
+  flex: {
+    flex: 1,
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",
