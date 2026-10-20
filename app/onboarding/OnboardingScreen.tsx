@@ -7,7 +7,7 @@ import { ScreenContainer } from "@/components/ScreenContainer";
 import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import {
-  ONBOARDING_AVAILABILITY_CTA,
+  ONBOARDING_COMPLETE_PROFILE_CTA,
   ONBOARDING_LATER_LABEL,
   ONBOARDING_NEXT_LABEL,
   ONBOARDING_SKIP_LABEL,
@@ -41,7 +41,7 @@ export default function OnboardingScreen({ navigation }: Props) {
   // swipe, on any screen size.
   const [pageWidth, setPageWidth] = useState(0);
 
-  const finish = (destination?: "Availability") => {
+  const finish = (destination?: "EditProfile") => {
     if (userId) markOnboardingSeen(userId);
     if (destination) {
       navigation.reset({ index: 1, routes: [{ name: "Home" }, { name: destination }] });
@@ -98,8 +98,8 @@ export default function OnboardingScreen({ navigation }: Props) {
         {isLast ? (
           <>
             <Button
-              label={ONBOARDING_AVAILABILITY_CTA}
-              onPress={() => finish("Availability")}
+              label={ONBOARDING_COMPLETE_PROFILE_CTA}
+              onPress={() => finish("EditProfile")}
               style={styles.cta}
             />
             <Button label={ONBOARDING_LATER_LABEL} onPress={() => finish()} variant="outline" style={styles.cta} />

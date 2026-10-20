@@ -184,6 +184,13 @@ export default function EditProfileScreen({ navigation }: Props) {
             multiline
             style={styles.bioInput}
           />
+
+          <Text style={styles.label}>Beschikbaarheid</Text>
+          <Pressable style={styles.availabilityRow} onPress={() => navigation.navigate("Availability")}>
+            <Ionicons name="calendar-outline" size={20} color={colors.black} />
+            <Text style={styles.availabilityRowText}>Mijn beschikbaarheid</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+          </Pressable>
         </ScrollView>
       )}
 
@@ -285,5 +292,22 @@ const styles = StyleSheet.create({
     height: 96,
     textAlignVertical: "top",
     paddingTop: spacing.sm,
+  },
+  availabilityRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    height: 48,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.surface,
+  },
+  availabilityRowText: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: fontSizes.md,
+    color: colors.textPrimary,
   },
 });
