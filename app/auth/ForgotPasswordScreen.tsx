@@ -7,6 +7,7 @@ import { Input } from "@/components/Input";
 import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { getAuthErrorMessage, sendPasswordReset } from "@/lib/auth";
+import { CHECK_SPAM_FOLDER_HINT } from "@/constants/messages";
 
 const logoFull = require("@/assets/logo-full.png");
 
@@ -51,6 +52,7 @@ export default function ForgotPasswordScreen({ navigation }: Props) {
               Als {email.trim()} bij ons bekend is, ontvang je een e-mail met een link om je wachtwoord opnieuw in te
               stellen.
             </Text>
+            <Text style={styles.hint}>{CHECK_SPAM_FOLDER_HINT}</Text>
             <Button label="Naar inloggen" onPress={() => navigation.navigate("Login")} style={styles.cta} />
             <Text
               style={styles.link}
@@ -115,6 +117,13 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.md,
     color: colors.black,
     textAlign: "center",
+  },
+  hint: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.sm,
+    color: colors.textSecondary,
+    textAlign: "center",
+    marginTop: spacing.xs,
     marginBottom: spacing.md,
   },
   cta: {
