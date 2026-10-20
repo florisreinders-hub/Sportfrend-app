@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { Button } from "@/components/Button";
@@ -78,75 +78,80 @@ export function ReportModal({ visible, onClose, reporterId, reportedId, reported
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
-      <Pressable style={styles.backdrop} onPress={handleClose}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
-          <View style={styles.header}>
-            <Text style={styles.title}>{reportedName} rapporteren</Text>
-            <Pressable onPress={handleClose} hitSlop={8}>
-              <Ionicons name="close-circle" size={26} color={colors.danger} />
-            </Pressable>
-          </View>
-
-          {done ? (
-            <View style={styles.content}>
-              <Text style={styles.doneText}>
-                Bedankt, je melding is verstuurd. Ons team bekijkt deze zo snel mogelijk.
-              </Text>
-              <Button label="Sluiten" onPress={handleClose} style={{ marginTop: spacing.md }} />
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+        <Pressable style={styles.backdrop} onPress={handleClose}>
+          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.header}>
+              <Text style={styles.title}>{reportedName} rapporteren</Text>
+              <Pressable onPress={handleClose} hitSlop={8}>
+                <Ionicons name="close-circle" size={26} color={colors.danger} />
+              </Pressable>
             </View>
-          ) : limitReached ? (
-            <View style={styles.content}>
-              <Text style={styles.limitText}>
-                Je hebt vandaag het maximum van {dailyStatus!.dailyLimit} rapportages bereikt. Probeer het morgen
-                opnieuw.
-              </Text>
-              <Button label="Sluiten" onPress={handleClose} style={{ marginTop: spacing.md }} />
-            </View>
-          ) : (
-            <View style={styles.content}>
-              <Text style={styles.label}>Reden</Text>
-              {REPORT_REASONS.map((option) => {
-                const isSelected = option.key === reason;
-                return (
-                  <Pressable
-                    key={option.key}
-                    style={[styles.option, isSelected && styles.optionSelected]}
-                    onPress={() => setReason(option.key)}
-                  >
-                    <Text style={[styles.optionText, isSelected && styles.optionTextSelected]}>{option.label}</Text>
-                    {isSelected ? <Ionicons name="checkmark" size={20} color={colors.black} /> : null}
-                  </Pressable>
-                );
-              })}
 
-              <Input
-                label="Toelichting (optioneel)"
-                placeholder="Vertel wat er is gebeurd"
-                value={details}
-                onChangeText={setDetails}
-                multiline
-                numberOfLines={3}
-                style={styles.detailsInput}
-              />
+            {done ? (
+              <View style={styles.content}>
+                <Text style={styles.doneText}>
+                  Bedankt, je melding is verstuurd. Ons team bekijkt deze zo snel mogelijk.
+                </Text>
+                <Button label="Sluiten" onPress={handleClose} style={{ marginTop: spacing.md }} />
+              </View>
+            ) : limitReached ? (
+              <View style={styles.content}>
+                <Text style={styles.limitText}>
+                  Je hebt vandaag het maximum van {dailyStatus!.dailyLimit} rapportages bereikt. Probeer het morgen
+                  opnieuw.
+                </Text>
+                <Button label="Sluiten" onPress={handleClose} style={{ marginTop: spacing.md }} />
+              </View>
+            ) : (
+              <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+                <Text style={styles.label}>Reden</Text>
+                {REPORT_REASONS.map((option) => {
+                  const isSelected = option.key === reason;
+                  return (
+                    <Pressable
+                      key={option.key}
+                      style={[styles.option, isSelected && styles.optionSelected]}
+                      onPress={() => setReason(option.key)}
+                    >
+                      <Text style={[styles.optionText, isSelected && styles.optionTextSelected]}>{option.label}</Text>
+                      {isSelected ? <Ionicons name="checkmark" size={20} color={colors.black} /> : null}
+                    </Pressable>
+                  );
+                })}
 
-              {error ? <Text style={styles.errorText}>{error}</Text> : null}
+                <Input
+                  label="Toelichting (optioneel)"
+                  placeholder="Vertel wat er is gebeurd"
+                  value={details}
+                  onChangeText={setDetails}
+                  multiline
+                  numberOfLines={3}
+                  style={styles.detailsInput}
+                />
 
-              <Button
-                label="Rapporteren"
-                variant="danger"
-                onPress={onSubmit}
-                disabled={!reason}
-                loading={submitting}
-              />
-            </View>
-          )}
+                {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+                <Button
+                  label="Rapporteren"
+                  variant="danger"
+                  onPress={onSubmit}
+                  disabled={!reason}
+                  loading={submitting}
+                />
+              </ScrollView>
+            )}
+          </Pressable>
         </Pressable>
-      </Pressable>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  flex: {
+    flex: 1,
+  },
   backdrop: {
     flex: 1,
     backgroundColor: colors.overlay,
@@ -157,6 +162,12 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: radii.lg,
     borderTopRightRadius: radii.lg,
     paddingBottom: spacing.lg,
+    // Bounds the sheet so its ScrollView (the Reden/Toelichting/
+    // Rapporteren form, see the render below) actually scrolls instead of
+    // just growing past the screen - needed now that a KeyboardAvoidingView
+    // around this sheet shrinks the available height when the keyboard is
+    // open, same reasoning as TrainingFormModal's own sheet.
+    maxHeight: "85%",
   },
   header: {
     flexDirection: "row",
