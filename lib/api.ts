@@ -1077,11 +1077,12 @@ export async function blockUser(blockerId: string, blockedId: string) {
   if (error) throw error;
 }
 
-// The four fetchers below back the "Mijn gegevens opvragen" export
+// The fetchers below back the "Mijn gegevens opvragen" export
 // (lib/dataExport.ts, SettingsScreen -> DataExportScreen) - each is scoped
 // to rows RLS already lets this user read about themselves (own swipes,
-// own support requests, own filed reports, own blocks), so no service-role
-// access is needed to assemble a complete export.
+// own support requests, own filed reports, own blocks, own trainings,
+// own notifications), so no service-role access is needed to assemble a
+// complete export.
 
 export type OwnSwipe = { swiped_id: string; direction: string; created_at: string; swiped: Profile | null };
 
@@ -1141,6 +1142,65 @@ export async function fetchOwnBlocks(userId: string): Promise<OwnBlock[]> {
     .order("created_at", { ascending: false });
   if (error) throw error;
   return (data ?? []) as unknown as OwnBlock[];
+}
+
+export type OwnTraining = {
+  match_id: string;
+  created_by: string;
+  date: string;
+  time: string;
+  sport: string | null;
+  location: string | null;
+  note: string | null;
+  status: string;
+  created_at: string;
+};
+
+/**
+ * Trainingsvoorstellen (0024_trainings_planner.sql) voor elke match waar
+ * deze gebruiker deel van is - "Match participants can read trainings"
+ * scoopt dit al tot precies die twee deelnemers, dezelfde grens als
+ * fetchConnections() hierboven voor matches/berichten (een trainingsvoorstel
+ * van de andere deelnemer hoort net zo goed bij "mijn gegevens" als een
+ * bericht van die ander dat al wel in de export staat). Filtert hier
+ * aanvullend op dezelfde match-ids (defense-in-depth, zelfde patroon als
+ * fetchOwnSwipes/fetchOwnReports/fetchOwnBlocks) in plaats van alleen op
+ * RLS te vertrouwen.
+ */
+export async function fetchOwnTrainings(userId: string): Promise<OwnTraining[]> {
+  const { data: matches, error: matchesError } = await supabase
+    .from("matches")
+    .select("id")
+    .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`);
+  if (matchesError) throw matchesError;
+
+  const matchIds = (matches ?? []).map((m) => m.id);
+  if (matchIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from("trainings")
+    .select("match_id, created_by, date, time, sport, location, note, status, created_at")
+    .in("match_id", matchIds)
+    .order("date", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as OwnTraining[];
+}
+
+export type OwnNotification = {
+  type: "match" | "message" | "moderation_update";
+  reference_id: string;
+  is_read: boolean;
+  created_at: string;
+};
+
+export async function fetchOwnNotifications(userId: string): Promise<OwnNotification[]> {
+  const { data, error } = await supabase
+    .from("notifications")
+    .select("type, reference_id, is_read, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as OwnNotification[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────

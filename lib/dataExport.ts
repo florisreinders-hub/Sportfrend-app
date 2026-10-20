@@ -4,16 +4,20 @@ import {
   fetchMessages,
   fetchMyLocation,
   fetchOwnBlocks,
+  fetchOwnNotifications,
   fetchOwnReports,
   fetchOwnSupportRequests,
   fetchOwnSwipes,
+  fetchOwnTrainings,
   fetchPostsByAuthor,
   fetchSubscription,
   formatAvailabilityDays,
   Message,
   OwnBlock,
+  OwnNotification,
   OwnReport,
   OwnSwipe,
+  OwnTraining,
   PROFILE_COLUMNS,
   Profile,
 } from "./api";
@@ -54,22 +58,38 @@ export type DataExportResult = {
   supportRequests: Awaited<ReturnType<typeof fetchOwnSupportRequests>>;
   reports: OwnReport[];
   blocks: OwnBlock[];
+  trainings: OwnTraining[];
+  notifications: OwnNotification[];
 };
 
 export async function fetchDataExport(userId: string): Promise<DataExportResult> {
-  const [profileResult, termsResult, location, connections, posts, swipes, subscription, supportRequests, reports, blocks] =
-    await Promise.all([
-      supabase.from("profiles").select(PROFILE_COLUMNS).eq("id", userId).maybeSingle(),
-      supabase.from("profiles").select("terms_accepted_at").eq("id", userId).maybeSingle(),
-      fetchMyLocation(),
-      fetchConnections(userId),
-      fetchPostsByAuthor(userId),
-      fetchOwnSwipes(userId),
-      fetchSubscription(userId),
-      fetchOwnSupportRequests(userId),
-      fetchOwnReports(userId),
-      fetchOwnBlocks(userId),
-    ]);
+  const [
+    profileResult,
+    termsResult,
+    location,
+    connections,
+    posts,
+    swipes,
+    subscription,
+    supportRequests,
+    reports,
+    blocks,
+    trainings,
+    notifications,
+  ] = await Promise.all([
+    supabase.from("profiles").select(PROFILE_COLUMNS).eq("id", userId).maybeSingle(),
+    supabase.from("profiles").select("terms_accepted_at").eq("id", userId).maybeSingle(),
+    fetchMyLocation(),
+    fetchConnections(userId),
+    fetchPostsByAuthor(userId),
+    fetchOwnSwipes(userId),
+    fetchSubscription(userId),
+    fetchOwnSupportRequests(userId),
+    fetchOwnReports(userId),
+    fetchOwnBlocks(userId),
+    fetchOwnTrainings(userId),
+    fetchOwnNotifications(userId),
+  ]);
   if (profileResult.error) throw profileResult.error;
   if (termsResult.error) throw termsResult.error;
 
@@ -93,11 +113,19 @@ export async function fetchDataExport(userId: string): Promise<DataExportResult>
     supportRequests,
     reports,
     blocks,
+    trainings,
+    notifications,
   };
 }
 
 const dateFmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString("nl-NL") : "-");
 const dateOnlyFmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("nl-NL") : "-");
+
+const NOTIFICATION_TYPE_LABELS: Record<OwnNotification["type"], string> = {
+  match: "Nieuwe connectie",
+  message: "Nieuw bericht",
+  moderation_update: "Rapportage afgehandeld",
+};
 
 /** Plain text - used both for the in-app view (DataExportScreen) and as the export e-mail's body. */
 export function formatDataExportText(data: DataExportResult, userId: string, userEmail: string): string {
@@ -207,6 +235,27 @@ export function formatDataExportText(data: DataExportResult, userId: string, use
     // b.blocked is always null once a block exists - the blocking itself hides
     // that profile from you too (see fetchOwnBlocks's comment in lib/api.ts).
     lines.push(`- Geblokkeerd op ${dateFmt(b.created_at)} (gebruikers-ID ${b.blocked_id} - profiel niet meer zichtbaar na blokkade)`);
+  });
+  lines.push("");
+
+  lines.push(`=== TRAININGSVOORSTELLEN (${data.trainings.length}) ===`);
+  if (data.trainings.length === 0) {
+    lines.push("Geen trainingsvoorstellen.");
+  }
+  data.trainings.forEach((t) => {
+    const voorgesteldDoor = t.created_by === userId ? "jou" : "de andere deelnemer";
+    lines.push(
+      `- [${dateOnlyFmt(t.date)} ${t.time.slice(0, 5)}] ${t.sport ?? "-"}${t.location ? ` bij ${t.location}` : ""} - voorgesteld door ${voorgesteldDoor} (status: ${t.status})${t.note ? ` - opmerking: ${t.note}` : ""}`
+    );
+  });
+  lines.push("");
+
+  lines.push(`=== MELDINGEN (${data.notifications.length}) ===`);
+  if (data.notifications.length === 0) {
+    lines.push("Geen meldingen.");
+  }
+  data.notifications.forEach((n) => {
+    lines.push(`- [${dateFmt(n.created_at)}] ${NOTIFICATION_TYPE_LABELS[n.type]} (gelezen: ${n.is_read ? "ja" : "nee"})`);
   });
 
   return lines.join("\n");
