@@ -40,7 +40,18 @@
 --                    een policy breder is dan wat de app gebruikt, zoals
 --                    `swipes`'  "for all" terwijl de app nooit een swipe
 --                    verwijdert, wordt hier niet breder gegrant dan
---                    nodig - "alleen de rechten die nodig zijn").
+--                    nodig - "alleen de rechten die nodig zijn"). Daarom
+--                    staat `revoke all` hieronder (op profiles na, zie
+--                    de uitleg bij die tabel) ook op authenticated, niet
+--                    alleen op anon: op de live database heeft
+--                    authenticated via de oude automatische default-grant
+--                    op elke tabel nog altijd TRUNCATE/REFERENCES/TRIGGER
+--                    en, waar de app die verb niet gebruikt, ook nog
+--                    DELETE/UPDATE (bv. `swipes` had al DELETE, nooit
+--                    gebruikt) - zonder deze revoke zou de hieronder
+--                    bedoelde kolom van "alleen wat nodig is" op de live
+--                    database niet kloppen, puur omdat er nooit eerder
+--                    iets is ingetrokken.
 --   service_role   - alle vier de verbs op elke tabel: dit is de
 --                    vertrouwde backend-rol (Edge Functions, RLS-bypass
 --                    by design), dezelfde volledige-toegang-conventie
@@ -90,8 +101,22 @@ grant usage on schema public to anon, authenticated, service_role;
 -- ─────────────────────────────────────────────────────────────────────────
 -- profiles - alleen de ontbrekende INSERT-grant; SELECT/UPDATE staan al
 -- kolom-niveau gegrant in 0014/0033 (zie uitleg hierboven).
+--
+-- authenticated heeft op de live database, via de oude automatische
+-- default-grant, nog altijd tabelniveau DELETE/TRUNCATE/REFERENCES/
+-- TRIGGER op profiles (nooit eerder ingetrokken - 0014/0033 raakten
+-- alleen SELECT/UPDATE aan). Geen van die vier wordt door de app gebruikt
+-- (geen enkele `.delete()`-aanroep op profiles - account-verwijdering
+-- loopt via de delete-account Edge Function met de service-role-client
+-- en een `on delete cascade` vanaf auth.users; TRUNCATE/REFERENCES/
+-- TRIGGER zijn DDL-achtige rechten die geen enkele clientrol nodig heeft)
+-- en geen enkele RLS-policy staat een DELETE op profiles toe - dus hier
+-- expliciet ingetrokken. DELETE/TRUNCATE/REFERENCES/TRIGGER zijn nooit
+-- kolom-niveau te scopen in Postgres, dus deze revoke kan de kolomrechten
+-- van 0014/0033 niet raken.
 -- ─────────────────────────────────────────────────────────────────────────
 revoke all on public.profiles from anon;
+revoke delete, truncate, references, trigger on public.profiles from authenticated;
 grant insert on public.profiles to authenticated;
 grant all on public.profiles to service_role;
 
@@ -101,7 +126,7 @@ grant all on public.profiles to service_role;
 -- (recordSwipe(), lib/api.ts) - geen delete, dus niet breder gegrant dan
 -- dat ondanks de "for all"-policy.
 -- ─────────────────────────────────────────────────────────────────────────
-revoke all on public.swipes from anon;
+revoke all on public.swipes from anon, authenticated;
 grant select, insert, update on public.swipes to authenticated;
 grant all on public.swipes to service_role;
 
@@ -111,16 +136,35 @@ grant all on public.swipes to service_role;
 -- met de rechten van de functie-eigenaar, niet die van de aanroeper) -
 -- authenticated zelf heeft dus geen insert/update/delete nodig.
 -- ─────────────────────────────────────────────────────────────────────────
-revoke all on public.discover_daily_views from anon;
+revoke all on public.discover_daily_views from anon, authenticated;
 grant select on public.discover_daily_views to authenticated;
 grant all on public.discover_daily_views to service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────
--- matches - RLS: select/insert/delete (recordSwipe() upsert, deleteMatch()
--- "Vriend verwijderen") - geen update-policy, geen update-aanroep in de app.
+-- matches - RLS: select/insert/delete (recordSwipe()'s upsert,
+-- deleteMatch() "Vriend verwijderen").
+--
+-- UPDATE is hier bewust wél toegevoegd, ook al roept de app nooit zelf
+-- `.update()` op matches: recordSwipe()'s `.upsert({user_a_id, user_b_id},
+-- {onConflict: "user_a_id,user_b_id"})` (lib/api.ts) genereert via
+-- PostgREST's resolution=merge-duplicates altijd een
+-- `ON CONFLICT (...) DO UPDATE SET user_a_id = excluded.user_a_id,
+-- user_b_id = excluded.user_b_id` - óók wanneer de conflict-kolommen de
+-- enige payload-kolommen zijn (PostgREST stript de SET-lijst niet tot
+-- "echt wijzigende" kolommen). Zonder UPDATE-grant zou een hernieuwde
+-- recordSwipe() tussen een al-gematched paar (bv. een dubbele like-
+-- aanroep) op "permission denied" stuiten in plaats van stilzwijgend te
+-- slagen.
+--
+-- Let op - dit lost alleen de GRANT-laag op: er is geen UPDATE-RLS-policy
+-- op matches (alleen select/insert/delete, zie 0001_init.sql), dus
+-- diezelfde DO UPDATE-aanroep zou daarna nog steeds op een RLS-fout
+-- stuiten in plaats van een grant-fout. Dat is een apart, al langer
+-- bestaand (en hier niet gefixed) RLS-gat - deze migratie behandelt
+-- uitsluitend GRANT/REVOKE, geen RLS-policies.
 -- ─────────────────────────────────────────────────────────────────────────
-revoke all on public.matches from anon;
-grant select, insert, delete on public.matches to authenticated;
+revoke all on public.matches from anon, authenticated;
+grant select, insert, update, delete on public.matches to authenticated;
 grant all on public.matches to service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────
@@ -128,7 +172,7 @@ grant all on public.matches to service_role;
 -- geen update (ook niet voor read_at, die kolom wordt nergens vanuit de
 -- client gezet) of delete.
 -- ─────────────────────────────────────────────────────────────────────────
-revoke all on public.messages from anon;
+revoke all on public.messages from anon, authenticated;
 grant select, insert on public.messages to authenticated;
 grant all on public.messages to service_role;
 
@@ -136,7 +180,7 @@ grant all on public.messages to service_role;
 -- posts - RLS: select/insert/delete (createPost(), deletePost()) - geen
 -- update-aanroep in de app, geen update-policy.
 -- ─────────────────────────────────────────────────────────────────────────
-revoke all on public.posts from anon;
+revoke all on public.posts from anon, authenticated;
 grant select, insert, delete on public.posts to authenticated;
 grant all on public.posts to service_role;
 
@@ -144,7 +188,7 @@ grant all on public.posts to service_role;
 -- post_likes - RLS: select + "for all" - app gebruikt select/insert/delete
 -- (toggleLike(), lib/api.ts), geen update.
 -- ─────────────────────────────────────────────────────────────────────────
-revoke all on public.post_likes from anon;
+revoke all on public.post_likes from anon, authenticated;
 grant select, insert, delete on public.post_likes to authenticated;
 grant all on public.post_likes to service_role;
 
@@ -154,7 +198,7 @@ grant all on public.post_likes to service_role;
 -- die migratie is toen al gedropt) - plan/status worden uitsluitend nog
 -- server-side gezet, via revenuecat-webhook met de service-role-client.
 -- ─────────────────────────────────────────────────────────────────────────
-revoke all on public.subscriptions from anon;
+revoke all on public.subscriptions from anon, authenticated;
 grant select on public.subscriptions to authenticated;
 grant all on public.subscriptions to service_role;
 
@@ -163,23 +207,36 @@ grant all on public.subscriptions to service_role;
 -- moderator-select/update (resolveReport()) - geen delete-policy, geen
 -- delete-aanroep.
 -- ─────────────────────────────────────────────────────────────────────────
-revoke all on public.reports from anon;
+revoke all on public.reports from anon, authenticated;
 grant select, insert, update on public.reports to authenticated;
 grant all on public.reports to service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────
--- blocks - RLS: insert/select/delete - geen update-policy (blockUser()'s
--- upsert raakt in de praktijk nooit het update-pad omdat (blocker_id,
--- blocked_id) de unieke sleutel zelf is).
+-- blocks - RLS: insert/select/delete (blockUser()'s upsert).
+--
+-- UPDATE is hier bewust wél toegevoegd - zelfde reden als bij `matches`
+-- hierboven: blockUser()'s `.upsert({blocker_id, blocked_id}, {onConflict:
+-- "blocker_id,blocked_id"})` (lib/api.ts) genereert via PostgREST's
+-- resolution=merge-duplicates altijd een DO UPDATE SET-clausule voor alle
+-- payload-kolommen, ook als die exact de conflict-sleutel zijn. Een
+-- eerder vermoeden dat dit update-pad "in de praktijk nooit" geraakt
+-- wordt (omdat er niets anders te wijzigen is dan de sleutel zelf) klopt
+-- dus niet met PostgREST's daadwerkelijke upsert-SQL - een gebruiker die
+-- iemand blokkeert die al geblokkeerd was, zou zonder deze grant op
+-- "permission denied" stuiten.
+--
+-- Zelfde kanttekening als bij `matches`: er is geen UPDATE-RLS-policy op
+-- blocks (alleen select/insert/delete, zie 0001_init.sql) - dit dicht
+-- alleen het GRANT-gat, niet een eventueel onderliggend RLS-gat.
 -- ─────────────────────────────────────────────────────────────────────────
-revoke all on public.blocks from anon;
-grant select, insert, delete on public.blocks to authenticated;
+revoke all on public.blocks from anon, authenticated;
+grant select, insert, update, delete on public.blocks to authenticated;
 grant all on public.blocks to service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- support_requests - RLS: alleen insert/select voor de client.
 -- ─────────────────────────────────────────────────────────────────────────
-revoke all on public.support_requests from anon;
+revoke all on public.support_requests from anon, authenticated;
 grant select, insert on public.support_requests to authenticated;
 grant all on public.support_requests to service_role;
 
@@ -188,7 +245,7 @@ grant all on public.support_requests to service_role;
 -- updateTrainingProposal(), respondToTraining()) - geen delete-policy,
 -- geen delete-aanroep.
 -- ─────────────────────────────────────────────────────────────────────────
-revoke all on public.trainings from anon;
+revoke all on public.trainings from anon, authenticated;
 grant select, insert, update on public.trainings to authenticated;
 grant all on public.trainings to service_role;
 
@@ -204,7 +261,7 @@ grant all on public.content_filter_words to service_role;
 -- flagged_content - RLS: alleen een moderator-only select-policy - de
 -- GRANT staat hier los van de is_moderator()-check, die blijft RLS's taak.
 -- ─────────────────────────────────────────────────────────────────────────
-revoke all on public.flagged_content from anon;
+revoke all on public.flagged_content from anon, authenticated;
 grant select on public.flagged_content to authenticated;
 grant all on public.flagged_content to service_role;
 
@@ -212,7 +269,7 @@ grant all on public.flagged_content to service_role;
 -- notifications - RLS: select/update (markNotificationRead()) - insert
 -- gebeurt uitsluitend binnen de drie security-definer triggerfuncties.
 -- ─────────────────────────────────────────────────────────────────────────
-revoke all on public.notifications from anon;
+revoke all on public.notifications from anon, authenticated;
 grant select, update on public.notifications to authenticated;
 grant all on public.notifications to service_role;
 
@@ -231,13 +288,13 @@ declare
     array['profiles', 'select,insert,update'],
     array['swipes', 'select,insert,update'],
     array['discover_daily_views', 'select'],
-    array['matches', 'select,insert,delete'],
+    array['matches', 'select,insert,update,delete'],
     array['messages', 'select,insert'],
     array['posts', 'select,insert,delete'],
     array['post_likes', 'select,insert,delete'],
     array['subscriptions', 'select'],
     array['reports', 'select,insert,update'],
-    array['blocks', 'select,insert,delete'],
+    array['blocks', 'select,insert,update,delete'],
     array['support_requests', 'select,insert'],
     array['trainings', 'select,insert,update'],
     array['content_filter_words', ''],
@@ -301,6 +358,85 @@ begin
   end loop;
 
   raise notice 'Alle % tabellen in public hebben expliciete grants: anon niets, authenticated precies de bestaande RLS-scope, service_role alles.', array_length(v_tables_and_verbs, 1);
+end $$;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Zelfcontrole - profiles, kolom-niveau. De generieke zelfcontrole
+-- hierboven gebruikt has_any_column_privilege en bevestigt dus alleen dat
+-- authenticated SELECT/UPDATE heeft op TENMINSTE één kolom van profiles -
+-- dat zegt niets over de live kolomverdeling zelf (0014/0033/0038, niet
+-- door deze migratie aangepast). Deze zelfcontrole legt die verdeling
+-- expliciet vast per kolom, zodat een toekomstige wijziging aan 0014/0033/
+-- 0038 die de verdeling verschuift hier meteen opvalt:
+--   - latitude, longitude, expo_push_token: alleen schrijven (UPDATE wel,
+--     SELECT niet) - privacy (locatie) resp. misbruikpreventie
+--     (spoofbare pushmeldingen, zie 0001_init.sql's uitleg).
+--   - terms_accepted_at: alleen lezen (SELECT wel, UPDATE niet) - de
+--     gebruiker mag niet zelf de aanvaardingsdatum van de voorwaarden
+--     terugdraaien.
+--   - alle overige kolommen: zowel lezen als schrijven.
+-- ─────────────────────────────────────────────────────────────────────────
+do $$
+declare
+  -- latitude/longitude zijn hier wél strikt (SELECT niet, UPDATE wel) -
+  -- die twee staan al sinds 0014 ononderbroken zo. expo_push_token staat
+  -- er apart onder (zie direct hieronder): die kolom verliest haar UPDATE-
+  -- recht hier binnen déze migratie-run nog tijdelijk (0033's revoke, zie
+  -- dat bestand se eigen `v_known_gap_columns`-uitleg) en krijgt hem pas
+  -- terug via 0038_profiles_expo_push_token_update_grant.sql, die ná 0037
+  -- in de migratievolgorde staat. Een harde `raise exception` hier op
+  -- expo_push_token's UPDATE zou 0037 dus op elke omgeving laten falen
+  -- vóórdat 0038 ooit de kans krijgt om te draaien.
+  v_write_only_columns text[] := array['latitude', 'longitude'];
+  v_read_only_columns text[] := array['terms_accepted_at'];
+  v_read_write_columns text[] := array[
+    'id', 'full_name', 'birthdate', 'gender', 'bio', 'sport', 'level', 'city',
+    'search_radius_km', 'avatar_url', 'photo_url', 'is_onboarded',
+    'push_notifications_enabled', 'profile_visible', 'availability_days',
+    'created_at', 'updated_at'
+  ];
+  v_col text;
+begin
+  foreach v_col in array v_write_only_columns loop
+    if has_column_privilege('authenticated', 'public.profiles', v_col, 'SELECT') then
+      raise exception 'authenticated kan % van public.profiles lezen - zou write-only moeten zijn (geen SELECT).', v_col;
+    end if;
+    if not has_column_privilege('authenticated', 'public.profiles', v_col, 'UPDATE') then
+      raise exception 'authenticated kan % van public.profiles niet schrijven - zou write-only (UPDATE wel) moeten zijn.', v_col;
+    end if;
+  end loop;
+
+  -- expo_push_token: write-only net als latitude/longitude, maar het
+  -- UPDATE-recht wordt pas door 0038 (ná dit bestand) herbevestigd - zie
+  -- de uitleg bij v_write_only_columns hierboven. Alleen de SELECT-kant
+  -- (nooit leesbaar) is op dit punt in de migratievolgorde al een harde
+  -- garantie; de UPDATE-kant wordt hier gesignaleerd, niet afgedwongen.
+  if has_column_privilege('authenticated', 'public.profiles', 'expo_push_token', 'SELECT') then
+    raise exception 'authenticated kan expo_push_token van public.profiles lezen - zou write-only moeten zijn (geen SELECT).';
+  end if;
+  if not has_column_privilege('authenticated', 'public.profiles', 'expo_push_token', 'UPDATE') then
+    raise notice 'authenticated kan expo_push_token nog niet schrijven - wordt pas door 0038_profiles_expo_push_token_update_grant.sql herbevestigd (geen fout, verwacht op dit punt in de migratievolgorde).';
+  end if;
+
+  foreach v_col in array v_read_only_columns loop
+    if not has_column_privilege('authenticated', 'public.profiles', v_col, 'SELECT') then
+      raise exception 'authenticated kan % van public.profiles niet lezen - zou read-only (SELECT wel) moeten zijn.', v_col;
+    end if;
+    if has_column_privilege('authenticated', 'public.profiles', v_col, 'UPDATE') then
+      raise exception 'authenticated kan % van public.profiles schrijven - zou read-only moeten zijn (geen UPDATE).', v_col;
+    end if;
+  end loop;
+
+  foreach v_col in array v_read_write_columns loop
+    if not has_column_privilege('authenticated', 'public.profiles', v_col, 'SELECT') then
+      raise exception 'authenticated kan % van public.profiles niet lezen - zou leesbaar én schrijfbaar moeten zijn.', v_col;
+    end if;
+    if not has_column_privilege('authenticated', 'public.profiles', v_col, 'UPDATE') then
+      raise exception 'authenticated kan % van public.profiles niet schrijven - zou leesbaar én schrijfbaar moeten zijn.', v_col;
+    end if;
+  end loop;
+
+  raise notice 'profiles kolomrechten voor authenticated kloppen: % write-only (plus expo_push_token, zie boven), % read-only, % read-write.', array_length(v_write_only_columns, 1), array_length(v_read_only_columns, 1), array_length(v_read_write_columns, 1);
 end $$;
 
 commit;

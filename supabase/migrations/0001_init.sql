@@ -1742,60 +1742,66 @@ create trigger notify_report_resolved
 grant usage on schema public to anon, authenticated, service_role;
 
 revoke all on public.profiles from anon;
+-- DELETE/TRUNCATE/REFERENCES/TRIGGER: zie 0037_public_schema_table_grants.sql's
+-- uitleg - geen enkele policy/app-aanroep gebruikt ze, nooit kolom-niveau
+-- te scopen, dus hier expliciet ingetrokken (ook al vóór 30 oktober 2026,
+-- wanneer een fresh install nog een automatische default-grant zou
+-- krijgen die dit anders stilletjes zou aanvullen).
+revoke delete, truncate, references, trigger on public.profiles from authenticated;
 grant insert on public.profiles to authenticated;
 grant all on public.profiles to service_role;
 
-revoke all on public.swipes from anon;
+revoke all on public.swipes from anon, authenticated;
 grant select, insert, update on public.swipes to authenticated;
 grant all on public.swipes to service_role;
 
-revoke all on public.discover_daily_views from anon;
+revoke all on public.discover_daily_views from anon, authenticated;
 grant select on public.discover_daily_views to authenticated;
 grant all on public.discover_daily_views to service_role;
 
-revoke all on public.matches from anon;
-grant select, insert, delete on public.matches to authenticated;
+revoke all on public.matches from anon, authenticated;
+grant select, insert, update, delete on public.matches to authenticated;
 grant all on public.matches to service_role;
 
-revoke all on public.messages from anon;
+revoke all on public.messages from anon, authenticated;
 grant select, insert on public.messages to authenticated;
 grant all on public.messages to service_role;
 
-revoke all on public.posts from anon;
+revoke all on public.posts from anon, authenticated;
 grant select, insert, delete on public.posts to authenticated;
 grant all on public.posts to service_role;
 
-revoke all on public.post_likes from anon;
+revoke all on public.post_likes from anon, authenticated;
 grant select, insert, delete on public.post_likes to authenticated;
 grant all on public.post_likes to service_role;
 
-revoke all on public.subscriptions from anon;
+revoke all on public.subscriptions from anon, authenticated;
 grant select on public.subscriptions to authenticated;
 grant all on public.subscriptions to service_role;
 
-revoke all on public.reports from anon;
+revoke all on public.reports from anon, authenticated;
 grant select, insert, update on public.reports to authenticated;
 grant all on public.reports to service_role;
 
-revoke all on public.blocks from anon;
-grant select, insert, delete on public.blocks to authenticated;
+revoke all on public.blocks from anon, authenticated;
+grant select, insert, update, delete on public.blocks to authenticated;
 grant all on public.blocks to service_role;
 
-revoke all on public.support_requests from anon;
+revoke all on public.support_requests from anon, authenticated;
 grant select, insert on public.support_requests to authenticated;
 grant all on public.support_requests to service_role;
 
-revoke all on public.trainings from anon;
+revoke all on public.trainings from anon, authenticated;
 grant select, insert, update on public.trainings to authenticated;
 grant all on public.trainings to service_role;
 
 revoke all on public.content_filter_words from anon, authenticated;
 grant all on public.content_filter_words to service_role;
 
-revoke all on public.flagged_content from anon;
+revoke all on public.flagged_content from anon, authenticated;
 grant select on public.flagged_content to authenticated;
 grant all on public.flagged_content to service_role;
 
-revoke all on public.notifications from anon;
+revoke all on public.notifications from anon, authenticated;
 grant select, update on public.notifications to authenticated;
 grant all on public.notifications to service_role;
