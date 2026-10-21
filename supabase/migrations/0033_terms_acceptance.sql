@@ -165,6 +165,18 @@ declare
     'is_onboarded', 'push_notifications_enabled', 'profile_visible',
     'availability_days', 'created_at', 'updated_at'
   ];
+  -- expo_push_token: bestaat niet op de live database die dit bestand
+  -- destijds targette (zie de uitleg hierboven), dus bewust niet in
+  -- v_grant_columns - een `grant update (expo_push_token)` hier zou op
+  -- die database hard falen ("column does not exist"). Maar bij een
+  -- volledige migratie-replay vanaf nul (`supabase db reset`, of elke
+  -- nieuwe omgeving) bestaat de kolom al wél, omdat 0001_init.sql die nu
+  -- direct in de create table-statement opneemt (mirrored voor fresh
+  -- installs). Zonder deze uitzondering zou richting (b) hieronder dan
+  -- ten onrechte falen. 0038_profiles_expo_push_token_update_grant.sql
+  -- herstelt het UPDATE-recht op expo_push_token na deze revoke, voor elke
+  -- omgeving waar de kolom daadwerkelijk bestaat.
+  v_known_gap_columns text[] := array['expo_push_token'];
   v_table_columns text[];
   v_missing_from_table text[];
   v_missing_from_grant text[];
@@ -198,19 +210,21 @@ begin
     raise exception 'De UPDATE-grantlijst in dit bestand noemt kolommen die niet bestaan in public.profiles: % - pas de grantlijst aan op het daadwerkelijke schema.', v_missing_from_table;
   end if;
 
-  -- Richting b: elke bestaande kolom (behalve terms_accepted_at) moet in
-  -- de grantlijst staan, anders is hij na de revoke hierboven stilletjes
+  -- Richting b: elke bestaande kolom (behalve terms_accepted_at en de
+  -- expliciet bekende, hierboven uitgelegde uitzondering) moet in de
+  -- grantlijst staan, anders is hij na de revoke hierboven stilletjes
   -- write-locked voor authenticated.
   select array_agg(col) into v_missing_from_grant
   from unnest(v_table_columns) as col
   where col <> 'terms_accepted_at'
-    and col <> all (v_grant_columns);
+    and col <> all (v_grant_columns)
+    and col <> all (v_known_gap_columns);
 
   if v_missing_from_grant is not null then
     raise exception 'Deze kolommen van public.profiles ontbreken in de UPDATE-grantlijst en zijn dus write-locked voor authenticated: % - voeg ze toe aan de grantlijst (of, als dat met opzet is, aan de uitzonderingslijst hier).', v_missing_from_grant;
   end if;
 
-  raise notice 'profiles.terms_accepted_at: kolom aanwezig (timestamptz), leesbaar maar niet zelf te wijzigen door authenticated; de UPDATE-grantlijst komt in beide richtingen overeen met het daadwerkelijke schema (% kolommen, exact terms_accepted_at uitgezonderd).', array_length(v_table_columns, 1);
+  raise notice 'profiles.terms_accepted_at: kolom aanwezig (timestamptz), leesbaar maar niet zelf te wijzigen door authenticated; de UPDATE-grantlijst komt in beide richtingen overeen met het daadwerkelijke schema (% kolommen, terms_accepted_at en % bekende uitzondering(en) uitgezonderd).', array_length(v_table_columns, 1), array_length(v_known_gap_columns, 1);
 end $$;
 
 commit;

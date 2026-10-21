@@ -1724,3 +1724,78 @@ drop trigger if exists notify_report_resolved on public.reports;
 create trigger notify_report_resolved
   after update of status on public.reports
   for each row execute function public.notify_on_report_resolved();
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Expliciete tabel-grants (zie 0037_public_schema_table_grants.sql voor
+-- de volledige uitleg/zelfcontrole) - hier als één samenhangend blok aan
+-- het eind, niet verspreid per tabel: Supabase's eigen automatische
+-- Data-API-toegang voor nieuwe tabellen in `public` stopt per 30 oktober
+-- 2026, dus een verse installatie heeft deze grants vanaf dan nodig om
+-- überhaupt iets te kunnen lezen/schrijven. anon krijgt nergens iets
+-- (geen enkele policy hierboven noemt die rol); authenticated krijgt
+-- precies de verbs die de policies hierboven toestaan én die de app
+-- daadwerkelijk gebruikt; service_role (de vertrouwde backend-rol,
+-- RLS-bypass by design) krijgt overal alles. `profiles`'s SELECT/UPDATE
+-- staan al kolom-niveau gegrant hierboven - alleen de ontbrekende INSERT
+-- wordt hier nog toegevoegd.
+-- ─────────────────────────────────────────────────────────────────────────
+grant usage on schema public to anon, authenticated, service_role;
+
+revoke all on public.profiles from anon;
+grant insert on public.profiles to authenticated;
+grant all on public.profiles to service_role;
+
+revoke all on public.swipes from anon;
+grant select, insert, update on public.swipes to authenticated;
+grant all on public.swipes to service_role;
+
+revoke all on public.discover_daily_views from anon;
+grant select on public.discover_daily_views to authenticated;
+grant all on public.discover_daily_views to service_role;
+
+revoke all on public.matches from anon;
+grant select, insert, delete on public.matches to authenticated;
+grant all on public.matches to service_role;
+
+revoke all on public.messages from anon;
+grant select, insert on public.messages to authenticated;
+grant all on public.messages to service_role;
+
+revoke all on public.posts from anon;
+grant select, insert, delete on public.posts to authenticated;
+grant all on public.posts to service_role;
+
+revoke all on public.post_likes from anon;
+grant select, insert, delete on public.post_likes to authenticated;
+grant all on public.post_likes to service_role;
+
+revoke all on public.subscriptions from anon;
+grant select on public.subscriptions to authenticated;
+grant all on public.subscriptions to service_role;
+
+revoke all on public.reports from anon;
+grant select, insert, update on public.reports to authenticated;
+grant all on public.reports to service_role;
+
+revoke all on public.blocks from anon;
+grant select, insert, delete on public.blocks to authenticated;
+grant all on public.blocks to service_role;
+
+revoke all on public.support_requests from anon;
+grant select, insert on public.support_requests to authenticated;
+grant all on public.support_requests to service_role;
+
+revoke all on public.trainings from anon;
+grant select, insert, update on public.trainings to authenticated;
+grant all on public.trainings to service_role;
+
+revoke all on public.content_filter_words from anon, authenticated;
+grant all on public.content_filter_words to service_role;
+
+revoke all on public.flagged_content from anon;
+grant select on public.flagged_content to authenticated;
+grant all on public.flagged_content to service_role;
+
+revoke all on public.notifications from anon;
+grant select, update on public.notifications to authenticated;
+grant all on public.notifications to service_role;

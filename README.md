@@ -150,6 +150,25 @@ hoofdschermen, exact zoals in het Figma-ontwerp.
 Alle tabellen hebben Row Level Security policies zodat gebruikers alleen hun
 eigen data kunnen wijzigen en alleen berichten van hun eigen matches kunnen lezen.
 
+### Expliciete grants bij elke nieuwe tabel (verplicht)
+
+Supabase stopt per 30 oktober 2026 met het automatisch toekennen van
+Data-API-toegang aan nieuwe tabellen in `public` (de impliciete
+`anon`/`authenticated`/`service_role`-rechten die een project tot nu toe
+gratis kreeg). **Elke migratie die een nieuwe tabel in `public` aanmaakt,
+moet daarom zelf expliciete `grant`/`revoke`-statements bevatten** - zonder
+die grants krijgt de tabel helemaal geen rechten, nog vóór RLS ook maar
+wordt geëvalueerd (GRANT en RLS zijn twee onafhankelijke lagen; ook
+`service_role` heeft hier basis-tabelrechten voor nodig, `bypassrls` slaat
+alleen op rijfiltering).
+
+Zie `supabase/migrations/0037_public_schema_table_grants.sql` voor het
+patroon en de volledige uitleg: per tabel `anon` niets (geen enkele policy
+in dit project noemt die rol), `authenticated` exact de verbs die de
+RLS-policies toestaan én die de app daadwerkelijk gebruikt (niet breder
+dan nodig), `service_role` altijd alles (de vertrouwde backend-rol). Dat
+bestand bevat ook de controlequery om dit per tabel/rol te verifiëren.
+
 ## Minimumleeftijd bij registratie
 
 `RegisterDetailsScreen` (`app/auth/RegisterDetailsScreen.tsx`) vereist een
