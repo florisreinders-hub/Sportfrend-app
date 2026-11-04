@@ -1,5 +1,5 @@
 import React, { forwardRef } from "react";
-import { StyleSheet, Text, TextInput, TextInputProps, View, ViewStyle } from "react-native";
+import { StyleSheet, Text, TextInput, TextInputInstance, TextInputProps, View, ViewStyle } from "react-native";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 
 type Props = TextInputProps & {
@@ -16,7 +16,7 @@ type Props = TextInputProps & {
   containerStyle?: ViewStyle;
 };
 
-export const Input = forwardRef<TextInput, Props>(function Input(
+export const Input = forwardRef<TextInputInstance, Props>(function Input(
   { label, error, style, containerStyle, ...rest },
   ref
 ) {

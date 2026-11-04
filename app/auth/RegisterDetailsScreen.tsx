@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, Text, TextInputInstance, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "@/navigation/types";
@@ -49,9 +49,9 @@ export default function RegisterDetailsScreen({ navigation }: Props) {
   const [resendError, setResendError] = useState<string | null>(null);
   const [resendCooldown, setResendCooldown] = useState(0);
 
-  const passwordRef = useRef<TextInput>(null);
-  const repeatPasswordRef = useRef<TextInput>(null);
-  const birthdateRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInputInstance>(null);
+  const repeatPasswordRef = useRef<TextInputInstance>(null);
+  const birthdateRef = useRef<TextInputInstance>(null);
 
   useEffect(() => {
     if (resendCooldown <= 0) return;
