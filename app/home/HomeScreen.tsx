@@ -6,12 +6,12 @@ import { useFocusEffect } from "@react-navigation/native";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { TopBar } from "@/components/TopBar";
-import { BottomNav } from "@/components/BottomNav";
+import { BottomNav, useBottomNavHeight } from "@/components/BottomNav";
 import { SwipeCard } from "@/components/SwipeCard";
 import { Button } from "@/components/Button";
 import { PostComposer } from "@/components/PostComposer";
 import { PostCard } from "@/components/PostCard";
-import { BOTTOM_NAV_HEIGHT, colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
+import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { useDiscoverFilters } from "@/lib/FilterContext";
 import {
@@ -31,6 +31,7 @@ import { avatarPlaceholder } from "@/constants/placeholders";
 type Props = NativeStackScreenProps<RootStackParamList, "Home">;
 
 export default function HomeScreen({ navigation, route }: Props) {
+  const bottomNavHeight = useBottomNavHeight();
   const { session } = useAuth();
   const { filters } = useDiscoverFilters();
   const [tab, setTab] = useState<"ontdekken" | "connecties">(route.params?.tab ?? "ontdekken");
@@ -244,7 +245,7 @@ export default function HomeScreen({ navigation, route }: Props) {
                     />
                   ))}
               </View>
-              <View style={styles.actionRow}>
+              <View style={[styles.actionRow, { paddingBottom: bottomNavHeight + spacing.md }]}>
                 <Button
                   label="Skip"
                   variant="danger"
@@ -354,15 +355,16 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingTop: spacing.md,
-    // BottomNav (components/BottomNav.tsx) is position:"absolute", bottom:0,
-    // height: BOTTOM_NAV_HEIGHT - it's painted as an overlay, not reserved
-    // as flex space, and ScreenContainer's own bottom padding is off for
-    // this screen (withBottomPadding={false}, needed so the Connecties
-    // tab's FlatList can scroll full-bleed). Without this, actionRow (the
-    // last flex child of deckArea) lands flush with the screen's bottom
-    // edge - exactly where BottomNav paints on top, hiding Skip/Connect
-    // underneath it and stealing their taps.
-    paddingBottom: BOTTOM_NAV_HEIGHT + spacing.md,
+    // BottomNav (components/BottomNav.tsx) is position:"absolute", bottom:0
+    // - it's painted as an overlay, not reserved as flex space, and
+    // ScreenContainer's own bottom padding is off for this screen
+    // (withBottomPadding={false}, needed so the Connecties tab's FlatList
+    // can scroll full-bleed). Without clearance, actionRow (the last flex
+    // child of deckArea) lands flush with the screen's bottom edge -
+    // exactly where BottomNav paints on top, hiding Skip/Connect
+    // underneath it and stealing their taps. The actual paddingBottom
+    // value is applied inline below (useBottomNavHeight()), not here,
+    // since it also needs Android's extra system-nav-bar inset.
   },
   actionButton: {
     flex: 1,

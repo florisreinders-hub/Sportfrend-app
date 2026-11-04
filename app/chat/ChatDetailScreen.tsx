@@ -5,12 +5,14 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "@/navigation/types";
@@ -48,6 +50,15 @@ type Props = NativeStackScreenProps<RootStackParamList, "ChatDetail">;
 type ChatItem = { kind: "message"; data: Message } | { kind: "training"; data: Training };
 
 export default function ChatDetailScreen({ route, navigation }: Props) {
+  const insets = useSafeAreaInsets();
+  // ScreenContainer only reserves the top/left/right safe area here
+  // (edges prop below), not bottom - Android is edge-to-edge since Expo
+  // SDK 54, so without this the input row sits flush against (and partly
+  // behind) the system nav bar whenever the keyboard is closed. The
+  // Platform check matters: insets.bottom is also non-zero on iOS (the
+  // home indicator), but iOS's appearance here already works and must
+  // stay unchanged, so this is Android-only on purpose, not a no-op guard.
+  const androidBottomInset = Platform.OS === "android" ? insets.bottom : 0;
   const { chatId, name, photo, otherUserId } = route.params;
   const { session } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -407,7 +418,7 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
         )}
 
         {messageLimitReached ? (
-          <View style={styles.limitBanner}>
+          <View style={[styles.limitBanner, { paddingBottom: spacing.md + androidBottomInset }]}>
             <Text style={styles.limitBannerText}>
               Je hebt je dagelijkse limiet van {dailyStatus!.dailyLimit} berichten bereikt. Upgrade naar Premium voor
               onbeperkt chatten.
@@ -420,7 +431,7 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
             />
           </View>
         ) : (
-          <View style={styles.inputRow}>
+          <View style={[styles.inputRow, { paddingBottom: spacing.md + androidBottomInset }]}>
             <Pressable
               onPress={onPickImage}
               hitSlop={8}
@@ -575,7 +586,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
-    paddingBottom: spacing.md,
   },
   inputContainer: {
     flex: 1,
@@ -600,7 +610,6 @@ const styles = StyleSheet.create({
   },
   limitBanner: {
     paddingHorizontal: spacing.md,
-    paddingBottom: spacing.md,
     paddingTop: spacing.sm,
     gap: spacing.sm,
   },

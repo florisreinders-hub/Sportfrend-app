@@ -5,10 +5,10 @@ import { useFocusEffect } from "@react-navigation/native";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { DetailHeader } from "@/components/DetailHeader";
-import { BottomNav } from "@/components/BottomNav";
+import { BottomNav, useBottomNavHeight } from "@/components/BottomNav";
 import { Button } from "@/components/Button";
 import { AvailabilityGrid } from "@/components/AvailabilityGrid";
-import { BOTTOM_NAV_HEIGHT, colors, fonts, fontSizes, spacing } from "@/constants/theme";
+import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { fetchProfileSettings, getDataErrorMessage, updateProfileSettings } from "@/lib/api";
 
@@ -23,6 +23,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Availability">;
  * their own plan.
  */
 export default function AvailabilityScreen({ navigation }: Props) {
+  const bottomNavHeight = useBottomNavHeight();
   const { session } = useAuth();
   const userId = session?.user?.id;
   const [availabilityDays, setAvailabilityDays] = useState<string[]>([]);
@@ -75,7 +76,7 @@ export default function AvailabilityScreen({ navigation }: Props) {
       {loading ? (
         <ActivityIndicator color={colors.primary} style={styles.loading} />
       ) : (
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomNavHeight + spacing.md }]}>
           <Text style={styles.intro}>
             Geef aan wanneer je beschikbaar bent om te sporten. Dit wordt gebruikt bij "Slimme beschikbaarheids
             match" (Elite) om je te laten vinden door anderen die op jouw momenten zoeken - je eigen gegevens zijn
@@ -97,7 +98,6 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: spacing.md,
-    paddingBottom: BOTTOM_NAV_HEIGHT + spacing.md,
   },
   intro: {
     fontFamily: fonts.body,

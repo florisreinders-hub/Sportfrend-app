@@ -1,5 +1,6 @@
 import React from "react";
-import { FlatList, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { FlatList, Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 
@@ -16,10 +17,21 @@ type Props = {
 
 /** Scrollable modal picker, used for fields with too many options for a tap-to-cycle pill. */
 export function SelectModal({ visible, title, options, selectedValue, onSelect, onClose }: Props) {
+  const insets = useSafeAreaInsets();
+  // RN's Modal spans the full window on Android too, so it's subject to
+  // the same edge-to-edge system-nav-bar overlap as the rest of the app
+  // (Android only since Expo SDK 54 - see BottomNav.tsx/ChatDetailScreen.tsx
+  // for the same root cause). iOS already looks right here and must stay
+  // unchanged.
+  const androidBottomInset = Platform.OS === "android" ? insets.bottom : 0;
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+        <Pressable
+          style={[styles.sheet, { paddingBottom: spacing.lg + androidBottomInset }]}
+          onPress={(e) => e.stopPropagation()}
+        >
           <View style={styles.header}>
             <Text style={styles.title}>{title}</Text>
             <Pressable onPress={onClose} hitSlop={8}>
@@ -67,7 +79,6 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: radii.lg,
     borderTopRightRadius: radii.lg,
     maxHeight: SHEET_MAX_HEIGHT,
-    paddingBottom: spacing.lg,
   },
   header: {
     flexDirection: "row",

@@ -5,9 +5,9 @@ import { useFocusEffect } from "@react-navigation/native";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { DetailHeader } from "@/components/DetailHeader";
-import { BottomNav } from "@/components/BottomNav";
+import { BottomNav, useBottomNavHeight } from "@/components/BottomNav";
 import { Button } from "@/components/Button";
-import { BOTTOM_NAV_HEIGHT, colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
+import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { getDataErrorMessage, sendDataExportEmail } from "@/lib/api";
 import { fetchDataExport, formatDataExportText } from "@/lib/dataExport";
@@ -23,6 +23,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "DataExport">;
  * same text to the account's own registered e-mail address.
  */
 export default function DataExportScreen(_props: Props) {
+  const bottomNavHeight = useBottomNavHeight();
   const { session } = useAuth();
   const userId = session?.user?.id;
   const userEmail = session?.user?.email ?? "";
@@ -92,7 +93,10 @@ export default function DataExportScreen(_props: Props) {
               <Button label="Verstuur naar mijn e-mail" onPress={onSendEmail} loading={sending} />
             )}
           </View>
-          <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomNavHeight + spacing.md }]}
+          >
             <Text style={styles.exportText}>{text}</Text>
           </ScrollView>
         </>
@@ -136,11 +140,6 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: spacing.md,
-    // BottomNav is an absolute-positioned overlay, not reserved flex space
-    // (see app/home/HomeScreen.tsx's actionRow fix) - without this, the
-    // tail end of a long export would always be hidden underneath it, even
-    // at max scroll.
-    paddingBottom: BOTTOM_NAV_HEIGHT + spacing.md,
   },
   exportText: {
     fontFamily: fonts.body,
