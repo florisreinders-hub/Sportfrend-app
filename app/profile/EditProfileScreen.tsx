@@ -1,5 +1,16 @@
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
@@ -145,53 +156,55 @@ export default function EditProfileScreen({ navigation }: Props) {
       ) : loadError ? (
         <Text style={styles.loadErrorText}>{loadError}</Text>
       ) : (
-        <ScrollView contentContainerStyle={styles.content}>
-          <View style={styles.headerRow}>
-            <Pressable onPress={onPickPhoto} disabled={uploadingPhoto} style={styles.photoWrap}>
-              <Image
-                source={{ uri: photoUrl ?? sportPhotoPlaceholder(session?.user?.id ?? "me") }}
-                style={styles.photo}
-              />
-              <View style={styles.photoEditBadge}>
-                {uploadingPhoto ? (
-                  <ActivityIndicator size="small" color={colors.black} />
-                ) : (
-                  <Ionicons name="camera" size={16} color={colors.black} />
-                )}
-              </View>
+        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "android" ? "padding" : undefined}>
+          <ScrollView contentContainerStyle={styles.content}>
+            <View style={styles.headerRow}>
+              <Pressable onPress={onPickPhoto} disabled={uploadingPhoto} style={styles.photoWrap}>
+                <Image
+                  source={{ uri: photoUrl ?? sportPhotoPlaceholder(session?.user?.id ?? "me") }}
+                  style={styles.photo}
+                />
+                <View style={styles.photoEditBadge}>
+                  {uploadingPhoto ? (
+                    <ActivityIndicator size="small" color={colors.black} />
+                  ) : (
+                    <Ionicons name="camera" size={16} color={colors.black} />
+                  )}
+                </View>
+              </Pressable>
+              <Button label="Opslaan" onPress={onSave} loading={saving} style={styles.saveButton} />
+            </View>
+
+            {saveError ? <Text style={styles.saveErrorText}>{saveError}</Text> : null}
+
+            <Text style={styles.sectionTitle}>DETAILS</Text>
+            <Input label="Naam" value={fullName} onChangeText={setFullName} placeholder="Peter Jansen" />
+            <Input label="Sport" value={sport} onChangeText={setSport} placeholder="Golf" />
+
+            <Text style={styles.label}>Niveau</Text>
+            <Pressable style={styles.levelPicker} onPress={() => setLevelPickerVisible(true)}>
+              <Text style={styles.levelPickerText}>{levelLabel}</Text>
+              <Ionicons name="chevron-down" size={18} color={colors.textSecondary} />
             </Pressable>
-            <Button label="Opslaan" onPress={onSave} loading={saving} style={styles.saveButton} />
-          </View>
 
-          {saveError ? <Text style={styles.saveErrorText}>{saveError}</Text> : null}
+            <Input label="Locatie" value={city} onChangeText={setCity} placeholder="Amsterdam" />
+            <Input
+              label="Over mij"
+              value={bio}
+              onChangeText={setBio}
+              placeholder="Vertel iets over jezelf"
+              multiline
+              style={styles.bioInput}
+            />
 
-          <Text style={styles.sectionTitle}>DETAILS</Text>
-          <Input label="Naam" value={fullName} onChangeText={setFullName} placeholder="Peter Jansen" />
-          <Input label="Sport" value={sport} onChangeText={setSport} placeholder="Golf" />
-
-          <Text style={styles.label}>Niveau</Text>
-          <Pressable style={styles.levelPicker} onPress={() => setLevelPickerVisible(true)}>
-            <Text style={styles.levelPickerText}>{levelLabel}</Text>
-            <Ionicons name="chevron-down" size={18} color={colors.textSecondary} />
-          </Pressable>
-
-          <Input label="Locatie" value={city} onChangeText={setCity} placeholder="Amsterdam" />
-          <Input
-            label="Over mij"
-            value={bio}
-            onChangeText={setBio}
-            placeholder="Vertel iets over jezelf"
-            multiline
-            style={styles.bioInput}
-          />
-
-          <Text style={styles.label}>Beschikbaarheid</Text>
-          <Pressable style={styles.availabilityRow} onPress={() => navigation.navigate("Availability")}>
-            <Ionicons name="calendar-outline" size={20} color={colors.black} />
-            <Text style={styles.availabilityRowText}>Mijn beschikbaarheid</Text>
-            <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
-          </Pressable>
-        </ScrollView>
+            <Text style={styles.label}>Beschikbaarheid</Text>
+            <Pressable style={styles.availabilityRow} onPress={() => navigation.navigate("Availability")}>
+              <Ionicons name="calendar-outline" size={20} color={colors.black} />
+              <Text style={styles.availabilityRowText}>Mijn beschikbaarheid</Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+            </Pressable>
+          </ScrollView>
+        </KeyboardAvoidingView>
       )}
 
       <SelectModal
@@ -209,6 +222,9 @@ export default function EditProfileScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
+  flex: {
+    flex: 1,
+  },
   content: {
     padding: spacing.md,
   },

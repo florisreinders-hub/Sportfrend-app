@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
+import { KeyboardAvoidingView, ScrollView, StyleSheet, Text, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 import { RootStackParamList } from "@/navigation/types";
@@ -80,7 +80,7 @@ export default function SupportScreen(_props: Props) {
   return (
     <ScreenContainer withBottomPadding={false}>
       <DetailHeader title="Klantenservice" />
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           {sent ? (
             <Text style={styles.confirmation}>

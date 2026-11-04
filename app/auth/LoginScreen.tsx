@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { Image, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInputInstance, View } from "react-native";
+import { Image, KeyboardAvoidingView, StyleSheet, Text, TextInputInstance, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
@@ -41,7 +41,7 @@ export default function LoginScreen({ navigation }: Props) {
 
   return (
     <ScreenContainer withBottomPadding={false}>
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <View style={styles.hero}>
           <Image source={logoFull} style={styles.logo} resizeMode="contain" />
         </View>
