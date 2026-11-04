@@ -295,7 +295,7 @@ export default function HomeScreen({ navigation, route }: Props) {
               <Text style={styles.empty}>{error}</Text>
             ) : hasPostsAccess ? (
               <Text style={styles.empty}>Nog geen berichten. Plaats de eerste!</Text>
-            ) : null
+            ) : undefined
           }
           renderItem={({ item }) => (
             <PostCard post={item} currentUserId={session?.user?.id} onToggleLike={onLikePost} onDelete={onDeletePost} />

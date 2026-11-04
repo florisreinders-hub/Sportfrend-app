@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { NativeScrollEvent, NativeSyntheticEvent, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { NativeScrollEvent, NativeSyntheticEvent, Pressable, ScrollView, ScrollViewInstance, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "@/navigation/types";
@@ -33,7 +33,7 @@ const LAST_INDEX = ONBOARDING_SLIDES.length - 1;
 export default function OnboardingScreen({ navigation }: Props) {
   const { session } = useAuth();
   const userId = session?.user?.id;
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   const [index, setIndex] = useState(0);
   // Measured via onLayout, not Dimensions.get("window") - matches the
   // ScrollView's actual rendered width (safe-area insets etc. already
