@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { Alert, KeyboardAvoidingView, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { Button } from "@/components/Button";
@@ -29,6 +30,13 @@ type Props = {
  * initialValues differ between the two call sites in ChatDetailScreen.
  */
 export function TrainingFormModal({ visible, title, submitLabel, initialValues, onSubmit, onClose }: Props) {
+  const insets = useSafeAreaInsets();
+  // RN's Modal spans the full window on Android too, so it's subject to
+  // the same edge-to-edge system-nav-bar overlap as the rest of the app
+  // (Android only since Expo SDK 54 - see BottomNav.tsx/ChatDetailScreen.tsx
+  // for the same root cause). iOS already looks right here and must stay
+  // unchanged.
+  const androidBottomInset = Platform.OS === "android" ? insets.bottom : 0;
   const [date, setDate] = useState<string | null>(null);
   const [time, setTime] = useState<string | null>(null);
   const [sport, setSport] = useState<string | null>(null);
@@ -92,7 +100,10 @@ export function TrainingFormModal({ visible, title, submitLabel, initialValues, 
               </Pressable>
             </View>
 
-            <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+            <ScrollView
+              contentContainerStyle={[styles.content, { paddingBottom: spacing.xl + androidBottomInset }]}
+              keyboardShouldPersistTaps="handled"
+            >
               <Pressable style={styles.field} onPress={() => setDatePickerVisible(true)}>
                 <Ionicons name="calendar-outline" size={20} color={colors.black} />
                 <Text style={styles.fieldLabel}>{date ? date.split("-").reverse().join("-") : "Datum"}</Text>
@@ -180,7 +191,6 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: spacing.md,
-    paddingBottom: spacing.xl,
   },
   field: {
     flexDirection: "row",

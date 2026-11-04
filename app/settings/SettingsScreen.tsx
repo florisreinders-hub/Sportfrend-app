@@ -6,8 +6,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { TopBar } from "@/components/TopBar";
-import { BottomNav } from "@/components/BottomNav";
-import { BOTTOM_NAV_HEIGHT, colors, fonts, fontSizes, spacing } from "@/constants/theme";
+import { BottomNav, useBottomNavHeight } from "@/components/BottomNav";
+import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { deleteAccount, signOut } from "@/lib/auth";
 import { fetchProfileSettings, getDataErrorMessage, updateProfileSettings } from "@/lib/api";
@@ -28,6 +28,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Settings">;
 const SHOW_MY_TRAININGS_ROW = false;
 
 export default function SettingsScreen({ navigation }: Props) {
+  const bottomNavHeight = useBottomNavHeight();
   const { session, plan } = useAuth();
   const userId = session?.user?.id;
   // .toLowerCase() aan beide kanten: Supabase Auth normaliseert een
@@ -169,7 +170,7 @@ export default function SettingsScreen({ navigation }: Props) {
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: spacing.xl }} />
       ) : (
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomNavHeight + spacing.md }]}>
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Account</Text>
             <Pressable style={styles.row} onPress={() => navigation.navigate("EditProfile")}>
@@ -318,9 +319,7 @@ export default function SettingsScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  scrollContent: {
-    paddingBottom: BOTTOM_NAV_HEIGHT + spacing.md,
-  },
+  scrollContent: {},
   header: {
     fontFamily: fonts.display,
     fontSize: fontSizes.lg,

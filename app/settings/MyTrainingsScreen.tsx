@@ -5,9 +5,9 @@ import { useFocusEffect } from "@react-navigation/native";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { DetailHeader } from "@/components/DetailHeader";
-import { BottomNav } from "@/components/BottomNav";
+import { BottomNav, useBottomNavHeight } from "@/components/BottomNav";
 import { TrainingCard } from "@/components/TrainingCard";
-import { BOTTOM_NAV_HEIGHT, colors, fonts, fontSizes, spacing } from "@/constants/theme";
+import { colors, fonts, fontSizes, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { fetchMyAcceptedTrainings, getDataErrorMessage, TrainingWithMatch } from "@/lib/api";
 
@@ -21,6 +21,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "MyTrainings">;
  * match's proposal and should still see it here once accepted).
  */
 export default function MyTrainingsScreen({ navigation }: Props) {
+  const bottomNavHeight = useBottomNavHeight();
   const { session } = useAuth();
   const userId = session?.user?.id;
   const [loading, setLoading] = useState(true);
@@ -76,7 +77,7 @@ export default function MyTrainingsScreen({ navigation }: Props) {
           Nog geen geaccepteerde trainingen. Plan er een via een chat met een sportmaatje (Elite-functie).
         </Text>
       ) : (
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomNavHeight + spacing.md }]}>
           <Text style={styles.sectionTitle}>Aankomend</Text>
           {upcoming.length === 0 ? (
             <Text style={styles.sectionEmpty}>Geen aankomende trainingen.</Text>
@@ -101,7 +102,6 @@ export default function MyTrainingsScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: spacing.md,
-    paddingBottom: BOTTOM_NAV_HEIGHT + spacing.md,
   },
   sectionTitle: {
     fontFamily: fonts.display,

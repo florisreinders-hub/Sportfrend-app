@@ -5,9 +5,9 @@ import { useFocusEffect } from "@react-navigation/native";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { DetailHeader } from "@/components/DetailHeader";
-import { BottomNav } from "@/components/BottomNav";
+import { BottomNav, useBottomNavHeight } from "@/components/BottomNav";
 import { Button } from "@/components/Button";
-import { BOTTOM_NAV_HEIGHT, colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
+import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { MODERATOR_EMAIL } from "@/constants/moderator";
 import { deleteAccount } from "@/lib/auth";
@@ -34,6 +34,7 @@ const dateFmt = (iso: string) => new Date(iso).toLocaleString("nl-NL");
  * (0029_moderation_dashboard.sql) is de echte grens.
  */
 export default function ModerationScreen({ navigation }: Props) {
+  const bottomNavHeight = useBottomNavHeight();
   const { session } = useAuth();
   const isModerator = session?.user?.email === MODERATOR_EMAIL;
 
@@ -121,7 +122,7 @@ export default function ModerationScreen({ navigation }: Props) {
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: spacing.xl }} />
       ) : (
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomNavHeight + spacing.md }]}>
           <Text style={styles.sectionTitle}>Openstaande rapportages ({reports.length})</Text>
           {reports.length === 0 ? (
             <Text style={styles.sectionEmpty}>Geen openstaande rapportages.</Text>
@@ -194,7 +195,6 @@ export default function ModerationScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: spacing.md,
-    paddingBottom: BOTTOM_NAV_HEIGHT + spacing.md,
   },
   sectionTitle: {
     fontFamily: fonts.display,

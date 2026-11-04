@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { KeyboardAvoidingView, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { Button } from "@/components/Button";
@@ -17,6 +18,13 @@ type Props = {
 
 /** "Rapporteren" sheet, opened from SporterProfileScreen and ChatDetailScreen. */
 export function ReportModal({ visible, onClose, reporterId, reportedId, reportedName, matchId }: Props) {
+  const insets = useSafeAreaInsets();
+  // RN's Modal spans the full window on Android too, so it's subject to
+  // the same edge-to-edge system-nav-bar overlap as the rest of the app
+  // (Android only since Expo SDK 54 - see BottomNav.tsx/ChatDetailScreen.tsx
+  // for the same root cause). iOS already looks right here and must stay
+  // unchanged.
+  const androidBottomInset = Platform.OS === "android" ? insets.bottom : 0;
   const [reason, setReason] = useState<string | null>(null);
   const [details, setDetails] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -80,7 +88,10 @@ export function ReportModal({ visible, onClose, reporterId, reportedId, reported
     <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
       <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <Pressable style={styles.backdrop} onPress={handleClose}>
-          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+          <Pressable
+            style={[styles.sheet, { paddingBottom: spacing.lg + androidBottomInset }]}
+            onPress={(e) => e.stopPropagation()}
+          >
             <View style={styles.header}>
               <Text style={styles.title}>{reportedName} rapporteren</Text>
               <Pressable onPress={handleClose} hitSlop={8}>
@@ -161,7 +172,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
     borderTopLeftRadius: radii.lg,
     borderTopRightRadius: radii.lg,
-    paddingBottom: spacing.lg,
     // Bounds the sheet so its ScrollView (the Reden/Toelichting/
     // Rapporteren form, see the render below) actually scrolls instead of
     // just growing past the screen - needed now that a KeyboardAvoidingView

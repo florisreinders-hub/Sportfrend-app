@@ -1,10 +1,32 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BOTTOM_NAV_HEIGHT, colors, fonts, fontSizes } from "@/constants/theme";
 import { RootStackParamList } from "@/navigation/types";
+
+/**
+ * Android is edge-to-edge since Expo SDK 54 (see the keyboard-handling fix
+ * for the same root cause) - the system nav bar (gesture pill or 3-button
+ * bar) floats on top of this absolutely-positioned, bottom:0 bar instead
+ * of reserving its own space, so without this the system buttons sit on
+ * top of (and steal taps from) BottomNav's own icons. The Platform check
+ * matters here: `insets.bottom` is also non-zero on iOS (the home
+ * indicator), but iOS already looks correct there and must stay pixel-
+ * identical, so this is deliberately Android-only, not a no-op guard.
+ *
+ * Every screen that reserves clearance above BottomNav via
+ * BOTTOM_NAV_HEIGHT (so its own content doesn't land underneath the
+ * painted-on-top bar) needs this same extra amount added on Android, or
+ * the bar's new, taller-on-Android height would start covering content
+ * that used to just barely clear the old, fixed height.
+ */
+export function useBottomNavHeight(): number {
+  const insets = useSafeAreaInsets();
+  return BOTTOM_NAV_HEIGHT + (Platform.OS === "android" ? insets.bottom : 0);
+}
 
 export type BottomNavTab = "profiel" | "home" | "filter" | "menu";
 
@@ -28,9 +50,19 @@ type Props = {
 
 export function BottomNav({ active }: Props) {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  // Only the extra bit beyond the old fixed height - added below the
+  // icons (via paddingBottom), not distributed by alignItems: "center",
+  // so the icons themselves stay exactly where they always were and the
+  // green background simply extends further down behind the system bar.
+  const androidNavBarInset = useBottomNavHeight() - BOTTOM_NAV_HEIGHT;
 
   return (
-    <View style={styles.container}>
+    <View
+      style={[
+        styles.container,
+        { height: BOTTOM_NAV_HEIGHT + androidNavBarInset, paddingBottom: 12 + androidNavBarInset },
+      ]}
+    >
       {items.map((item) => {
         const isActive = item.key === active;
         return (
