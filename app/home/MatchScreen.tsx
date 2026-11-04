@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Animated, Image, KeyboardAvoidingView, Platform, StyleSheet, Text, View } from "react-native";
+import { Animated, Image, KeyboardAvoidingView, StyleSheet, Text, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "@/navigation/types";
@@ -64,7 +64,7 @@ export default function MatchScreen({ route, navigation }: Props) {
   return (
     <ScreenContainer withBottomPadding={false}>
       <TopBar />
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <View style={styles.photoWrap}>
           <Image source={{ uri: matchedPhoto }} style={styles.photo} />
           <Animated.View
