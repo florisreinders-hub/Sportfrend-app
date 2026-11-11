@@ -4,7 +4,6 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -156,7 +155,7 @@ export default function EditProfileScreen({ navigation }: Props) {
       ) : loadError ? (
         <Text style={styles.loadErrorText}>{loadError}</Text>
       ) : (
-        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "android" ? "padding" : undefined}>
+        <KeyboardAvoidingView style={styles.flex} behavior="padding">
           <ScrollView contentContainerStyle={styles.content}>
             <View style={styles.headerRow}>
               <Pressable onPress={onPickPhoto} disabled={uploadingPhoto} style={styles.photoWrap}>
