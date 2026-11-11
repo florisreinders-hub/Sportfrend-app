@@ -77,7 +77,22 @@ export function RootNavigator() {
           <Stack.Screen name="Register" component={RegisterScreen} />
           <Stack.Screen name="RegisterDetails" component={RegisterDetailsScreen} />
           <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
-          <Stack.Screen name="LocationSetup" component={LocationSetupScreen} />
+          {/*
+            LocationSetup is NOT registered here - it's only ever reached
+            while signed in (SettingsScreen's own "Zoekgebied"-row, or this
+            navigator's initialRouteName once hasLocation is false after
+            RegisterDetailsScreen's signUp()). It used to be duplicated in
+            both branches - harmless on its own, but it's also the one
+            route name both screen lists had in common, and that's exactly
+            what let React Navigation's state reconciliation resolve back
+            to it on sign-out instead of resetting to initialRouteName
+            ("Login"): a Stack.Navigator whose *children* change (this
+            ternary) doesn't remount, so its navigation state carries over,
+            and the one surviving route name from before becomes the
+            fallback. Removing the duplicate here means no route from the
+            signed-in stack survives the sign-out swap, so there's nothing
+            left to fall back to but Login.
+          */}
           <Stack.Screen name="EmailConfirmed" component={EmailConfirmedScreen} />
         </>
       ) : (
