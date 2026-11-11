@@ -1760,7 +1760,11 @@ grant select on public.discover_daily_views to authenticated;
 grant all on public.discover_daily_views to service_role;
 
 revoke all on public.matches from anon, authenticated;
-grant select, insert, update, delete on public.matches to authenticated;
+-- select, insert, delete - geen update: zie
+-- 0039_matches_blocks_drop_update_grant.sql's uitleg (de app gebruikt
+-- sinds de ignoreDuplicates-wijziging in recordSwipe() geen upsert-pad
+-- meer dat UPDATE nodig heeft).
+grant select, insert, delete on public.matches to authenticated;
 grant all on public.matches to service_role;
 
 revoke all on public.messages from anon, authenticated;
@@ -1784,7 +1788,11 @@ grant select, insert, update on public.reports to authenticated;
 grant all on public.reports to service_role;
 
 revoke all on public.blocks from anon, authenticated;
-grant select, insert, update, delete on public.blocks to authenticated;
+-- select, insert, delete - geen update: zie
+-- 0039_matches_blocks_drop_update_grant.sql's uitleg (de app gebruikt
+-- sinds de ignoreDuplicates-wijziging in blockUser() geen upsert-pad
+-- meer dat UPDATE nodig heeft).
+grant select, insert, delete on public.blocks to authenticated;
 grant all on public.blocks to service_role;
 
 revoke all on public.support_requests from anon, authenticated;
