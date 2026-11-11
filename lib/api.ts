@@ -239,14 +239,27 @@ export async function recordSwipe(swiperId: string, swipedId: string, direction:
   if (!reciprocal) return { matched: false };
 
   const [userA, userB] = [swiperId, swipedId].sort();
+  // ignoreDuplicates (ON CONFLICT DO NOTHING): a match between this pair
+  // may already exist (e.g. a retried/duplicate recordSwipe() call) -
+  // there's no UPDATE policy/grant on matches
+  // (supabase/migrations/0037_public_schema_table_grants.sql), so the
+  // default upsert behavior (ON CONFLICT DO UPDATE) would fail RLS in
+  // that case. DO NOTHING never touches an existing row, so it needs
+  // nothing beyond the INSERT policy/grant already in place - but it also
+  // returns no row when the conflict fires, hence .maybeSingle() (not
+  // .single(), which would throw its own error on zero rows) and the
+  // findMatchBetween() fallback below to get the existing row's id.
   const { data: match, error: matchError } = await supabase
     .from("matches")
-    .upsert({ user_a_id: userA, user_b_id: userB }, { onConflict: "user_a_id,user_b_id" })
+    .upsert({ user_a_id: userA, user_b_id: userB }, { onConflict: "user_a_id,user_b_id", ignoreDuplicates: true })
     .select("id")
-    .single();
+    .maybeSingle();
   if (matchError) throw matchError;
 
-  return { matched: true, matchId: match.id };
+  const matchId = match?.id ?? (await findMatchBetween(userA, userB));
+  if (!matchId) throw new Error("Kon de match niet vinden na het aanmaken of bijwerken.");
+
+  return { matched: true, matchId };
 }
 
 export async function fetchConnections(userId: string) {
@@ -1071,9 +1084,17 @@ export async function createReport(
  * both sides regardless of who blocked whom.
  */
 export async function blockUser(blockerId: string, blockedId: string) {
+  // ignoreDuplicates (ON CONFLICT DO NOTHING): blocking someone who's
+  // already blocked (e.g. tapping "Blokkeren" a second time from a
+  // different screen) must not throw - there's no UPDATE policy/grant on
+  // blocks (supabase/migrations/0037_public_schema_table_grants.sql), so
+  // the default upsert behavior (ON CONFLICT DO UPDATE) fails RLS in that
+  // case. The row's own columns never change on a repeat block, so DO
+  // NOTHING is exactly equivalent to DO UPDATE here - nothing meaningful
+  // is skipped.
   const { error } = await supabase
     .from("blocks")
-    .upsert({ blocker_id: blockerId, blocked_id: blockedId }, { onConflict: "blocker_id,blocked_id" });
+    .upsert({ blocker_id: blockerId, blocked_id: blockedId }, { onConflict: "blocker_id,blocked_id", ignoreDuplicates: true });
   if (error) throw error;
 }
 
