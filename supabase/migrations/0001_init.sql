@@ -77,8 +77,8 @@ create table if not exists public.swipes (
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- discover_daily_views: which profiles a user has already been shown
--- today - powers the daily recommendation limit (Pricing screen: Basis 5/
--- Premium 15/Elite onbeperkt), enforced inside discover_profiles(). See
+-- today - powers the daily recommendation limit (Pricing screen: Basis
+-- 10/Premium+Elite onbeperkt), enforced inside discover_profiles(). See
 -- 0019_discover_daily_limit.sql for the full writeup of why this is a
 -- separate table from `swipes` (a shown-but-unswiped card must keep
 -- counting as "already shown", not re-consume the daily quota on every
@@ -442,19 +442,18 @@ create policy "Match participants can read messages"
   );
 
 -- messages_plan_daily_limit: single source of truth for each plan's daily
--- message limit (Pricing screen: Basis "3 Berichten per dag sturen",
--- Premium/Elite "Onbeperkt chatten"), mirroring discover_plan_daily_limit()
--- further below. null means unlimited. See 0020_messages_daily_limit.sql
--- for the full writeup.
+-- message limit - unlimited for every plan (Pricing screen: Basis and
+-- Premium both "Onbeperkt chatten met matches"), mirroring
+-- discover_plan_daily_limit() further below. null means unlimited. See
+-- 0020_messages_daily_limit.sql for the original (Basis-limited) version
+-- and 0040_basis_premium_plan_simplification.sql for why Basis lost its
+-- limit too.
 create or replace function public.messages_plan_daily_limit(p_plan text)
 returns int
 language sql
 immutable
 as $$
-  select case p_plan
-    when 'basis' then 3
-    else null -- 'premium' and 'elite': onbeperkt chatten
-  end;
+  select null::int; -- onbeperkt chatten voor elk plan
 $$;
 
 -- can_send_message_today: the actual enforcement, used in the INSERT
@@ -939,19 +938,21 @@ $$;
 grant execute on function public.get_my_location() to authenticated;
 
 -- discover_plan_daily_limit: single source of truth for each plan's daily
--- Ontdekken recommendation limit (Pricing screen: Basis 5/Premium 15/
--- Elite onbeperkt), shared by discover_profiles() and
--- discover_daily_status() below so the two can't drift apart. null means
--- "unlimited". See 0019_discover_daily_limit.sql for the full writeup.
+-- Ontdekken recommendation limit (Pricing screen: Basis 10/Premium+Elite
+-- onbeperkt), shared by discover_profiles() and discover_daily_status()
+-- below so the two can't drift apart. null means "unlimited". See
+-- 0019_discover_daily_limit.sql for the original version (Basis 5,
+-- Premium 15, Elite unlimited) and
+-- 0040_basis_premium_plan_simplification.sql for why Basis moved to 10
+-- and Premium became unlimited too.
 create or replace function public.discover_plan_daily_limit(p_plan text)
 returns int
 language sql
 immutable
 as $$
   select case p_plan
-    when 'premium' then 15
-    when 'elite' then null
-    else 5 -- 'basis', and the fallback for a user with no active subscription row at all
+    when 'basis' then 10
+    else null -- 'premium' and 'elite': onbeperkt
   end;
 $$;
 
@@ -1031,16 +1032,19 @@ grant execute on function public.discover_daily_status() to authenticated;
 -- Ontdekken tab focus (useFocusEffect).
 --
 -- Also enforces which filters a plan may use at all
--- (0021_discover_profiles_plan_filters.sql): Basis only gets Sport +
--- Afstand (capped at 50km), Premium/Elite get all four filters (Afstand
--- up to 150km). A disallowed p_level/p_max_age/p_distance_km is clamped
--- here, not just hidden client-side on FilterScreen.tsx.
+-- (0021_discover_profiles_plan_filters.sql): Basis gets Sport + Afstand
+-- (capped at 50km) + Niveau, Premium/Elite additionally get Leeftijd and
+-- Afstand up to 150km. A disallowed p_max_age/p_distance_km is clamped
+-- here, not just hidden client-side on FilterScreen.tsx. Niveau was
+-- Premium/Elite-only until 0040_basis_premium_plan_simplification.sql
+-- gave it to Basis too.
 --
--- Also enforces "Slimme beschikbaarheids match" (Elite-only,
--- 0023_discover_profiles_availability_filter.sql): p_availability_days is
--- clamped to null for anyone but an active Elite plan, and otherwise
--- narrows candidates to those whose own availability_days overlaps with
--- at least one of the picked weekday keys.
+-- Also enforces "Slimme beschikbaarheids match" (Premium+Elite since
+-- 0040_basis_premium_plan_simplification.sql merged Elite's perks into
+-- Premium - was Elite-only, 0023_discover_profiles_availability_filter.sql):
+-- p_availability_days is clamped to null for anyone but an active
+-- Premium/Elite plan, and otherwise narrows candidates to those whose own
+-- availability_days overlaps with at least one of the picked weekday keys.
 create or replace function public.discover_profiles(
   p_sport text default null,
   p_level text default null,
@@ -1093,20 +1097,22 @@ begin
   where s.user_id = v_uid and s.status = 'active';
   v_plan := coalesce(v_plan, 'basis');
 
-  -- Filter access per plan (Pricing screen: Basis = Sport + Afstand only,
-  -- max 50km; Premium/Elite = all filters, Afstand up to 150km). A
-  -- disallowed value is clamped/ignored here, not rejected - a Basis
-  -- caller that sends p_level/p_max_age/a >50km p_distance_km simply gets
-  -- those narrowed to what Basis is actually allowed.
+  -- Filter access per plan (Pricing screen: Basis = Sport + Afstand (max
+  -- 50km) + Niveau; Premium/Elite additionally get Leeftijd and Afstand
+  -- up to 150km). A disallowed value is clamped/ignored here, not
+  -- rejected - a Basis caller that sends p_max_age/a >50km
+  -- p_distance_km simply gets those narrowed to what Basis is actually
+  -- allowed. Niveau (p_level) was Basis-locked too until
+  -- 0040_basis_premium_plan_simplification.sql.
   if v_plan = 'basis' then
-    p_level := null;
     p_max_age := null;
     p_distance_km := least(coalesce(p_distance_km, 50), 50);
   end if;
 
-  -- "Slimme beschikbaarheids match" is Elite-only - Basis AND Premium
-  -- both get it ignored, not just Basis.
-  if v_plan <> 'elite' then
+  -- "Slimme beschikbaarheids match" is premium+elite since
+  -- 0040_basis_premium_plan_simplification.sql merged Elite's perks into
+  -- Premium (was Elite-only) - only Basis gets it ignored.
+  if v_plan not in ('premium', 'elite') then
     p_availability_days := null;
   end if;
 
@@ -1188,9 +1194,9 @@ begin
       and (v_max_birthdate is null or p.birthdate <= v_max_birthdate)
       and (p_availability_days is null or p.availability_days && p_availability_days)
       -- Only profiles genuinely allowed today: no daily limit at all
-      -- (Elite), just picked as one of this call's fresh quota slots, or
-      -- already shown earlier today (still allowed - re-showing an
-      -- unswiped card never costs extra quota).
+      -- (Premium/Elite), just picked as one of this call's fresh quota
+      -- slots, or already shown earlier today (still allowed -
+      -- re-showing an unswiped card never costs extra quota).
       and (
         v_daily_limit is null
         or (v_new_ids is not null and p.id = any(v_new_ids))
@@ -1233,8 +1239,10 @@ $$;
 grant execute on function public.discover_profiles(text, text, int, double precision, int, text[]) to authenticated;
 
 -- ─────────────────────────────────────────────────────────────────────────
--- trainings: "Trainings & Buddy Planner" (Elite-only) - see
--- 0024_trainings_planner.sql for the full writeup. Only mirrored here for
+-- trainings: "Trainings & Buddy Planner" (Premium+Elite, since
+-- 0040_basis_premium_plan_simplification.sql merged Elite's perks into
+-- Premium - was Elite-only) - see 0024_trainings_planner.sql for the
+-- full writeup. Only mirrored here for
 -- new installs; the pg_cron reminder schedule in
 -- 0025_training_reminder_cron.sql is project-specific (needs your own
 -- DB_WEBHOOK_SECRET and the pg_cron/pg_net extensions enabled) and stays
@@ -1273,7 +1281,7 @@ begin
 
   return exists (
     select 1 from public.subscriptions s
-    where s.user_id = v_uid and s.status = 'active' and s.plan = 'elite'
+    where s.user_id = v_uid and s.status = 'active' and s.plan in ('premium', 'elite')
   );
 end;
 $$;
@@ -1291,7 +1299,7 @@ create policy "Match participants can read trainings"
     )
   );
 
-create policy "Elite match participants can propose trainings"
+create policy "Premium match participants can propose trainings"
   on public.trainings for insert
   to authenticated
   with check (

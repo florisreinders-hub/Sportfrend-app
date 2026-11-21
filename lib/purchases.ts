@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 import Purchases, { CustomerInfo, LOG_LEVEL, PurchasesOffering } from "react-native-purchases";
 import RevenueCatUI, { PAYWALL_RESULT } from "react-native-purchases-ui";
+import { PREMIUM_MONTHLY_PRICE_CENTS } from "@/constants/pricing";
 
 /**
  * Real RevenueCat integration (replaces the earlier sandbox scaffold - see
@@ -8,30 +9,38 @@ import RevenueCatUI, { PAYWALL_RESULT } from "react-native-purchases-ui";
  * need to compare). `react-native-purchases`/`react-native-purchases-ui`
  * are native modules - they don't run in Expo Go, only in a custom EAS
  * dev/production build (see README.md's "RevenueCat" section).
+ *
+ * One paid plan only ("premium", with a monthly and a yearly package) -
+ * the earlier separate "elite" plan was merged into Premium
+ * (0040_basis_premium_plan_simplification.sql: has_elite_access() now
+ * also grants an active premium subscription the Trainings & Buddy
+ * Planner and the Slimme beschikbaarheids match). `public.subscriptions.plan`
+ * still allows the historical value 'elite' for existing rows (nothing in
+ * the database was forced to migrate), but nothing can purchase it
+ * anymore - RevenueCat itself isn't live yet for this single-entitlement
+ * model either: the identifiers below are a plan for a single "premium"
+ * entitlement/offering with 2 durations, not yet wired to real App Store
+ * Connect/Google Play product IDs.
  */
-
-export type PlanId = "premium" | "elite";
+export type PlanId = "premium";
 
 /**
  * RevenueCat product identifiers. Must exactly match the product IDs
  * created in App Store Connect / Google Play Console and attached to
  * RevenueCat entitlements/offerings - see README.md's "RevenueCat"
- * section for the exact dashboard setup steps.
+ * section for the exact dashboard setup steps. Placeholder values below -
+ * RevenueCat isn't live yet, see the module doc comment above.
  */
 export const REVENUECAT_PRODUCT_IDS: Record<PlanId, Record<"monthly" | "yearly", { ios: string; android: string }>> = {
   premium: {
     monthly: { ios: "sportfrend_premium_monthly", android: "sportfrend:premium-monthly" },
     yearly: { ios: "sportfrend_premium_yearly", android: "sportfrend:premium-yearly" },
   },
-  elite: {
-    monthly: { ios: "sportfrend_elite_monthly", android: "sportfrend:elite-monthly" },
-    yearly: { ios: "sportfrend_elite_yearly", android: "sportfrend:elite-yearly" },
-  },
 };
 
 /**
- * RevenueCat entitlement identifiers - one per paid plan. Each maps to the
- * `plan` value stored in `public.subscriptions` (see
+ * RevenueCat entitlement identifiers - one per paid plan (just "premium"
+ * now). Maps to the `plan` value stored in `public.subscriptions` (see
  * getPlanFromCustomerInfo() below) - the actual feature-gating in the
  * database (daily limits, posts access, availability filter, trainings)
  * reads `subscriptions.plan`, not RevenueCat directly, so this mapping is
@@ -39,27 +48,24 @@ export const REVENUECAT_PRODUCT_IDS: Record<PlanId, Record<"monthly" | "yearly",
  */
 export const REVENUECAT_ENTITLEMENTS: Record<PlanId, string> = {
   premium: "premium",
-  elite: "elite",
 };
 
 /**
  * RevenueCat Offering identifiers (dashboard: Product catalog -> Offerings).
  * One offering per plan, each containing a monthly and an annual package -
- * this is what RevenueCatUI.presentPaywall() renders. Using named
- * offerings (rather than always presenting "current") is what lets
- * PricingScreen present a *specific* plan's paywall when the user taps
- * "Kies" on the Premium or Elite card.
+ * this is what RevenueCatUI.presentPaywall() renders. Using a named
+ * offering (rather than always presenting "current") is what lets
+ * PricingScreen present the Premium-specific paywall when the user taps
+ * "Kies" on the Premium card.
  */
 export const REVENUECAT_OFFERING_IDS: Record<PlanId, string> = {
   premium: "premium",
-  elite: "elite",
 };
 
-/** Flat prices shown in the app's own UI (PricingScreen) - RevenueCat/the store is still the source of truth for what's actually charged; this is display-only. */
+/** Flat prices shown in the app's own UI (PricingScreen) - RevenueCat/the store is still the source of truth for what's actually charged; this is display-only. See constants/pricing.ts to change the price. */
 export const PLAN_PRICE_CENTS: Record<"basis" | PlanId, number> = {
   basis: 0,
-  premium: 499,
-  elite: 999,
+  premium: PREMIUM_MONTHLY_PRICE_CENTS,
 };
 
 const REVENUECAT_API_KEY = Platform.select({
@@ -158,16 +164,13 @@ export async function fetchCustomerInfo(): Promise<CustomerInfo | null> {
 }
 
 /**
- * Maps active RevenueCat entitlements to this app's plan model. Elite
- * takes priority over premium if a customer somehow has both active
- * (shouldn't normally happen, but a strict order is safer than an
- * unspecified one) - matches the same priority order used server-side in
+ * Maps active RevenueCat entitlements to this app's plan model - matches
+ * the same logic used server-side in
  * supabase/functions/revenuecat-webhook/index.ts, which must stay in sync
  * with this function if either ever changes.
  */
 export function getPlanFromCustomerInfo(customerInfo: CustomerInfo | null): "basis" | PlanId {
   if (!customerInfo) return "basis";
-  if (customerInfo.entitlements.active[REVENUECAT_ENTITLEMENTS.elite]) return "elite";
   if (customerInfo.entitlements.active[REVENUECAT_ENTITLEMENTS.premium]) return "premium";
   return "basis";
 }

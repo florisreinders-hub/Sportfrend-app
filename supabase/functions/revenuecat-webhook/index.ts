@@ -22,11 +22,12 @@
 // On every event, this re-fetches the subscriber from RevenueCat's own
 // REST API (GET /v1/subscribers/{app_user_id}) rather than trying to
 // derive the new state purely from the webhook payload - a single event
-// only reports what changed for ONE entitlement, which isn't enough to
-// correctly decide the plan when an account could have several
-// entitlements (premium AND elite) active or expiring independently.
-// Re-fetching the full subscriber avoids that class of bug entirely; it's
-// also RevenueCat's own documented recommendation for webhook consumers.
+// only reports what changed for the one entitlement it's about, which
+// isn't enough on its own to correctly decide the plan (e.g. a lapsed
+// grace period reported as EXPIRATION needs the full current state, not
+// just that one entitlement's last-known value). Re-fetching the full
+// subscriber avoids that class of bug entirely; it's also RevenueCat's
+// own documented recommendation for webhook consumers.
 //
 // Deploy with the Supabase CLI (this sandbox has no network path to
 // Supabase's API - see README.md's "Account verwijderen" section for the
@@ -57,21 +58,24 @@ function jsonResponse(body: Record<string, unknown>, status: number) {
   });
 }
 
-// Must stay in sync with lib/purchases.ts's PLAN_PRICE_CENTS - duplicated
-// rather than imported because this function runs on Deno, a separate
-// runtime/bundler from the Expo/Metro app, and each Supabase Edge
-// Function deploys as an isolated directory (no shared module resolution
-// across supabase/functions/* and the app's own lib/ in practice).
-const PLAN_PRICE_CENTS: Record<"basis" | "premium" | "elite", number> = {
+// Must stay in sync with lib/purchases.ts's PLAN_PRICE_CENTS/
+// constants/pricing.ts - duplicated rather than imported because this
+// function runs on Deno, a separate runtime/bundler from the Expo/Metro
+// app, and each Supabase Edge Function deploys as an isolated directory
+// (no shared module resolution across supabase/functions/* and the app's
+// own lib/ in practice). Only "premium" is purchasable now - the earlier
+// separate "elite" plan was merged into Premium
+// (0040_basis_premium_plan_simplification.sql); 'elite' can still exist
+// in public.subscriptions.plan for historical rows, but this webhook
+// never writes it anymore.
+const PLAN_PRICE_CENTS: Record<"basis" | "premium", number> = {
   basis: 0,
-  premium: 499,
-  elite: 999,
+  premium: 699,
 };
 
-// Same entitlement identifiers as lib/purchases.ts's REVENUECAT_ENTITLEMENTS -
+// Same entitlement identifier as lib/purchases.ts's REVENUECAT_ENTITLEMENTS -
 // keep both in sync if either ever changes.
 const ENTITLEMENT_PREMIUM = "premium";
-const ENTITLEMENT_ELITE = "elite";
 
 type RevenueCatSubscriberEntitlement = {
   expires_date: string | null;
@@ -143,17 +147,13 @@ Deno.serve(async (req) => {
     const { subscriber }: RevenueCatSubscriberResponse = await subscriberResponse.json();
     const entitlements = subscriber.entitlements ?? {};
 
-    const eliteActive = isEntitlementActive(entitlements[ENTITLEMENT_ELITE]);
     const premiumActive = isEntitlementActive(entitlements[ENTITLEMENT_PREMIUM]);
 
-    // Same priority order as lib/purchases.ts's getPlanFromCustomerInfo() -
-    // keep both in sync if either ever changes.
-    let plan: "basis" | "premium" | "elite";
+    // Same logic as lib/purchases.ts's getPlanFromCustomerInfo() - keep
+    // both in sync if either ever changes.
+    let plan: "basis" | "premium";
     let currentPeriodEnd: string | null;
-    if (eliteActive) {
-      plan = "elite";
-      currentPeriodEnd = entitlements[ENTITLEMENT_ELITE].expires_date;
-    } else if (premiumActive) {
+    if (premiumActive) {
       plan = "premium";
       currentPeriodEnd = entitlements[ENTITLEMENT_PREMIUM].expires_date;
     } else {

@@ -18,57 +18,48 @@ import {
   restorePurchases,
 } from "@/lib/purchases";
 import { openLegalUrl, PRIVACY_URL, TERMS_URL } from "@/constants/legal";
+import { PREMIUM_MONTHLY_PRICE_LABEL, PREMIUM_YEARLY_PRICE_LABEL } from "@/constants/pricing";
 
 type Plan = {
   id: "basis" | PlanId;
   name: string;
   price: string;
   period: string;
+  /** Optional secondary price line (e.g. the yearly alternative) shown under price/period. */
+  secondaryPrice?: string;
   features: string[];
 };
 
-// Content and per-plan feature lists verified against Figma node 2003:3819.
-// Prices shown here are the monthly price, store-review guideline
-// requirement 3.1.2 wording ("€4,99 / mnd") - RevenueCatUI's paywall
-// (onChoose below) shows the real, localized price (and the yearly
-// package) once presented; this card is a comparison/marketing screen,
-// not the actual checkout, which is why the renewal-terms text and legal
-// links below the plan cards matter here too, not just in the paywall.
+// Twee pakketten: Basis (gratis) en Premium (betaald) -
+// 0040_basis_premium_plan_simplification.sql trok het eerdere derde
+// pakket (Elite) in Premium: Premium heeft sindsdien ook de Trainings &
+// Buddy Planner en de Slimme beschikbaarheids match. Prijzen komen uit
+// constants/pricing.ts, nog voorlopig (zie dat bestand). Prices shown
+// here are the monthly price, store-review guideline requirement 3.1.2
+// wording ("€X,XX / mnd") - RevenueCatUI's paywall (onChoose below) shows
+// the real, localized price (and the yearly package) once presented;
+// this card is a comparison/marketing screen, not the actual checkout,
+// which is why the renewal-terms text and legal links below the plan
+// cards matter here too, not just in the paywall.
 const BASIS: Plan = {
   id: "basis",
   name: "Basis",
   price: "Gratis",
   period: "",
-  features: ["5 Dagelijkse aanbevelingen", "Basisfilters", "Profiel toevoegen aan community", "3 Berichten per dag sturen"],
+  features: ["Onbeperkt berichten met matches", "10 Dagelijkse aanbevelingen", "Sport, Afstand (tot 50 km) en Niveau filteren"],
 };
 
 const PREMIUM: Plan = {
   id: "premium",
   name: "Premium",
-  price: "€4,99",
+  price: PREMIUM_MONTHLY_PRICE_LABEL,
   period: "/ mnd",
+  secondaryPrice: `of ${PREMIUM_YEARLY_PRICE_LABEL} / jaar`,
   features: [
-    "15 dagelijkse sportmaatje suggesties",
-    "Meer kans op een geschikt sportmaatje",
-    "Onbeperkt chatten",
-    "Uitgebreide filters",
-    "connecties toevoegen",
-    "Ervaringen delen",
-  ],
-};
-
-const ELITE: Plan = {
-  id: "elite",
-  name: "Elite",
-  price: "€9,99",
-  period: "/ mnd",
-  features: [
-    "Onbeperkt dagelijkse sportmaatje suggesties",
-    "Prioriteit in aanbevelingen",
+    "Onbeperkt dagelijkse aanbevelingen",
+    "Alle filters (ook Leeftijd, Afstand tot 150 km en Beschikbaarheid)",
+    "Prikbord",
     "Slimme beschikbaarheids match",
-    "Onbeperkt chatten",
-    "Uitgebreide filters",
-    "connecties toevoegen",
     "Trainings & Buddy Planner",
   ],
 };
@@ -184,9 +175,6 @@ export default function PricingScreen({ navigation }: Props) {
             isCurrent={currentPlan === "premium"}
           />
         </View>
-        <View style={styles.row}>
-          <PlanCard plan={ELITE} onChoose={onChoose} purchasing={purchasingPlan === "elite"} isCurrent={currentPlan === "elite"} />
-        </View>
 
         <Text style={styles.renewalNotice}>
           Abonnementen worden automatisch verlengd tot je opzegt. Opzeggen kan op elk moment via de instellingen van
@@ -234,6 +222,7 @@ function PlanCard({
         <Text style={styles.price}>{plan.price}</Text>
         {plan.period ? <Text style={styles.period}>{plan.period}</Text> : null}
       </View>
+      {plan.secondaryPrice ? <Text style={styles.secondaryPrice}>{plan.secondaryPrice}</Text> : null}
 
       {plan.features.map((feature) => (
         <Text key={feature} style={styles.featureLabel}>
@@ -289,6 +278,12 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     color: colors.black,
     marginLeft: 4,
+  },
+  secondaryPrice: {
+    fontFamily: fonts.body,
+    fontSize: fontSizes.xs,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
   },
   featureLabel: {
     fontFamily: fonts.body,

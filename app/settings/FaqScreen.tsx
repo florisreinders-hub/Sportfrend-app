@@ -7,6 +7,7 @@ import { ScreenContainer } from "@/components/ScreenContainer";
 import { DetailHeader } from "@/components/DetailHeader";
 import { BottomNav } from "@/components/BottomNav";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
+import { PREMIUM_MONTHLY_PRICE_LABEL, PREMIUM_YEARLY_PRICE_LABEL } from "@/constants/pricing";
 
 const faqs = [
   {
@@ -14,8 +15,8 @@ const faqs = [
     a: "Swipe naar rechts (Connect) als je met iemand wilt sporten, of naar links (Skip) om verder te zoeken. Wil de ander ook samen sporten? Dan ontstaat er een connectie en kun je een training afspreken via de chat.",
   },
   {
-    q: "Wat kost een Premium of Elite abonnement?",
-    a: "Basis is gratis. Premium kost €4,99 per maand en Elite €9,99 per maand. Je kunt op elk moment upgraden via Menu > Premium & Elite.",
+    q: "Wat kost een Premium abonnement?",
+    a: `Basis is gratis. Premium kost ${PREMIUM_MONTHLY_PRICE_LABEL} per maand (of ${PREMIUM_YEARLY_PRICE_LABEL} per jaar). Je kunt op elk moment upgraden via Menu > Premium.`,
   },
   {
     q: "Wordt mijn exacte adres gedeeld?",
@@ -26,7 +27,7 @@ const faqs = [
     a: "Ga naar Instellingen > E-mail wijzigen om je gegevens te beheren, of neem contact op met klantenservice om je account te laten verwijderen.",
   },
   {
-    q: "Hoe zeg ik mijn Premium of Elite abonnement op?",
+    q: "Hoe zeg ik mijn Premium abonnement op?",
     a: "Abonnementen worden automatisch verlengd tot je opzegt. Opzeggen kan op elk moment via de instellingen van de App Store (iPhone/iPad) of Google Play (Android) - niet via de app zelf - en moet minstens 24 uur voor het einde van de lopende periode gebeuren om de volgende verlenging te voorkomen.",
   },
 ];

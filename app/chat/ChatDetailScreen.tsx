@@ -18,7 +18,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "@/navigation/types";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { Input } from "@/components/Input";
-import { Button } from "@/components/Button";
 import { colors, fonts, fontSizes, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
@@ -27,12 +26,10 @@ import {
   createTraining,
   fetchDiscoverDailyStatus,
   fetchMessages,
-  fetchMessagesDailyStatus,
   fetchSharedSport,
   fetchTrainings,
   getDataErrorMessage,
   Message,
-  MessagesDailyStatus,
   respondToTraining,
   sendMessage,
   Training,
@@ -68,15 +65,14 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
   const [sending, setSending] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [reportVisible, setReportVisible] = useState(false);
-  const [dailyStatus, setDailyStatus] = useState<MessagesDailyStatus | null>(null);
-  // "Trainings & Buddy Planner" (Elite-only, requirement: "Plan een
-  // training" is alleen zichtbaar/bruikbaar voor Elite-gebruikers). null
-  // until refreshPlan() resolves - deliberately NOT treated as "locked" in
-  // the meantime (see onOpenTrainingForm below), same fail-open reasoning
-  // as FilterScreen.tsx's plan-gated filters: discover_profiles()-style
-  // server-side enforcement (here: the "Elite match participants can
-  // propose trainings" RLS policy) is the real gate regardless of whether
-  // this status call ever succeeds.
+  // "Trainings & Buddy Planner" (Premium+Elite, requirement: "Plan een
+  // training" is alleen zichtbaar/bruikbaar voor Premium/Elite-gebruikers).
+  // null until refreshPlan() resolves - deliberately NOT treated as
+  // "locked" in the meantime (see onOpenTrainingForm below), same
+  // fail-open reasoning as FilterScreen.tsx's plan-gated filters:
+  // discover_profiles()-style server-side enforcement (here: the
+  // "Premium match participants can propose trainings" RLS policy) is
+  // the real gate regardless of whether this status call ever succeeds.
   const [plan, setPlan] = useState<"basis" | "premium" | "elite" | null>(null);
   const [defaultSport, setDefaultSport] = useState<string | null>(null);
   const [trainingFormVisible, setTrainingFormVisible] = useState(false);
@@ -97,27 +93,6 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
       setLoading(false);
     }
   }, [chatId]);
-
-  // Refetched after every successful send (not decremented locally) so it
-  // stays correct even if the same account is also chatting from another
-  // device/tab. A failure here doesn't block sending - that's still fully
-  // enforced by the "Match participants can send messages" RLS policy
-  // regardless of whether this call succeeds - but it's logged, not
-  // silently dropped: the same silent-catch shape on Ontdekken's daily
-  // status (discover_daily_status(), HomeScreen.tsx) was exactly what
-  // made "daily limit reached" indistinguishable from "no candidates" when
-  // that RPC wasn't deployed yet on a project's live database. A failure
-  // here is the equivalent symptom for chat - most likely
-  // messages_daily_status()/0020_messages_daily_limit.sql not actually
-  // applied yet (every migration in this repo has to be run manually, see
-  // README.md) - so leaving it invisible would hide the same class of bug.
-  const refreshDailyStatus = useCallback(async () => {
-    try {
-      setDailyStatus(await fetchMessagesDailyStatus());
-    } catch (e) {
-      console.warn("[ChatDetailScreen] Kon dagelijkse berichtenlimiet-status niet ophalen:", e);
-    }
-  }, []);
 
   // Reuses the same discover_daily_status() RPC as HomeScreen/FilterScreen
   // purely for its `plan` field - no new RPC needed, same as how
@@ -140,7 +115,6 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
 
   useEffect(() => {
     load();
-    refreshDailyStatus();
     refreshPlan();
 
     // Realtime: any message another participant inserts into this match
@@ -186,7 +160,7 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
       supabase.removeChannel(channel);
       supabase.removeChannel(trainingsChannel);
     };
-  }, [chatId, load, refreshDailyStatus, refreshPlan]);
+  }, [chatId, load, refreshPlan]);
 
   const chatItems = useMemo<ChatItem[]>(() => {
     const items: ChatItem[] = [
@@ -199,10 +173,10 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
   const onOpenTrainingForm = () => {
     // Fail-open on an unresolved/failed plan fetch (plan === null) - same
     // reasoning as the comment on the `plan` state above. A genuinely
-    // non-Elite account that slips past this still gets rejected by the
-    // "Elite match participants can propose trainings" RLS policy on
+    // Basis account that slips past this still gets rejected by the
+    // "Premium match participants can propose trainings" RLS policy on
     // submit, surfaced via the Alert in onSubmitTrainingForm below.
-    if (plan !== null && plan !== "elite") {
+    if (plan !== null && plan !== "premium" && plan !== "elite") {
       navigation.navigate("Pricing");
       return;
     }
@@ -256,16 +230,8 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
     try {
       const inserted = await sendMessage(chatId, session.user.id, body);
       setMessages((prev) => (prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]));
-      refreshDailyStatus();
     } catch (e) {
       setDraft(body);
-      // The daily limit is the one send-failure with a message worth
-      // getting right - a bare "new row violates row-level security
-      // policy" is indistinguishable client-side from "you got blocked" or
-      // "this isn't your match" otherwise. Refresh the status first so a
-      // limit-triggered failure renders the dedicated banner below instead
-      // of (or alongside) this generic alert.
-      await refreshDailyStatus();
       Alert.alert("Versturen mislukt", getDataErrorMessage(e));
     } finally {
       setSending(false);
@@ -294,9 +260,7 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
       const inserted = await sendMessage(chatId, session.user.id, draft.trim(), imageUrl);
       setMessages((prev) => (prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]));
       setDraft("");
-      refreshDailyStatus();
     } catch (e) {
-      await refreshDailyStatus();
       Alert.alert("Versturen mislukt", getDataErrorMessage(e));
     } finally {
       setUploadingImage(false);
@@ -333,11 +297,6 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
       { text: "Annuleren", style: "cancel" },
     ]);
   };
-
-  // dailyLimit is null for Premium/Elite (onbeperkt chatten) - only Basis
-  // can ever actually hit this.
-  const messageLimitReached =
-    dailyStatus != null && dailyStatus.dailyLimit != null && (dailyStatus.remaining ?? 0) <= 0;
 
   return (
     <ScreenContainer withBottomPadding={false} edges={["top", "left", "right"]}>
@@ -417,64 +376,49 @@ export default function ChatDetailScreen({ route, navigation }: Props) {
           />
         )}
 
-        {messageLimitReached ? (
-          <View style={[styles.limitBanner, { paddingBottom: spacing.md + androidBottomInset }]}>
-            <Text style={styles.limitBannerText}>
-              Je hebt je dagelijkse limiet van {dailyStatus!.dailyLimit} berichten bereikt. Upgrade naar Premium voor
-              onbeperkt chatten.
-            </Text>
-            <Button
-              label="Bekijk Premium"
-              variant="primary"
-              onPress={() => navigation.navigate("Pricing")}
-              style={styles.limitBannerButton}
+        <View style={[styles.inputRow, { paddingBottom: spacing.md + androidBottomInset }]}>
+          <Pressable
+            onPress={onPickImage}
+            hitSlop={8}
+            disabled={uploadingImage || sending}
+            style={[styles.imageButton, (uploadingImage || sending) && styles.sendButtonDisabled]}
+          >
+            {uploadingImage ? (
+              <ActivityIndicator color={colors.black} size="small" />
+            ) : (
+              <Ionicons name="image-outline" size={22} color={colors.black} />
+            )}
+          </Pressable>
+          {/*
+            "Plan een training" - Premium+Elite (requirement 2). Locked for
+            Basis: a plain lock icon here, tapping it goes straight to
+            Pricing rather than opening a form that would just get
+            rejected server-side - see onOpenTrainingForm.
+          */}
+          <Pressable onPress={onOpenTrainingForm} hitSlop={8} style={styles.trainingButton}>
+            <Ionicons
+              name={plan === "premium" || plan === "elite" ? "calendar-outline" : "lock-closed-outline"}
+              size={22}
+              color={colors.black}
             />
-          </View>
-        ) : (
-          <View style={[styles.inputRow, { paddingBottom: spacing.md + androidBottomInset }]}>
-            <Pressable
-              onPress={onPickImage}
-              hitSlop={8}
-              disabled={uploadingImage || sending}
-              style={[styles.imageButton, (uploadingImage || sending) && styles.sendButtonDisabled]}
-            >
-              {uploadingImage ? (
-                <ActivityIndicator color={colors.black} size="small" />
-              ) : (
-                <Ionicons name="image-outline" size={22} color={colors.black} />
-              )}
-            </Pressable>
-            {/*
-              "Plan een training" - Elite-only (requirement 2). Locked for
-              Basis/Premium: a plain lock icon here, tapping it goes
-              straight to Pricing rather than opening a form that would
-              just get rejected server-side - see onOpenTrainingForm.
-            */}
-            <Pressable onPress={onOpenTrainingForm} hitSlop={8} style={styles.trainingButton}>
-              <Ionicons
-                name={plan === "elite" ? "calendar-outline" : "lock-closed-outline"}
-                size={22}
-                color={colors.black}
-              />
-            </Pressable>
-            <Input
-              placeholder="Typ een bericht"
-              value={draft}
-              onChangeText={setDraft}
-              onSubmitEditing={onSend}
-              returnKeyType="send"
-              containerStyle={styles.inputContainer}
-            />
-            <Pressable
-              onPress={onSend}
-              hitSlop={8}
-              disabled={!draft.trim() || sending}
-              style={[styles.sendButton, (!draft.trim() || sending) && styles.sendButtonDisabled]}
-            >
-              <Ionicons name="send" size={22} color={colors.black} />
-            </Pressable>
-          </View>
-        )}
+          </Pressable>
+          <Input
+            placeholder="Typ een bericht"
+            value={draft}
+            onChangeText={setDraft}
+            onSubmitEditing={onSend}
+            returnKeyType="send"
+            containerStyle={styles.inputContainer}
+          />
+          <Pressable
+            onPress={onSend}
+            hitSlop={8}
+            disabled={!draft.trim() || sending}
+            style={[styles.sendButton, (!draft.trim() || sending) && styles.sendButtonDisabled]}
+          >
+            <Ionicons name="send" size={22} color={colors.black} />
+          </Pressable>
+        </View>
       </KeyboardAvoidingView>
 
       <TrainingFormModal
@@ -607,19 +551,5 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     opacity: 0.4,
-  },
-  limitBanner: {
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    gap: spacing.sm,
-  },
-  limitBannerText: {
-    fontFamily: fonts.body,
-    fontSize: fontSizes.sm,
-    color: colors.textSecondary,
-    textAlign: "center",
-  },
-  limitBannerButton: {
-    alignSelf: "center",
   },
 });

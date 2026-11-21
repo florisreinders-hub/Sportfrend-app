@@ -17,10 +17,10 @@ type Props = NativeStackScreenProps<RootStackParamList, "Availability">;
 /**
  * "Mijn beschikbaarheid" - self-declare per dag + dagdeel, available to
  * ALL users (unlike FilterScreen's "Slimme beschikbaarheids match"
- * zoekfilter, which stays Elite-only - see FilterScreen.tsx and
+ * zoekfilter, which stays Premium+Elite-only - see FilterScreen.tsx and
  * discover_profiles()'s plan clamp, both untouched here). Every user who
- * fills this in can be matched on it by an Elite searcher regardless of
- * their own plan.
+ * fills this in can be matched on it by a Premium/Elite searcher
+ * regardless of their own plan.
  */
 export default function AvailabilityScreen({ navigation }: Props) {
   const bottomNavHeight = useBottomNavHeight();
@@ -79,7 +79,7 @@ export default function AvailabilityScreen({ navigation }: Props) {
         <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomNavHeight + spacing.md }]}>
           <Text style={styles.intro}>
             Geef aan wanneer je beschikbaar bent om te sporten. Dit wordt gebruikt bij "Slimme beschikbaarheids
-            match" (Elite) om je te laten vinden door anderen die op jouw momenten zoeken - je eigen gegevens zijn
+            match" (Premium) om je te laten vinden door anderen die op jouw momenten zoeken - je eigen gegevens zijn
             nooit zichtbaar voor andere gebruikers, alleen de match zelf.
           </Text>
           <AvailabilityGrid value={availabilityDays} onToggle={toggleKey} style={styles.grid} />
