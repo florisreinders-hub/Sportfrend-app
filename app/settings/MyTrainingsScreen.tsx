@@ -17,7 +17,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "MyTrainings">;
  * "Mijn trainingen" (Instellingen): every training this account has
  * accepted, upcoming first (soonest first) then verlopen (most recent
  * first) - see fetchMyAcceptedTrainings() for why this isn't itself
- * plan-gated (a Basis/Premium account can be the recipient of an Elite
+ * plan-gated (a Basis account can be the recipient of a Premium/Elite
  * match's proposal and should still see it here once accepted).
  */
 export default function MyTrainingsScreen({ navigation }: Props) {
@@ -74,7 +74,7 @@ export default function MyTrainingsScreen({ navigation }: Props) {
         <ActivityIndicator color={colors.primary} style={{ marginTop: spacing.xl }} />
       ) : trainings.length === 0 ? (
         <Text style={styles.empty}>
-          Nog geen geaccepteerde trainingen. Plan er een via een chat met een sportmaatje (Elite-functie).
+          Nog geen geaccepteerde trainingen. Plan er een via een chat met een sportmaatje (Premium-functie).
         </Text>
       ) : (
         <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomNavHeight + spacing.md }]}>

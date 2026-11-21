@@ -29,8 +29,8 @@ type AuthContextValue = {
    * instant a purchase/renewal/expiration happens, without polling.
    */
   customerInfo: CustomerInfo | null;
-  /** Derived from customerInfo - "basis" | "premium" | "elite". See lib/purchases.ts's getPlanFromCustomerInfo(). */
-  plan: "basis" | "premium" | "elite";
+  /** Derived from customerInfo - "basis" | "premium". See lib/purchases.ts's getPlanFromCustomerInfo(). */
+  plan: "basis" | "premium";
 };
 
 const AuthContext = createContext<AuthContextValue>({

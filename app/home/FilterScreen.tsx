@@ -18,13 +18,16 @@ import { availabilityKey, DAYPART_OPTIONS, fetchDiscoverDailyStatus, WEEKDAY_OPT
 
 type Props = NativeStackScreenProps<RootStackParamList, "Filter">;
 
-// Basis-abonnees op de Pricing-tabel: alleen Sport en Afstand
-// ("Basisfilters"), Afstand begrensd op 50km. Premium/Elite: alle vier
-// ("Uitgebreide filters"), Afstand tot 150km. Dit scherm grijst Leeftijd/
-// Niveau alleen uit voor Basis - discover_profiles() (SECURITY DEFINER,
-// 0021_discover_profiles_plan_filters.sql) is de echte grens en negeert/
-// begrenst deze waarden hoe dan ook server-side, dus dit is puur UX, geen
-// beveiliging.
+// Basis-abonnees op de Pricing-tabel: Sport, Afstand (begrensd op 50km)
+// en Niveau. Premium/Elite krijgen daarnaast ook Leeftijd en Afstand tot
+// 150km, plus Beschikbaarheid ("Slimme beschikbaarheids match"). Niveau
+// was tot 0040_basis_premium_plan_simplification.sql ook Basis-locked,
+// net als Leeftijd nu nog is. Dit scherm grijst Leeftijd/Beschikbaarheid
+// alleen uit voor wie ze niet mag gebruiken - discover_profiles()
+// (SECURITY DEFINER, 0021_discover_profiles_plan_filters.sql,
+// 0040_basis_premium_plan_simplification.sql) is de echte grens en
+// negeert/begrenst deze waarden hoe dan ook server-side, dus dit is puur
+// UX, geen beveiliging.
 const BASIS_MAX_DISTANCE_KM = 50;
 
 const ALL_DAY_KEYS = WEEKDAY_OPTIONS.map((d) => d.key);
@@ -136,21 +139,21 @@ export default function FilterScreen({ navigation }: Props) {
   }, [plan]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Same reasoning as the distance clamp above, for a stale Beschikbaarheid
-  // selection from before a downgrade from Elite - the chips are disabled
-  // once locked, so this just keeps their "locked" appearance from looking
-  // like it's still showing a real selection underneath.
+  // selection from before a downgrade from Premium/Elite - the chips are
+  // disabled once locked, so this just keeps their "locked" appearance
+  // from looking like it's still showing a real selection underneath.
   useEffect(() => {
-    if (plan != null && plan !== "elite" && (selectedDays.length > 0 || selectedDayparts.length > 0)) {
+    if (plan != null && plan !== "premium" && plan !== "elite" && (selectedDays.length > 0 || selectedDayparts.length > 0)) {
       setAvailabilitySelection({ days: [], dayparts: [] });
     }
   }, [plan]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isBasis = plan === "basis";
   // null/unknown plan fails open (unlocked) here too, same as isBasis above -
-  // discover_profiles() enforces the real Elite-only limit server-side
-  // regardless of what this screen shows.
-  const isElite = plan === "elite";
-  const availabilityLocked = plan != null && !isElite;
+  // discover_profiles() enforces the real Premium/Elite-only limit
+  // server-side regardless of what this screen shows.
+  const hasPremiumAccess = plan === "premium" || plan === "elite";
+  const availabilityLocked = plan != null && !hasPremiumAccess;
   const maxDistanceKm = isBasis ? BASIS_MAX_DISTANCE_KM : DEFAULT_FILTERS.distanceKm;
 
   const sportLabel = SPORT_OPTIONS.find((o) => o.value === sport)?.label ?? "Alle sporten";
@@ -171,17 +174,17 @@ export default function FilterScreen({ navigation }: Props) {
   };
 
   const apply = () => {
-    // Leeftijd/Niveau/Beschikbaarheid can't actually have been changed from
-    // their defaults while locked (the controls are disabled), but forcing
-    // them back to "no filter" here too means a stale non-default value
-    // from before a downgrade never gets silently re-applied once this
-    // screen saves.
+    // Leeftijd/Beschikbaarheid can't actually have been changed from their
+    // defaults while locked (the controls are disabled), but forcing them
+    // back to "no filter" here too means a stale non-default value from
+    // before a downgrade never gets silently re-applied once this screen
+    // saves.
     const next: DiscoverFilters = {
       maxAge: isBasis ? DEFAULT_FILTERS.maxAge : maxAge,
       distanceKm: isBasis ? Math.min(distanceKm, BASIS_MAX_DISTANCE_KM) : distanceKm,
       sport,
-      level: isBasis ? null : level,
-      availabilityDays: isElite ? buildAvailabilityFilter(selectedDays, selectedDayparts) : null,
+      level,
+      availabilityDays: hasPremiumAccess ? buildAvailabilityFilter(selectedDays, selectedDayparts) : null,
     };
     setFilters(next);
     navigation.navigate("Home", { tab: "ontdekken" });
@@ -238,26 +241,17 @@ export default function FilterScreen({ navigation }: Props) {
         </View>
 
         <View style={styles.row}>
-          <View style={styles.labelRow}>
-            <Text style={[styles.label, isBasis && styles.labelLocked]}>NIVEAU</Text>
-            {isBasis ? <LockBadge /> : null}
-          </View>
-          <Pressable
-            style={[styles.pill, isBasis && styles.pillLocked]}
-            onPress={() => (isBasis ? goToPricing() : setLevelPickerVisible(true))}
-          >
-            {isBasis ? <Ionicons name="lock-closed" size={14} color={colors.textSecondary} /> : null}
-            <Text style={[styles.pillText, isBasis && styles.pillTextLocked]}>
-              {isBasis ? "PREMIUM" : levelLabel.toUpperCase()}
-            </Text>
-            {isBasis ? null : <Ionicons name="chevron-down" size={16} color={colors.black} />}
+          <Text style={styles.label}>NIVEAU</Text>
+          <Pressable style={styles.pill} onPress={() => setLevelPickerVisible(true)}>
+            <Text style={styles.pillText}>{levelLabel.toUpperCase()}</Text>
+            <Ionicons name="chevron-down" size={16} color={colors.black} />
           </Pressable>
         </View>
 
         <View style={styles.row}>
           <View style={styles.labelRow}>
             <Text style={[styles.label, availabilityLocked && styles.labelLocked]}>BESCHIKBAARHEID</Text>
-            {availabilityLocked ? <LockBadge label="ELITE" /> : null}
+            {availabilityLocked ? <LockBadge /> : null}
           </View>
         </View>
         <FilterChipRow

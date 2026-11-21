@@ -21,7 +21,7 @@ const items: MenuItem[] = [
   { label: "Gesprekken", icon: "mail-outline", onPress: (nav) => nav.navigate("ChatList") },
   { label: "Berichten", icon: "chatbubbles-outline", onPress: (nav) => nav.navigate("PostsFeed") },
   { label: "Instellingen", icon: "settings-outline", onPress: (nav) => nav.navigate("Settings") },
-  { label: "Premium & Elite", icon: "star-outline", onPress: (nav) => nav.navigate("Pricing") },
+  { label: "Premium", icon: "star-outline", onPress: (nav) => nav.navigate("Pricing") },
   { label: "Helpdesk", icon: "help-circle-outline", onPress: (nav) => nav.navigate("Helpdesk") },
 ];
 

@@ -6,7 +6,7 @@ import { availabilityKey, DAYPART_OPTIONS, WEEKDAY_OPTIONS } from "@/lib/api";
 type Props = {
   value: string[];
   onToggle: (key: string) => void;
-  /** Locked state (e.g. FilterScreen's Elite-only gate) - renders dimmed and non-interactive except for onLockedPress. */
+  /** Locked state (e.g. FilterScreen's Premium+Elite-only gate) - renders dimmed and non-interactive except for onLockedPress. */
   locked?: boolean;
   onLockedPress?: () => void;
   style?: ViewStyle;
@@ -14,7 +14,7 @@ type Props = {
 
 /**
  * One row per weekday, 3 dagdeel chips (ochtend/middag/avond) each -
- * shared by FilterScreen (search filter, Elite-only) and
+ * shared by FilterScreen (search filter, Premium+Elite-only) and
  * AvailabilityScreen ("Mijn beschikbaarheid", all users), so both use the
  * exact same interaction and layout. Each chip is flex:1 with a minHeight
  * (not a fixed height, same reasoning as Button.tsx) so a longer label at

@@ -172,11 +172,10 @@ export default function HomeScreen({ navigation, route }: Props) {
     }
   };
 
-  // dailyLimit is null for Elite (unlimited) - only Basis/Premium can ever
+  // dailyLimit is null for Premium/Elite (onbeperkt) - only Basis can ever
   // actually hit this.
   const dailyLimitReached =
     dailyStatus != null && dailyStatus.dailyLimit != null && (dailyStatus.remaining ?? 0) <= 0;
-  const upgradeTarget = dailyStatus?.plan === "premium" ? "Elite" : "Premium";
   // Fail open (assume access) while the plan is still unknown - same
   // reasoning as dailyLimitReached above and the other plan checks in this
   // app: the RLS policies on posts/post_likes are the real boundary, this
@@ -211,11 +210,11 @@ export default function HomeScreen({ navigation, route }: Props) {
           ) : profiles.length === 0 && dailyLimitReached ? (
             <View style={styles.errorState}>
               <Text style={styles.empty}>
-                Je hebt je dagelijkse limiet van {dailyStatus!.dailyLimit} aanbevelingen bereikt. Upgrade naar{" "}
-                {upgradeTarget} voor {upgradeTarget === "Premium" ? "meer" : "onbeperkte"} aanbevelingen.
+                Je hebt je dagelijkse limiet van {dailyStatus!.dailyLimit} aanbevelingen bereikt. Upgrade naar
+                Premium voor onbeperkte aanbevelingen.
               </Text>
               <Button
-                label={`Bekijk ${upgradeTarget}`}
+                label="Bekijk Premium"
                 variant="primary"
                 onPress={() => navigation.navigate("Pricing")}
                 style={styles.retryButton}

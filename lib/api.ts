@@ -181,9 +181,11 @@ export async function fetchDiscoverProfiles(
     p_max_age: filters.maxAge < DEFAULT_FILTERS.maxAge ? filters.maxAge : null,
     p_distance_km: filters.distanceKm,
     p_limit: 20,
-    // "Slimme beschikbaarheids match" - Elite-only, ignored server-side for
-    // anyone else (0023_discover_profiles_availability_filter.sql), sent
-    // exactly as picked here same as every other filter in this function.
+    // "Slimme beschikbaarheids match" - Premium+Elite (was Elite-only
+    // until 0040_basis_premium_plan_simplification.sql merged Elite's
+    // perks into Premium), ignored server-side for anyone else
+    // (0023_discover_profiles_availability_filter.sql), sent exactly as
+    // picked here same as every other filter in this function.
     p_availability_days: filters.availabilityDays && filters.availabilityDays.length > 0 ? filters.availabilityDays : null,
   });
   if (error) throw error;
@@ -199,8 +201,10 @@ export type DiscoverDailyStatus = {
 
 /**
  * The caller's daily Ontdekken recommendation quota (Pricing screen:
- * Basis 5/dag, Premium 15/dag, Elite onbeperkt - 0019_discover_daily_limit.sql).
- * `dailyLimit`/`usedToday`/`remaining` are all null for Elite (unlimited).
+ * Basis 10/dag, Premium/Elite onbeperkt -
+ * 0040_basis_premium_plan_simplification.sql, originally Basis 5/
+ * Premium 15/Elite onbeperkt in 0019_discover_daily_limit.sql).
+ * `dailyLimit`/`usedToday`/`remaining` are all null for Premium/Elite (unlimited).
  * discover_profiles() enforces the actual limit server-side regardless of
  * whether this is ever called - this exists purely so HomeScreen can show
  * a clear "limit reached" message instead of a bare empty result, which
@@ -320,10 +324,11 @@ export type MessagesDailyStatus = {
 };
 
 /**
- * The caller's daily message-sending quota (Pricing screen: Basis
- * "3 Berichten per dag sturen", Premium/Elite "Onbeperkt chatten" -
- * 0020_messages_daily_limit.sql). `dailyLimit`/`usedToday`/`remaining` are
- * all null for Premium/Elite (unlimited). The "Match participants can send
+ * The caller's daily message-sending quota (Pricing screen: every plan
+ * "Onbeperkt chatten met matches" - 0040_basis_premium_plan_simplification.sql,
+ * originally Basis "3 Berichten per dag sturen" in 0020_messages_daily_limit.sql).
+ * `dailyLimit`/`usedToday`/`remaining` are now always null (unlimited) for
+ * every plan. The "Match participants can send
  * messages" RLS policy enforces the actual limit server-side regardless of
  * whether this is ever called - this exists purely so ChatDetailScreen can
  * show a clear "limit reached" message instead of a bare RLS-violation
@@ -395,12 +400,16 @@ export async function uploadChatImage(matchId: string, senderId: string, localUr
 }
 
 // ───────────────────────────────────────────────────────────────────────
-// "Trainings & Buddy Planner" (Elite-only) - a training proposal shows up
-// as a special card inline in the chat, not as a plain message row (see
+// "Trainings & Buddy Planner" (Premium+Elite, since
+// 0040_basis_premium_plan_simplification.sql merged Elite's perks into
+// Premium - was Elite-only) - a training proposal shows up as a special
+// card inline in the chat, not as a plain message row (see
 // ChatDetailScreen.tsx merging messages + trainings into one sorted list).
-// Server-side enforcement (only an active Elite account may INSERT a row
-// here) lives in the "Elite match participants can propose trainings" RLS
-// policy - see supabase/migrations/0024_trainings_planner.sql. This client
+// Server-side enforcement (only an active Premium/Elite account may
+// INSERT a row here) lives in the "Premium match participants can
+// propose trainings" RLS policy - see
+// supabase/migrations/0024_trainings_planner.sql +
+// 0040_basis_premium_plan_simplification.sql. This client
 // code never checks the plan itself before calling createTraining(); it's
 // only used to decide whether to show the "Plan een training" button
 // enabled or locked in the first place.
@@ -525,8 +534,8 @@ export type TrainingWithMatch = Training & {
 
 /**
  * "Mijn trainingen" (Instellingen): every training this account has
- * accepted, across all matches - not plan-gated itself (a Basis/Premium
- * account can be the recipient of a training an Elite match proposed, and
+ * accepted, across all matches - not plan-gated itself (a Basis account
+ * can be the recipient of a training a Premium/Elite match proposed, and
  * should still be able to see it here). RLS's "Match participants can
  * read trainings" policy already restricts this to rows the caller is a
  * participant of, so no extra user-id filter is needed client-side - same
